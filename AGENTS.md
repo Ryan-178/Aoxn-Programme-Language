@@ -1287,7 +1287,10 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   keep-alive, /metrics) and `web/loadtest/bench.mjs` (oha engine, 3
   interleaved trials, median; raw runs in `last-results.json`).
   `.github/workflows/web-bench.yml` runs parity + a 5s reference bench on
-  windows-latest (runner numbers are trend-only).
+  windows-latest (runner numbers are trend-only). Its `shell: bash` steps
+  must spell paths with FORWARD SLASHES: Git Bash eats `\s` as an escape,
+  so `web\server_win.ax` once reached the compiler as `webserver_win.ax`
+  and the build step died before any benchmark ran.
   oha binary goes in `loadtest/tools/` (gitignored 鈥?download cmd in
   `web/README.md`). autocannon is NOT used: single-core client capped at
   ~4k req/s and masked server differences. Even oha caps at ~7k req/s on

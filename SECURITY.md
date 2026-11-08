@@ -133,6 +133,9 @@ root Cargo testing does not imply member test execution. A separate Windows/Linu
 step requires clang for the C parity and ABI targets, so their early-return skip
 path cannot produce a green gate without the comparisons. Native command exit
 codes gate Windows smoke/release steps, and installer downloads remain opt-in.
+The web-bench workflow's bash steps use forward-slash paths so Git Bash cannot
+consume a separator as an escape; the fixed invocation was rerun locally
+(server build plus 23/23 functional parity checks).
 Local workflow checks are not proof of successful hosted Actions or installer
 execution.
 
@@ -266,7 +269,9 @@ IDE/Web 的 JS/Tauri 为另一供应链边界。发射器/ABI 验证不是安全
 主 CI 显式指定编译器和包管理器，不能把默认根包测试当成员测试已执行。
 Windows/Linux 另有独立步骤强制 C parity/ABI 目标使用 clang，提前返回的跳过路径
 不能让未实际比较的门禁变绿。Windows 冒烟/发布逐条检查原生命令退出码，
-安装器下载仍为显式启用。本地 workflow 检查不证明托管 Actions 或安装器运行成功。
+安装器下载仍为显式启用。web-bench 工作流的 bash 步骤使用正斜杠路径，Git Bash
+不会再把分隔符当转义吞掉；修复后的调用已在本地重跑（服务器构建 + 23/23 项
+功能 parity 检查通过）。本地 workflow 检查不证明托管 Actions 或安装器运行成功。
 
 文档检查器只读、无外部依赖，仅读本地 Git 历史，不访问 URL 或执行文档命令，
 默认仅警告。历史白名单与命令启发式限制其覆盖，不是安全/链接完整性保证。

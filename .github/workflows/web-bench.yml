@@ -51,7 +51,7 @@ jobs:
 
       - name: Build Aoxn web server
         shell: bash
-        run: cargo run --release -- build web\server_win.ax -o web\server.exe -l ws2_32
+        run: cargo run --release -- build web/server_win.ax -o web/server.exe -l ws2_32
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -60,7 +60,7 @@ jobs:
 
       - name: Functional parity tests
         shell: bash
-        run: node web/loadtest/parity.mjs web\server.exe
+        run: node web/loadtest/parity.mjs web/server.exe
 
       - name: Build Next.js comparison app
         working-directory: web/next-app

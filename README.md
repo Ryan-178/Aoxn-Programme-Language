@@ -139,7 +139,10 @@ otherwise defaults to only `aoxn`. A separate named step reruns
 clang fails that gate instead of silently skipping the comparisons. Linux also
 runs the X11 probe under Xvfb. Release packaging/install smoke runs on tags or
 manual dispatch, not every push;
-web benchmarks and IDE checks are separate. Windows smoke commands now check
+web benchmarks and IDE checks are separate. The web-bench workflow's bash steps
+use forward-slash paths: Git Bash treats a backslash as an escape, which had
+turned `web\server_win.ax` into `webserver_win.ax` and failed the build step.
+Windows smoke commands now check
 native exit codes immediately. Release notes match the installer's opt-in clang
 download behavior.
 
@@ -349,7 +352,9 @@ ZCode 衍生的 Zai 设计系统，并带助手、终端、Git 与预览面板�
 独立命名步骤以 `AOXN_TEST_REQUIRE_CLANG=1` 重跑
 `--test c_emitter_parity --test c_abi`，缺少 clang 会判定门禁失败，不再静默跳过比较。
 Linux 另跑 Xvfb 下 X11 probe。安装打包与冒烟在 tag/手动触发，不是每次 push；
-Web 基准和 IDE 独立。Windows 冒烟逐条检查原生命令退出码，发布文案与安装器
+Web 基准和 IDE 独立。web-bench 工作流的 bash 步骤改用正斜杠路径：Git Bash 把
+反斜杠当转义吞掉（`web\server_win.ax` 变成 `webserver_win.ax`），曾导致构建步骤
+直接失败。Windows 冒烟逐条检查原生命令退出码，发布文案与安装器
 显式启用 clang 下载的行为一致。
 
 规范/贡献指南对齐当前 C 后端；LLVM 历史报告保留数据并标清边界，wiki 不修改。

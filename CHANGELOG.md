@@ -114,6 +114,11 @@ this is a pre-release tag, not a new minor.
 - Run C emitter parity and C ABI targets in their own Windows/Linux CI step.
   `AOXN_TEST_REQUIRE_CLANG=1` turns a missing-clang early return into a failed
   test in that gate; ordinary local runs retain the documented skip behavior.
+- Fix the web-bench workflow's bash steps: Git Bash consumed the backslash in
+  `web\server_win.ax` / `web\server.exe` as an escape, so the server build step
+  failed with `cannot open 'webserver_win.ax'` before any benchmark ran. The
+  steps now use forward slashes, which Windows accepts. Verified locally:
+  server build plus 23/23 functional parity checks.
 - Remove the duplicate 0.54.1 heading. Add a dependency-free, read-only document
   path auditor with warning-only default and a repository artifact audit;
   historical assets are retained, not deleted as unexplained clutter.
