@@ -235,7 +235,7 @@ def main() -> int:
   into one scope is a conflict, because the name would have two meanings.
 
   Paths starting `./` or `../` resolve relative to the importing file, with
-  extension completion (`.ax`/`.ts`/`.tsx`, `index.<ext>`). An **unquoted**
+  extension completion (`.ax`/`.ts`/`.tsx`/`.rs`, `index.<ext>`). An **unquoted**
   specifier additionally looks in the importing file's own directory first, so
   `import util` finds the `util.ax` beside it, the way Python finds a sibling
   module; failing that it is resolved as a package import under
@@ -298,6 +298,39 @@ source. Class rewriting is context-aware: a `.` inside a string literal, an
 Stylesheets, `@import`ed partials and `url()` targets all participate in the
 build cache. Errors report stage `asset`. See
 [`css-assets.md`](css-assets.md) for the full reference.
+
+## Rust interoperability (v0.55.0-snapshot-5)
+
+A `.rs` file reached through `import` is compiled by **rustc** and its
+`#[no_mangle] extern "C"` functions are bound as ordinary `extern def`
+declarations:
+
+```Aoxn
+import * from "./native.rs"      # binds native.rs's exported C-ABI functions
+
+def main() -> int:
+    print(rs_add(2, 40))         # an extern "C" fn rs_add(a: i64, b: i64) -> i64
+    return 0
+```
+
+- The loader scans the file and synthesizes one extern per export, so every
+  import form, `aoxn symbols` and the IDE work unchanged. The scan needs no
+  rustc: `check`, `c` and `symbols` run without a Rust toolchain; only
+  `build`/`run` invoke `rustc --crate-type staticlib` and link the result.
+- The ABI surface is narrow and exact: `i64` -> `int`, `f64` -> `float`,
+  `*const`/`*mut c_char` -> `string`, `()`/no return -> `void`. Rust `bool`
+  (one byte) is **not** Aoxn `bool` (C `int`) and is rejected, as are `i32`,
+  `u64`, `String`, `&str`, generics, `where` clauses, `async`, variadics,
+  `#[export_name]`, raw identifiers, C-keyword/`main` names and non-`"C"`
+  ABIs. An `extern "C" fn` without `#[no_mangle]` is rejected.
+- Only **top-level** exports bind (an inline `mod`'s contents are skipped);
+  the crate must be a **single file** (`mod name;` and `include!` are
+  rejected). rustc is an optional toolchain located via `AOXN_RUSTC` -> PATH
+  -> `~/.cargo/bin`. Errors report stage `parse` (scan) or `cc` (rustc).
+- Like CSS assets, the bindings are ordinary externs by codegen time, so
+  there is no self-host mirror obligation; the self-hosted CLI does not
+  resolve `.rs` imports. See [`rust-interop.md`](rust-interop.md) for the full
+  reference (ABI table, linking, the native-static-libs note, caching).
 
 ## Bindings
 

@@ -4,10 +4,11 @@
 
 ### Supported versions and reporting
 
-The compiler is **0.55.0**, supported on the **0.55.x** line. The independent
-package-manager crate is **0.42.0**. Fixes land on main first; earlier minor
-lines are not maintained. Windows and Linux are supported, macOS is not.
-Version history is in [CHANGELOG.md](CHANGELOG.md).
+The compiler is **0.55.0**, supported on the **0.55.x** line; the current tree
+is the **0.55.0-snapshot-5** pre-release. The independent package-manager crate
+is **0.42.0**. Fixes land on main first; earlier minor lines are not maintained.
+Windows and Linux are supported, macOS is not. Version history is in
+[CHANGELOG.md](CHANGELOG.md).
 
 Report vulnerabilities privately to **zmjsjsg3@163.com**, before public issues
 or disclosure. Include commit/version, OS/architecture, `aoxn doctor`, minimal
@@ -25,20 +26,27 @@ earlier protective guidance.
 ### Trust boundaries
 
 Compiling or executing Aoxn is **not a sandbox**. Imports read files, asset
-commands write files, and clang produces native code. Both drivers invoke clang
-with argument vectors; the selfhost CLI's `run` spawns the compiled program with
-an argv vector (Windows CRT `_spawnvp`, POSIX `fork`/`execvp`), never a shell.
-Windows arguments are CRT-quoted so empty/spaced/special values survive; that is
-correctness, not sanitization. Package commands and CSS/Tailwind options are
-rejected rather than forwarded. The content-keyed run cache trusts files already
-present in a writable cache directory (a hostile cache can substitute an
-executable), PATH is not authenticated, output creation is not exclusive, and
+commands write files, and clang produces native code. A `.rs` import additionally
+drives **rustc** to compile a self-contained Rust static library with the
+caller's permissions; rustc is an external toolchain like clang, invoked with an
+argument vector and never a shell. Both drivers invoke clang with argument
+vectors; the selfhost CLI's `run` spawns the compiled program with an argv vector
+(Windows CRT `_spawnvp`, POSIX `fork`/`execvp`), never a shell. Windows arguments
+are CRT-quoted so empty/spaced/special values survive; that is correctness, not
+sanitization. Package commands and CSS/Tailwind options are rejected rather than
+forwarded, and the selfhost CLI does not resolve `.rs` imports (the same boundary
+as `.css` assets). The content-keyed build cache trusts files already present in
+a writable cache directory: a hostile cache can substitute an executable, and it
+can also substitute the compiled Rust static libraries cached under
+`<cache>/rust/`. PATH is not authenticated, output creation is not exclusive, and
 `stdlib/socket` performs real network I/O with the caller's permissions;
 `stdlib/random` is explicitly non-cryptographic. Isolate untrusted projects with
 OS/container controls over files, network and credentials. Type checking is not
 permission to execute untrusted output.
 
-`src/` has zero external Rust crate dependencies. Package-manager dependencies
+`AOXN_RUSTC` is caller-controlled configuration, exactly like `AOXN_CLANG`, not
+an adversarial boundary: it names the rustc executable the build will run. `src/`
+has zero external Rust crate dependencies. Package-manager dependencies
 are pinned in Cargo.lock and do not depend on the compiler library. IDE and
 benchmark JS/Tauri dependencies are separate supply-chain surfaces. Emitter/ABI
 verification does not establish sandboxing or constitute a security audit.
@@ -46,13 +54,28 @@ verification does not establish sandboxing or constitute a security audit.
 ### Compiler and build invariants
 
 - Crafted sources, imports, assets and diagnostics must not corrupt the compiler,
-  execute unintended commands or miscompile defined programs. Ordinary wrong
+  execute unintended commands or miscompile defined programs. That includes the
+  signature scan applied to an imported `.rs` file. Ordinary wrong
   diagnostics/panics are bugs; small-input catastrophic resource amplification
   also warrants private reporting.
 - Generated names must derive from stable source identities/counters/names,
   never addresses. Hash iteration must not change C output. Cache keys include
   compiler identity, options and dependencies. Do not share writable caches with
   untrusted users.
+- The Rust bridge's signature scanner is **source analysis for binding
+  generation, not a sandbox**. rustc compiles the whole `.rs` file, so code the
+  scanner ignores still runs. "Top-level exports only" is a binding boundary, not
+  a compilation restriction, and inline `mod` contents still compile and link —
+  they merely receive no Aoxn binding. The crate must be one file (`mod name;`
+  and `include!` are rejected because the artifact cache key cannot see the files
+  they pull in).
+- Rust bindings are synthesized by the loader, before typecheck: by codegen the
+  bindings **are** ordinary `extern def` declarations. There is no codegen
+  dispatch and no self-host mirror obligation, the same construction CSS assets
+  use; the self-hosted CLI does not resolve `.rs` imports. rustc is invoked with
+  `--crate-type staticlib`, and the link step adds only its reported
+  `native-static-libs` plus the directive form (`/defaultlib:NAME` becomes
+  `-Wl,/DEFAULTLIB:NAME`). It performs no network access.
 - Direct Rust-vs-selfhost C parity and the self-host stage fixed point are
   different checks. Equal fixture outputs do not prove every feature equivalent.
   The selfhost front end now covers None/`T | None`, `dict[V]`, function pointers
@@ -64,13 +87,26 @@ verification does not establish sandboxing or constitute a security audit.
   interoperability. Fixed-arity externs do not implement variadic C calls.
   A mismatched user declaration may link yet have undefined behavior; tests with
   known C helpers are not a validator for arbitrary third-party signatures.
+  Extern names are emitted verbatim and never namespace-prefixed: the name is the
+  C symbol the program links against.
+- The Rust ABI surface is narrow and exact: `i64` to `int`, `f64` to `float`,
+  `*const`/`*mut c_char` to `string`, and no return to `void`. Rust `bool`,
+  `i32`, `u64`, `String`, `&str`, `*const i64`, generics, `where` clauses,
+  `async`, variadics, tuple parameter patterns, `#[export_name]`, raw
+  identifiers, C-keyword/`main` symbol names and non-`"C"` ABIs are diagnostics,
+  not guesses; an `extern "C" fn` without `#[no_mangle]` is rejected. Rust
+  artifacts are keyed by canonical path, content digest, the rustc **`--version`
+  string** (not binary metadata — `~/.cargo/bin/rustc` is a rustup shim) and the
+  optimization level; the executable cache key gains the rustc identity only when
+  the program has `.rs` dependencies, so pure-Aoxn keys are unchanged.
 - Graph optimizations preserve semantics and diagnostic order. Reverse exception
   edges, borrowed module tables and reused acyclic proofs remove specific costs,
   not all denial-of-service opportunities. Recursive passes retain host-stack
   limits. Wrapped/array indirect struct cycles remain a known checker limitation.
 - Packages take precedence over installed stdlib. Bare imports probe siblings
-  first; quoted imports have sibling fallback. Environment paths, AOXN_CLANG and
-  link flags are caller-controlled configuration, not an adversarial boundary.
+  first; quoted imports have sibling fallback. Environment paths, AOXN_CLANG,
+  AOXN_RUSTC and link flags are caller-controlled configuration, not an
+  adversarial boundary.
 - CSS emitted filenames are generated and checked against traversal/separators.
   URLs influence content, not output roots. Tailwind does not silently fetch Node.
 
@@ -131,8 +167,11 @@ verification does not establish sandboxing or constitute a security audit.
 Main CI names both compiler and package-manager packages explicitly; default
 root Cargo testing does not imply member test execution. A separate Windows/Linux
 step requires clang for the C parity and ABI targets, so their early-return skip
-path cannot produce a green gate without the comparisons. Native command exit
-codes gate Windows smoke/release steps, and installer downloads remain opt-in.
+path cannot produce a green gate without the comparisons. Both jobs also run a
+named `Test Rust bridge` step with `AOXN_TEST_REQUIRE_CLANG=1` and
+`AOXN_TEST_REQUIRE_RUSTC=1`, so a runner without rustc fails rather than skipping
+the bridge tests. Native command exit codes gate Windows smoke/release steps, and
+installer downloads remain opt-in.
 The web-bench workflow's bash steps use forward-slash paths so Git Bash cannot
 consume a separator as an escape; the fixed invocation was rerun locally
 (server build plus 23/23 functional parity checks).
@@ -142,9 +181,11 @@ execution.
 `tools/check_doc_links.py` is read-only and dependency-free. It reads local Git
 history, never fetches URLs or executes documented commands, and defaults to
 warning-only. Its explicit historical allowlist and command heuristics limit
-coverage; it is not a security/link-completeness guarantee. The
-[artifact audit](docs/repository-audit.md) documents provenance/retention rather
-than deleting or certifying stored archives. No archive content was executed.
+coverage; it is not a security/link-completeness guarantee. On 2026-11-08 it
+reported `missing-path=0`, `historical-path=0` and 25 heuristic command-drift
+warnings. The [artifact audit](docs/repository-audit.md) documents
+provenance/retention rather than deleting or certifying stored archives. No
+archive content was executed.
 
 ### Deliberate limitations and evidence
 
@@ -153,29 +194,38 @@ use remain undefined behavior. `as_string` aliases memory that must remain live.
 Strings are NUL-terminated bytes; concatenation leaks by design. There is no GC
 or universal runtime memory safety. Corruption in libraries processing external
 data is distinct from caller-authored unsafe operations. The window server and
-registry trust tiers do not sandbox or certify programs.
+registry trust tiers do not sandbox or certify programs. Rust code linked through
+`.rs` imports is trusted code: it runs in the same process with the same
+permissions, and the bridge checks its declarations, not its behavior.
 
 The thirteen findings from the 2026-10-17 audit were fixed in 0.51.0/0.51.1;
 that is history, not absence of new defects. Baseline **8f90aca** recorded
 343 root + 104 package tests on Windows with explicit clang 23.1.2. Current-tree
-validation passed **357 root + 105 package tests (462), 0 failed/ignored** on
-Windows (2026-11-07, clang 23.1.2; complete log `target/final-test.log`); the
-explicit required gate separately completed all four ABI and two parity targets.
+validation passed **368 root + 105 package tests (473), 0 failed/ignored** on
+Windows (2026-11-08, clang 23.1.2, rustc from rustup); the eleven new
+`rust_interop` tests are the difference from the previous tree's 357 root tests,
+and the 105 package tests are the last recorded `aoxn-pkg` result (that suite was
+not rerun this batch — no `aoxn-pkg` source changed). A second full run stalled
+in the single `selfhost_cli` test while a concurrent rebuild competed for the
+host; that test passes alone in 68.67 s, so this is host contention, not a
+failure. The root suite includes all four ABI and two parity targets; this batch
+did not separately re-invoke the `AOXN_TEST_REQUIRE_CLANG=1` gate command.
 Nineteen full-C inputs, 22 rejection fixtures and three known gaps are distinct
 categories. Native ABI cases ran at O0/O3; the original fixed point, both CLI
 stages, real socket loopback (Rust and selfhost builds), random cross-process
-vectors and the Python CSV differential passed. Linux Rust workspace/tests
-cross-check passed, not Linux native runtime. See
-[verification evidence](docs/c-compatibility.md). No fresh security audit,
-IDE validation, Linux native runtime or full installer release is implied.
-The P2 maintenance follow-up reran the explicit locked compiler/package commands;
-results and the Python checker tests are recorded in
+vectors and the Python CSV differential are part of the suite. A manual mixed
+Aoxn+Rust program using `std` `HashMap`, `CStr` and `char` compiled and ran under
+`aoxn run` with exit 0. Linux Rust workspace/tests cross-check passed, not Linux
+native runtime. See [verification evidence](docs/c-compatibility.md). No fresh
+security audit, IDE validation, Linux native runtime or full installer release is
+implied. The P2 maintenance follow-up reran the explicit locked compiler/package
+commands; results and the Python checker tests are recorded in
 [repository maintenance evidence](docs/repository-audit.md). Hosted CI was not
-triggered; workflow syntax validation is local only.
-That is no longer the Linux picture: the 2026-11-01 tarball-test fix was landed on
-`main` and its hosted run passed on **both** jobs. Linux extraction containment is
-now executed by CI, not only cross-checked, and the steps the red run had blocked
-(`Smoke test`, X11 under Xvfb) ran again.
+triggered for that follow-up; workflow syntax validation is local only.
+The 2026-11-01 tarball-test fix was landed on `main` and its hosted run passed on
+**both** jobs. Linux extraction containment is now executed by CI, not only
+cross-checked, and the steps the red run had blocked (`Smoke test`, X11 under
+Xvfb) ran again.
 
 ---
 
@@ -183,9 +233,9 @@ now executed by CI, not only cross-checked, and the steps the red run had blocke
 
 ### 支持版本与报告
 
-编译器 **0.55.0**，支持系列 **0.55.x**；独立包管理器 crate **0.42.0**。
-修复先落 main，旧小版本不维护；支持 Windows/Linux，不支持 macOS。
-见 [CHANGELOG](CHANGELOG.md)。
+编译器 **0.55.0**，支持系列 **0.55.x**；当前树是 **0.55.0-snapshot-5**
+预发布。独立包管理器 crate **0.42.0**。修复先落 main，旧小版本不维护；
+支持 Windows/Linux，不支持 macOS。见 [CHANGELOG](CHANGELOG.md)。
 
 漏洞先私报 **zmjsjsg3@163.com**，不要先发公开 issue。提供 commit/版本、系统架构、
 aoxn doctor、最小输入、命令、预期/实际行为与影响。误编译附 aoxn c 与 O0 复现情况。
@@ -198,34 +248,59 @@ aoxn doctor、最小输入、命令、预期/实际行为与影响。误编译�
 ### 信任边界
 
 编译/执行**不是沙箱**：导入读文件、资源命令写文件、clang 产出原生代码。
+`.rs` 导入还会以调用者权限驱动 **rustc** 编译自包含的 Rust 静态库；rustc 与
+clang 一样是外部工具链，只用参数向量调用，绝不经过 shell。
 Rust 与自举驱动都用参数向量调用 clang；自举 CLI 的 run 也用 argv 向量启动编译产物
 （Windows CRT `_spawnvp`、POSIX `fork`/`execvp`），绝不经过 shell。Windows 参数按
 CRT 规则引用，保证空串/空格/特殊字符原样到达，这不是消毒。包管理器命令与
-CSS/Tailwind 选项明确拒绝而非转发。内容键 run 缓存信任可写缓存目录中已存在的文件
-（恶意缓存可替换可执行文件）；PATH 未经认证，输出不是独占创建；
-`stdlib/socket` 以调用者权限进行真实网络 I/O；`stdlib/random` 明确非密码学安全。
-对不可信项目使用系统/容器文件、网络和凭据隔离；类型检查通过不代表可以安全执行。
+CSS/Tailwind 选项明确拒绝而非转发，自举 CLI 也不解析 `.rs` 导入（与 `.css`
+资源同一边界）。内容键构建缓存信任可写缓存目录中已存在的文件：恶意缓存既可替换
+可执行文件，也可替换缓存于 `<cache>/rust/` 下的 Rust 静态库；PATH 未经认证，
+输出不是独占创建；`stdlib/socket` 以调用者权限进行真实网络 I/O；
+`stdlib/random` 明确非密码学安全。对不可信项目使用系统/容器文件、网络和凭据隔离；
+类型检查通过不代表可以安全执行。
 
-src/ 无外部 Rust crate 依赖；包管理器独立依赖固定在 Cargo.lock，不依赖编译器库。
-IDE/Web 的 JS/Tauri 为另一供应链边界。发射器/ABI 验证不是安全审计，也不提供沙箱。
+`AOXN_RUSTC` 与 `AOXN_CLANG` 一样是调用方配置，而不是对攻击者的安全边界：
+它只是指定构建要运行的 rustc 可执行文件。src/ 无外部 Rust crate 依赖；
+包管理器独立依赖固定在 Cargo.lock，不依赖编译器库。IDE/Web 的 JS/Tauri 为另一
+供应链边界。发射器/ABI 验证不是安全审计，也不提供沙箱。
 
 ### 编译器与构建不变量
 
-- 特制源码/导入/资源/诊断不得损坏编译器、执行非预期命令或误编译定义良好程序。
-  普通错误诊断/panic 是 bug；小输入灾难性资源放大值得私报。
+- 特制源码/导入/资源/诊断不得损坏编译器、执行非预期命令或误编译定义良好程序；
+  这包括对导入 `.rs` 文件所做的签名扫描。普通错误诊断/panic 是 bug；
+  小输入灾难性资源放大值得私报。
 - 生成标识来自稳定源码/计数器/名字，不能用地址；hash 迭代不应改变 C。
   缓存包含编译器、选项、依赖；勿共享不可信可写缓存。
+- Rust 桥的签名扫描器是**为生成绑定而做的源码分析，不是沙箱**。rustc 编译整个
+  `.rs` 文件，扫描器忽略的代码照样会运行。“只绑定顶层导出”是绑定边界，不是编译
+  限制；内联 `mod` 内的函数仍会编译链接，只是不产生 Aoxn 绑定。crate 必须是单文件
+  （`mod name;` 与 `include!` 被拒绝，因为它们引入的文件不在产物缓存键的视野内）。
+- Rust 绑定由加载器在 typecheck 之前合成：到 codegen 时绑定**就是**普通
+  `extern def`。因此没有 codegen 分支，也没有自举镜像义务——与 CSS 资源相同的构造；
+  自举 CLI 不解析 `.rs` 导入。rustc 以 `--crate-type staticlib` 调用，链接步骤只
+  加入它报告的 `native-static-libs` 及指令形式（`/defaultlib:NAME` 变成
+  `-Wl,/DEFAULTLIB:NAME`），不进行任何网络访问。
 - Rust-vs-selfhost 直接 C 比较和自举跨阶段不动点是不同检查；有限 fixture
   不证明全特性等价。自举已覆盖 None/`T | None`、`dict[V]`、函数指针与
   raise/try/except，但仍缺默认参数、命名空间绑定与选择性导入；parity 是已测试
   的共同子集，见[C 边界](docs/c-compatibility.md)。
 - 外部 ABI 依赖正确声明。Aoxn int 对应 long long，bool 对应 C int，不能推为
   任意 C int/_Bool 兼容；固定参数 extern 不支持 C 可变参数。错误声明可能链接
-  成功却产生 UB；已知签名 C helper 测试不能校验任意第三方声明。
+  成功却产生 UB；已知签名 C helper 测试不能校验任意第三方声明。extern 名称逐字
+  发射、绝不加命名空间前缀：该名字就是程序链接的 C 符号。
+- Rust ABI 面窄而精确：`i64` 对应 `int`，`f64` 对应 `float`，
+  `*const`/`*mut c_char` 对应 `string`，无返回值对应 `void`。Rust `bool`、
+  `i32`、`u64`、`String`、`&str`、`*const i64`、泛型、`where` 子句、`async`、
+  可变参数、元组参数模式、`#[export_name]`、原始标识符、C 关键字/`main` 符号名、
+  非 `"C"` ABI 都是诊断而非猜测；没有 `#[no_mangle]` 的 `extern "C" fn` 被拒绝。
+  Rust 产物键由规范路径、内容摘要、rustc 的 **`--version` 字符串**（不是二进制
+  元数据——`~/.cargo/bin/rustc` 是 rustup shim）与优化级别组成；只有程序带 `.rs`
+  依赖时可执行文件缓存键才加入 rustc 身份，纯 Aoxn 程序的键保持不变。
 - 图优化保留语义与诊断顺序；反向边、借用模块表、无环证明复用只消除特定开销，
   不是消除所有 DoS。递归仍有宿主栈限制；数组等包装间接结构体环为既有缺口。
-- 包优先安装 stdlib，裸导入先同目录，引号导入有同目录兜底；环境路径和 clang/
-  链接选项是调用方配置，不对控制环境者构成安全边界。
+- 包优先安装 stdlib，裸导入先同目录，引号导入有同目录兜底；环境路径、clang、
+  rustc 和链接选项是调用方配置，不对控制环境者构成安全边界。
 - CSS 输出名由编译器生成并防路径逃逸；URL 只影响内容，Tailwind 不静默下载 Node。
 
 ### 包、安装器与应用边界
@@ -268,32 +343,43 @@ IDE/Web 的 JS/Tauri 为另一供应链边界。发射器/ABI 验证不是安全
 
 主 CI 显式指定编译器和包管理器，不能把默认根包测试当成员测试已执行。
 Windows/Linux 另有独立步骤强制 C parity/ABI 目标使用 clang，提前返回的跳过路径
-不能让未实际比较的门禁变绿。Windows 冒烟/发布逐条检查原生命令退出码，
+不能让未实际比较的门禁变绿。两个平台还各有一个命名步骤 `Test Rust bridge`，
+设置 `AOXN_TEST_REQUIRE_CLANG=1` 与 `AOXN_TEST_REQUIRE_RUSTC=1`：缺少 rustc 的
+runner 会失败而不是跳过桥测试。Windows 冒烟/发布逐条检查原生命令退出码，
 安装器下载仍为显式启用。web-bench 工作流的 bash 步骤使用正斜杠路径，Git Bash
 不会再把分隔符当转义吞掉；修复后的调用已在本地重跑（服务器构建 + 23/23 项
 功能 parity 检查通过）。本地 workflow 检查不证明托管 Actions 或安装器运行成功。
 
 文档检查器只读、无外部依赖，仅读本地 Git 历史，不访问 URL 或执行文档命令，
 默认仅警告。历史白名单与命令启发式限制其覆盖，不是安全/链接完整性保证。
-[产物审计](docs/repository-audit.md)记录来源与保留决定，不删除或认证归档，
-没有执行归档内容。
+2026-11-08 它的报告为 `missing-path=0`、`historical-path=0` 和 25 条启发式命令
+漂移警告。[产物审计](docs/repository-audit.md)记录来源与保留决定，不删除或认证
+归档，没有执行归档内容。
 
 ### 有意限制与证据
 
 用户数组越界、带符号溢出、无效原始内存/FFI 是 UB。as_string 别名存储必须存活；
 字符串 NUL 结束、拼接故意泄漏，没有 GC/通用运行时内存安全。库处理外部数据损坏
-与调用方主动不安全操作有别；窗口服务和注册表等级不沙箱或认证程序。
+与调用方主动不安全操作有别；窗口服务和注册表等级不沙箱或认证程序。通过 `.rs`
+导入链接的 Rust 代码是可信代码：它与程序同进程、同权限运行，桥只检查其声明，
+不检查其行为。
 
 2026-10-17 审计13项已在0.51.0/0.51.1修复，不保证没有新缺陷。
 历史基线 **8f90aca** 在 Windows 显式 clang 23.1.2 记录343根+104包；当前树最终
-**357根+105包=462项通过，0失败/忽略**（2026-11-07，clang 23.1.2；完整日志
-`target/final-test.log`），独立必跑门禁另完成4项 ABI 与2项 parity。
+**368根+105包=473项通过，0失败/忽略**（2026-11-08，clang 23.1.2，rustc 来自
+rustup）；新增的 11 项 `rust_interop` 测试正是相对上一棵树 357 项根测试的差额，
+105 项包测试是 `aoxn-pkg` 最后一次记录结果（本批未重跑该套件——`aoxn-pkg` 源码
+未改）。第二次完整跑时单个 `selfhost_cli` 测试在并发重建争抢主机时停顿；该测试
+单独运行 68.67 秒通过，因此是主机竞争而非失败。根套件包含全部4项 ABI 与2项
+parity；本批未单独重跑 `AOXN_TEST_REQUIRE_CLANG=1` 门禁命令。
 19个完整 C 输入、22个拒绝样例、3个 known gaps 分别计证；ABI 实际执行 O0/O3，
 原不动点、两阶段 CLI、真实 socket 回环（Rust 与 selfhost 构建）、随机数跨进程向量
-与 Python CSV 差分均通过；Linux Rust workspace/tests cross-check 通过，不等于原生运行。
+与 Python CSV 差分都在套件内。一份手写 Aoxn+Rust 混合程序（使用 `std` 的
+`HashMap`、`CStr` 与 `char`）经 `aoxn run` 编译运行，退出码 0。
+Linux Rust workspace/tests cross-check 通过，不等于原生运行。
 见[C 兼容证据](docs/c-compatibility.md)。不暗示新安全审计、IDE 验证、Linux 原生运行
 或完整安装器发布。P2维护后又执行显式locked编译器/包测试，结果与Python检查器
-测试见[仓库维护证据](docs/repository-audit.md)。未触发托管CI，workflow仅本地语法校验。
-2026-11-01 的 tarball 测试修复已落 main，其托管 CI **两个平台均通过**：Linux 解包
-内含性由 CI 实测而不只是交叉编译校验，曾被红跑的 `Smoke test` 与 Xvfb X11 探测也
-重新执行并通过。
+测试见[仓库维护证据](docs/repository-audit.md)。该次维护未触发托管CI，
+workflow仅本地语法校验。2026-11-01 的 tarball 测试修复已落 main，其托管 CI
+**两个平台均通过**：Linux 解包内含性由 CI 实测而不只是交叉编译校验，曾被红跑的
+`Smoke test` 与 Xvfb X11 探测也重新执行并通过。

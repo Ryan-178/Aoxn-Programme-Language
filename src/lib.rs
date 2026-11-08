@@ -12,6 +12,7 @@ pub mod paths;
 pub mod pkg_manifest;
 pub mod platform;
 pub mod resolve;
+pub mod rust;
 pub mod symbols;
 pub mod tailwind;
 pub mod ts;
@@ -323,7 +324,7 @@ pub(crate) fn parse_sources(sources: &[String]) -> Result<Program, Vec<Diag>> {
             ),
         )]);
     }
-    Ok(Program { imports: vec![], structs, funcs, assets: assets::AssetSet::default() })
+    Ok(Program { imports: vec![], structs, funcs, assets: assets::AssetSet::default(), rust_sources: Vec::new() })
 }
 
 /// Every top-level declaration reachable from the given entry files,
@@ -339,24 +340,24 @@ pub fn program_symbols(paths: &[String]) -> Result<Vec<symbols::Symbol>, Vec<Dia
     // the flattened namespace, where a module imported as `import m` has had
     // its declarations prefixed so nothing else can collide with them — an
     // editor showing `m_util_button` would be telling the author nothing.
-    let (flat, _assets) = load_flattened(paths)?;
+    let (flat, _assets, _rust) = load_flattened(paths)?;
     let (structs, funcs) = flat.with_source_names();
-    Ok(symbols::collect(&Program { imports: vec![], structs, funcs, assets: Default::default() }))
+    Ok(symbols::collect(&Program { imports: vec![], structs, funcs, assets: Default::default(), rust_sources: Vec::new() }))
 }
 
 /// file-path based entry: resolve imports recursively
 fn load_program(entries: &[String]) -> Result<Program, Vec<Diag>> {
-    let (flat, assets) = load_flattened(entries)?;
+    let (flat, assets, rust_sources) = load_flattened(entries)?;
     let (mut structs, mut funcs) = (flat.structs, flat.funcs);
     // CSS accessors become ordinary functions before typecheck, so an unused
     // `import "./x.css"` costs nothing and codegen needs no asset awareness.
     assets::inject_all(&assets, Some(&mut structs), &mut funcs);
-    Ok(Program { imports: vec![], structs, funcs, assets })
+    Ok(Program { imports: vec![], structs, funcs, assets, rust_sources })
 }
 
 /// Load every entry, resolve the module graph, and hand back the flat
 /// namespace plus the stylesheets the program pulled in.
-fn load_flattened(entries: &[String]) -> Result<(resolve::Flattened, assets::AssetSet), Vec<Diag>> {
+fn load_flattened(entries: &[String]) -> Result<(resolve::Flattened, assets::AssetSet, Vec<PathBuf>), Vec<Diag>> {
     files::clear();
     let mut state = LoadState {
         visited: HashSet::new(),
@@ -366,6 +367,7 @@ fn load_flattened(entries: &[String]) -> Result<(resolve::Flattened, assets::Ass
         order: Vec::new(),
         assets: assets::AssetSet::default(),
         imports: assets::ImportState::default(),
+        rust_sources: Vec::new(),
     };
     let mut entry_ids = Vec::new();
     for entry in entries {
@@ -403,9 +405,9 @@ fn load_flattened(entries: &[String]) -> Result<(resolve::Flattened, assets::Ass
     }
     // Namespaces are resolved here, on the AST, and the result is the flat
     // program every later stage already expects (see `src/resolve.rs`).
-    let LoadState { modules, order, assets, .. } = state;
+    let LoadState { modules, order, assets, rust_sources, .. } = state;
     let flat = timed("resolve", || resolve::resolve(modules, &order, &entry_ids))?;
-    Ok((flat, assets))
+    Ok((flat, assets, rust_sources))
 }
 
 /// The CSS assets `entries` pulls in, bundled and fingerprinted, without
@@ -432,6 +434,9 @@ struct LoadState {
     assets: assets::AssetSet,
     /// include-once + cycle stack for `@import` inside stylesheets
     imports: assets::ImportState,
+    /// .rs files reached through import, first-reached order, one entry per
+    /// canonical path (include-once keeps duplicates out)
+    rust_sources: Vec<PathBuf>,
 }
 
 /// The dotted key a module is known by: the import spelling with `/` turned
@@ -448,7 +453,7 @@ fn module_key_for(spec: &str) -> String {
         if i > 0 {
             out.push('.');
         }
-        let seg = ["ax", "ts", "tsx"]
+        let seg = ["ax", "ts", "tsx", "rs"]
             .iter()
             .find_map(|e| seg.strip_suffix(&format!(".{e}")))
             .unwrap_or(seg);
@@ -509,6 +514,24 @@ fn load_file(path: &Path, key: &str, state: &mut LoadState) -> Result<Option<usi
         })
         .map_err(|d| vec![d])
         .map(|_| None);
+    }
+    // A `.rs` file is a module of synthesized `extern def`s: the signature
+    // scan needs no rustc, so check/c/symbols work without the Rust
+    // toolchain. Only the BUILD step compiles the file (crate::rust).
+    if rust::is_rs(&canonical) {
+        let funcs = timed(&format!("rust scan {label}"), || rust::scan(&src, file_id))?;
+        let idx = state.modules.len();
+        state.by_canon.insert(canonical.clone(), idx);
+        state.modules.push(resolve::Module {
+            key: key.to_string(),
+            structs: Vec::new(),
+            funcs,
+            imports: Vec::new(),
+        });
+        state.rust_sources.push(pretty_path);
+        state.stack.pop();
+        state.order.push(idx);
+        return Ok(Some(idx));
     }
     // .ts/.tsx go through the TS-M1 front end, everything else the Aoxn one;
     // both lower into the same AST (docs/ts-m1-spec.md)
@@ -779,13 +802,13 @@ fn complete_module_path(base: PathBuf) -> PathBuf {
     if base.is_file() {
         return base;
     }
-    for ext in ["ax", "ts", "tsx"] {
+    for ext in ["ax", "ts", "tsx", "rs"] {
         let cand = base.with_extension(ext);
         if cand.is_file() {
             return cand;
         }
     }
-    for ext in ["ax", "ts", "tsx"] {
+    for ext in ["ax", "ts", "tsx", "rs"] {
         let cand = base.join(format!("index.{ext}"));
         if cand.is_file() {
             return cand;
@@ -832,6 +855,10 @@ pub fn dependency_digests(entries: &[String]) -> Option<Vec<(PathBuf, u64)>> {
                     stack.push(target);
                 }
             }
+        } else if rust::is_rs(&canonical) {
+            // A Rust file is a LEAF: the bridge compiles one self-contained
+            // .rs (the scanner rejects `mod x;`/`include!`), and scanning its
+            // text for Aoxn `import` lines could only over-include.
         } else {
             for (imp, quoted) in scan_imports(&src) {
                 stack.push(resolve_import_spelled(&dir, &imp, quoted));
@@ -872,6 +899,8 @@ pub fn dependency_files(entries: &[String]) -> Option<Vec<PathBuf>> {
                     stack.push(target);
                 }
             }
+        } else if rust::is_rs(&canonical) {
+            // leaf: see dependency_digests
         } else {
             for (imp, quoted) in scan_imports(&src) {
                 stack.push(resolve_import_spelled(&dir, &imp, quoted));
@@ -1013,7 +1042,7 @@ pub fn find_clang() -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.is_file())
 }
 
-fn which(name: &str) -> Option<PathBuf> {
+pub(crate) fn which(name: &str) -> Option<PathBuf> {
     let path_var = std::env::var("PATH").ok()?;
     let sep = if cfg!(windows) { ';' } else { ':' };
     for dir in path_var.split(sep) {
@@ -1079,8 +1108,16 @@ pub fn build_paths_opts_lvl(
     lib_paths: &[String],
 ) -> Result<(), Vec<Diag>> {
     let obj_path = exe_path.with_extension(crate::platform::obj_ext());
-    compile_paths_to_object_lvl(paths, &obj_path, opt_level)?;
-    let link_result = link_opts(&obj_path, exe_path, libs, lib_paths);
+    let program = load_program(paths)?;
+    let rust_sources = program.rust_sources.clone();
+    finish_to_object(program, &obj_path, opt_level)?;
+    // Rust imports compile AFTER the Aoxn object: a type error in .ax code
+    // fails before rustc is spawned, and check/c/symbols never reach here.
+    let mut rust_libs = Vec::new();
+    for rs in &rust_sources {
+        rust_libs.push(rust::compile_staticlib(rs, opt_level)?);
+    }
+    let link_result = link_inner(&obj_path, exe_path, libs, lib_paths, &rust_libs);
     if link_result.is_ok() {
         let _ = std::fs::remove_file(&obj_path);
     }
@@ -1094,6 +1131,10 @@ pub fn link(obj_path: &Path, exe_path: &Path) -> Result<(), Vec<Diag>> {
 
 /// Link with additional libraries and library search paths.
 pub fn link_opts(obj_path: &Path, exe_path: &Path, libs: &[String], lib_paths: &[String]) -> Result<(), Vec<Diag>> {
+    link_inner(obj_path, exe_path, libs, lib_paths, &[])
+}
+
+fn link_inner(obj_path: &Path, exe_path: &Path, libs: &[String], lib_paths: &[String], rust_libs: &[rust::RustLib]) -> Result<(), Vec<Diag>> {
     let clang = find_clang().ok_or_else(|| {
         vec![Diag::at(
             "link",
@@ -1106,7 +1147,13 @@ pub fn link_opts(obj_path: &Path, exe_path: &Path, libs: &[String], lib_paths: &
     })?;
 
     let mut cmd = Command::new(&clang);
-    cmd.arg(obj_path).arg("-o").arg(exe_path);
+    cmd.arg(obj_path);
+    // Rust staticlibs are link inputs like the object: they must sit AFTER
+    // the object that references them (GNU ld resolves left to right).
+    for rl in rust_libs {
+        cmd.arg(&rl.artifact);
+    }
+    cmd.arg("-o").arg(exe_path);
     // 8 MB stack: large fixed-size arrays live on the stack (allocas)
     if let Some(flag) = crate::platform::stack_link_flag() {
         cmd.arg(flag);
@@ -1121,6 +1168,16 @@ pub fn link_opts(obj_path: &Path, exe_path: &Path, libs: &[String], lib_paths: &
     }
     for lib in libs {
         cmd.arg(format!("-l{lib}"));
+    }
+    // the native libraries rustc's staticlib needs (kernel32 &c. on Windows,
+    // -lgcc_s &c. on Linux), after the user's own -l flags
+    for rl in rust_libs {
+        for lib in &rl.native_libs {
+            cmd.arg(format!("-l{lib}"));
+        }
+        for arg in &rl.raw_link_args {
+            cmd.arg(arg);
+        }
     }
     // platform defaults: C math (`fmod`/`sqrt`/...) is a separate library on
     // Linux; the Windows CRT link covers it, so the list is empty there.

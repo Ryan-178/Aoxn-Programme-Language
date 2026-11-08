@@ -53,6 +53,14 @@ jobs:
         env:
           AOXN_TEST_REQUIRE_CLANG: "1"
 
+      # The Rust bridge drives rustc (preinstalled on the runner) and links
+      # with clang; both are required here so a missing one fails, not skips.
+      - name: Test Rust bridge (clang + rustc required)
+        run: cargo test -p aoxn --locked --test rust_interop
+        env:
+          AOXN_TEST_REQUIRE_CLANG: "1"
+          AOXN_TEST_REQUIRE_RUSTC: "1"
+
       # Use Cargo directly: run_pkg_tests.sh is a local Windows SAC workaround,
       # and its unreferenced stamp does not guarantee a new binary hash.
       - name: Test package manager
@@ -110,6 +118,14 @@ jobs:
         run: cargo test -p aoxn --locked --test c_emitter_parity --test c_abi
         env:
           AOXN_TEST_REQUIRE_CLANG: "1"
+
+      # The Rust bridge drives rustc (preinstalled on the runner) and links
+      # with clang; both are required here so a missing one fails, not skips.
+      - name: Test Rust bridge (clang + rustc required)
+        run: cargo test -p aoxn --locked --test rust_interop
+        env:
+          AOXN_TEST_REQUIRE_CLANG: "1"
+          AOXN_TEST_REQUIRE_RUSTC: "1"
 
       # Use Cargo directly: run_pkg_tests.sh is a local Windows SAC workaround,
       # and its unreferenced stamp does not guarantee a new binary hash.

@@ -40,7 +40,7 @@ type Locals = HashMap<String, Type, FastBuild>;
 /// entry point, and the C runtime names the backend may reference. User
 /// names hitting this list (or starting with the generator's `ax_`/`aoxn_`
 /// prefixes) get a `_ax` suffix.
-const C_KEYWORDS: &[&str] = &[
+pub(crate) const C_KEYWORDS: &[&str] = &[
     "auto", "break", "case", "char", "const", "continue", "default", "do", "double", "else",
     "enum", "extern", "float", "for", "goto", "if", "inline", "int", "long", "register",
     "restrict", "return", "short", "signed", "sizeof", "static", "struct", "switch", "typedef",

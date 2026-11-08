@@ -21,6 +21,10 @@
 //! * Only a name exported by **two or more** modules gets a prefix
 //!   (`ui.button` -> `ui_button`). Such a program did not compile before, so
 //!   nothing that used to build changes shape.
+//! * An `extern def` name is NEVER prefixed: it is the C symbol the program
+//!   links against, and codegen emits it verbatim. A prefixed extern declared
+//!   a symbol nothing defined (a link error before this rule); two modules
+//!   exporting one extern name now collide in typecheck instead.
 //! * The self-hosted stage-2 compiler merges modules flat and has no
 //!   namespace layer. The fixed point is only meaningful if both stages agree
 //!   on every program stage-2 can still compile — which, by the rule above, is
@@ -223,6 +227,7 @@ pub fn resolve(mut mods: Vec<Module>, order: &[usize], entries: &[usize]) -> Res
     // --- 1. what each module declares ------------------------------------
     let mut providers: HashMap<String, Vec<usize>> = HashMap::new();
     let mut structness: HashSet<(usize, String)> = HashSet::new();
+    let mut externness: HashSet<(usize, String)> = HashSet::new();
     for (i, m) in mods.iter().enumerate() {
         for (name, is_struct) in exports(m) {
             if is_struct {
@@ -231,6 +236,11 @@ pub fn resolve(mut mods: Vec<Module>, order: &[usize], entries: &[usize]) -> Res
             let e = providers.entry(name.clone()).or_default();
             if !e.contains(&i) {
                 e.push(i);
+            }
+        }
+        for f in &m.funcs {
+            if f.is_extern {
+                externness.insert((i, f.name.clone()));
             }
         }
     }
@@ -388,8 +398,17 @@ pub fn resolve(mut mods: Vec<Module>, order: &[usize], entries: &[usize]) -> Res
     let mut members: Vec<HashMap<String, Member>> = vec![HashMap::new(); n];
     for (name, owners) in &providers {
         for &mi in owners {
+            // An extern's name IS the C symbol it links against (codegen
+            // emits it verbatim), so it is never mangled — a prefixed extern
+            // declares a symbol nothing defines. Two modules exporting the
+            // same extern name then collide in typecheck ("defined more than
+            // once"), which is the honest answer: one C symbol, one binding.
             let bare = visible.contains(name) && owners.len() == 1;
-            let flat = if bare { name.clone() } else { format!("{}_{name}", prefixes[mi]) };
+            let flat = if bare || externness.contains(&(mi, name.clone())) {
+                name.clone()
+            } else {
+                format!("{}_{name}", prefixes[mi])
+            };
             members[mi].insert(name.clone(), Member { flat, is_struct: structness.contains(&(mi, name.clone())) });
         }
     }

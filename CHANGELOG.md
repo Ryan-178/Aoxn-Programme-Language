@@ -3,6 +3,61 @@
 Notable changes to the Aoxn compiler and language. Aoxn follows semver-ish
 minor bumps while pre-1.0: each minor version is a language milestone.
 
+## [0.55.0-snapshot-5] - 2026-11-08
+
+**Snapshot 5 adds the Rust bridge**: the Aoxn compiler can compile Rust code.
+The compiler version stays 0.55.0; this is a pre-release tag, not a new minor.
+
+### Rust interoperability (`import "./native.rs"`)
+
+- Importing a `.rs` file compiles it with **rustc** as a static library and
+  binds its `#[no_mangle] extern "C"` functions as ordinary Aoxn `extern def`
+  declarations, so `aoxn run main.ax` compiles, links and runs Rust alongside
+  Aoxn. The bridge lives in the loader (`src/rust.rs`): each export becomes a
+  synthesized extern `FnDecl`, so every import form (star/selective/namespace),
+  `aoxn symbols` and the IDE work unchanged. By typecheck/codegen time the
+  bindings ARE externs, so there is no codegen dispatch and no self-host mirror
+  obligation (the same construction CSS assets use; the selfhost CLI does not
+  resolve `.rs` imports).
+- The ABI surface is narrow and exact: `i64` -> `int`, `f64` -> `float`,
+  `*const`/`*mut c_char` -> `string`, no return -> `void`. Rust `bool` (one
+  byte) is rejected because Aoxn `bool` is C `int`; `i32`, `u64`, `String`,
+  `&str`, generics, `where` clauses, `async`, variadics, tuple parameter
+  patterns, `#[export_name]`, raw identifiers, C-keyword/`main` names and
+  non-`"C"` ABIs are diagnostics, not guesses. Top-level exports only;
+  `mod name;` and `include!` are rejected (single-file crates).
+- rustc is an OPTIONAL external toolchain, discovered via `AOXN_RUSTC` -> PATH
+  -> `~/.cargo/bin`. `check`, `c` and `symbols` never invoke it (the scan is
+  pure source analysis), so a machine without Rust can still analyse any
+  program; only `build`/`run` need it. `aoxn doctor` reports rustc as an
+  optional row and never fails on its absence.
+- `build`/`run` compile the file with `rustc --edition=2021 --crate-type
+  staticlib --print native-static-libs` and link the artifact plus the
+  libraries the note names. A `/defaultlib:NAME` token is forwarded as the
+  linker DIRECTIVE `-Wl,/DEFAULTLIB:NAME`, not as an input `-lNAME`: the
+  latter adds the dynamic CRT import lib (`msvcrt.lib`) ahead of the static
+  `libcmt` that provides `printf`, which breaks every link with
+  `undefined symbol: printf`.
+- The compiled static library is cached under `<cache>/rust/<16-hex-key>/`
+  (key = canonical path + content digest + rustc identity + opt level; staged
+  and published by rename, pruned to 32 entries). The rustc identity is the
+  `--version` string, not the binary's metadata, because `~/.cargo/bin/rustc`
+  is a rustup shim. The executable cache key gains the rustc identity only
+  when the program has `.rs` dependencies, so pure-Aoxn cache keys are
+  unchanged.
+- `src/resolve.rs` no longer prefixes **extern** names: an extern IS a C
+  symbol emitted verbatim, so a namespace prefix would link against a name
+  that does not exist. This fixes a latent namespace+extern link bug and keeps
+  the synthesized Rust bindings callable; no working program's C changes.
+- New `tests/rust_interop.rs` (11 tests): ABI mapping, every import form,
+  the scanner's rejection table, comment/string/private-item handling, the
+  no-rustc `check`/`c`/`symbols` path, rustc error surfacing, artifact cache
+  hit/invalidation and the dependency walk. CI runs it on Windows and Linux
+  with `AOXN_TEST_REQUIRE_CLANG=1` and `AOXN_TEST_REQUIRE_RUSTC=1`.
+- Docs: new `docs/rust-interop.md`; `docs/spec.md` gains a Rust
+  interoperability section and `.rs` extension completion; `aoxn doctor`,
+  `AOXN_RUSTC` and the help text are updated.
+
 ## [0.55.0-snapshot-4] - 2026-11-07
 
 **Snapshot 4** combines the ZCode-based IDE workbench rebuild with the

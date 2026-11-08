@@ -128,7 +128,7 @@ pub fn parse(file: u32, src: &str) -> Result<Program, Diag> {
     for f in funcs.iter_mut() {
         fill_block(&mut f.body, &p.fn_opts, &p.fn_params);
     }
-    Ok(Program { imports, structs, funcs, assets: crate::assets::AssetSet::default() })
+    Ok(Program { imports, structs, funcs, assets: crate::assets::AssetSet::default(), rust_sources: Vec::new() })
 }
 
 impl Parser {

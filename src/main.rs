@@ -257,7 +257,9 @@ fn print_help() {
          AOXN_CACHE_DIR=<dir>    build-cache location (default: <cwd>/target/cache)\n  \
          AOXN_HOME=<dir>         toolchain root (default: the parent of this executable's bin/)\n  \
          AOXN_STDLIB=<dir>       stdlib sources (default: <root>/lib/stdlib)\n  \
-         AOXN_CLANG=<path>       clang driver to compile and link with",
+         AOXN_CLANG=<path>       clang driver to compile and link with\n  \
+         AOXN_RUSTC=<path>       rustc driver for `import \"./x.rs\"` (default: PATH,\n  \
+                     then ~/.cargo/bin); only needed when a program imports Rust",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -663,6 +665,16 @@ fn cache_key(opts: &Opts) -> Option<String> {
     opts.lib_paths.hash(&mut h);
     // linked-in toolchain identity (cheap: the resolved clang path)
     aoxn::find_clang().map(|p| p.display().to_string()).hash(&mut h);
+    // rustc identity, but ONLY when the program imports Rust: the version
+    // STRING, not the binary's metadata — `~/.cargo/bin/rustc` is a rustup
+    // shim whose path/size/mtime survive `rustup update`. Rust-free programs
+    // pay no query and keep their existing keys.
+    if sources.iter().any(|(p, _)| aoxn::rust::is_rs(p)) {
+        if let Some(rustc) = aoxn::rust::find_rustc() {
+            rustc.display().to_string().hash(&mut h);
+            aoxn::rust::identity(&rustc).hash(&mut h);
+        }
+    }
     // `--emit-assets` does not change the executable, but the cache-hit path
     // returns before the emit step runs, so an emit dir that changed since the
     // entry was written would silently keep publishing into the old directory.

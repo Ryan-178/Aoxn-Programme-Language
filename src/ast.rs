@@ -80,6 +80,11 @@ pub struct Program {
     /// into `funcs` as the `styles()` accessors (see `crate::assets`).
     /// Empty for the string-based entry points, which cannot resolve imports.
     pub assets: crate::assets::AssetSet,
+    /// Rust sources reached through `import`, in first-reached order. Their
+    /// `#[no_mangle] extern "C"` functions are already synthesized into
+    /// `funcs` as externs; this list is what the BUILD step hands to rustc
+    /// (see `crate::rust`). Check/c/symbols never need rustc.
+    pub rust_sources: Vec<std::path::PathBuf>,
 }
 
 #[derive(Debug)]

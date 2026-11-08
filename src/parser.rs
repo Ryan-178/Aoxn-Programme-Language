@@ -119,7 +119,7 @@ impl Parser {
                 _ => return Err(self.perr(self.pos().line, self.pos().col, "expected 'import', 'def' or 'struct' at top level (a module import may also start with `from`)")),
             }
         }
-        Ok(Program { imports, structs, funcs, assets: crate::assets::AssetSet::default() })
+        Ok(Program { imports, structs, funcs, assets: crate::assets::AssetSet::default(), rust_sources: Vec::new() })
     }
 
     /// A module path: either a quoted specifier (`"stdlib/net/json"`,

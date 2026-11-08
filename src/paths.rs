@@ -40,6 +40,15 @@ pub fn clang_names() -> &'static [&'static str] {
     }
 }
 
+/// rustc driver file names, most specific first (Windows accepts both).
+pub fn rustc_names() -> &'static [&'static str] {
+    if cfg!(windows) {
+        &["rustc.exe", "rustc"]
+    } else {
+        &["rustc"]
+    }
+}
+
 fn env_dir(key: &str) -> Option<PathBuf> {
     let p = PathBuf::from(std::env::var_os(key)?);
     if p.is_dir() {

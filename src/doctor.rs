@@ -110,6 +110,21 @@ pub fn cmd(args: &[String]) -> i32 {
         }
     }
 
+    // Rust toolchain — OPTIONAL: only programs that `import "./x.rs"` need
+    // it, so its absence is informational, never a problem.
+    match aoxn::rust::find_rustc() {
+        Some(path) => {
+            let version = aoxn::rust::version(&path);
+            rows.push(row("rustc", format!("{}  {}", path.display(), version), Some(true)));
+        }
+        None => {
+            rows.push(row_info(
+                "rustc",
+                "not found (optional) — needed only for .rs imports; install Rust or set AOXN_RUSTC".into(),
+            ));
+        }
+    }
+
     // end-to-end proof: import the stdlib by name, compile, run
     let mut smoke: Option<(bool, String)> = None;
     if smoke_enabled && clang.is_some() {

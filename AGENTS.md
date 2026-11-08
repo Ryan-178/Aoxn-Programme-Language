@@ -14,7 +14,7 @@ repo IS the
 compiler (Rust workspace: root `aoxn` crate + `crates/aoxn-pkg`).
 Language sources use the `.ax` extension. Language rules live in
 `docs/spec.md` (platform policy: `docs/platform-support.md`) 鈥?keep it in sync with `src/parser.rs` + `src/typecheck.rs`
-when the grammar changes. **Writing or editing `.ax` code: start from the
+when the grammar changes. **v0.55.0 snapshot 5 adds a Rust bridge**: `import "./x.rs"` compiles a self-contained Rust file with rustc and binds its `#[no_mangle] extern "C"` functions as ordinary externs (`src/rust.rs`, `docs/rust-interop.md`); rustc is an optional external toolchain like clang. **Writing or editing `.ax` code: start from the
 language card below** (`## Aoxn language card`) -- the whole surface,
 condensed from `docs/spec.md` + the stdlib sources, so a correct program can
 be written first-shot WITHOUT probe files. Update `CHANGELOG.md` on every version bump.
@@ -197,13 +197,14 @@ Env: `AOXN_DUMP_C=1` dumps generated C to stderr; `AOXN_TIME=1` prints
 pipeline phase wall-clock (lex/parse/typecheck/codegen/link);
 `AOXN_TC_TRACE=1` prints per-fn typecheck markers; `AOXN_CPU=native` (or
 `--cpu native`) targets the host CPU; `AOXN_CLANG=<path>` selects the clang
-executable; `AOXN_CLANG_ARGS` (newline-separated) is the env form of the
+executable; `AOXN_RUSTC=<path>` selects the rustc used by `.rs` imports
+(discovery: `AOXN_RUSTC`, else `PATH`, else `~/.cargo/bin`); `AOXN_CLANG_ARGS` (newline-separated) is the env form of the
 repeatable `--clang-arg` / `-g` passthrough; `AOXN_CC_WARNINGS=1` is the env
 form of `--cc-warnings` (drops the hard-coded `-w`). NOTE: `AOXN_DUMP_IR`,
 `AOXN_PASSES`, `AOXN_BACKEND`, `AOXN_CG_TRACE` are DEAD since v0.29.0
 (LLVM-era).
 
-Single test: `cargo test --test pipeline recursion_fib`.
+Single test: `cargo test --test pipeline recursion_fib`. Rust bridge tests: `cargo test --test rust_interop` (needs clang + rustc; `AOXN_TEST_REQUIRE_CLANG`/`AOXN_TEST_REQUIRE_RUSTC` turn a missing toolchain from a skip into a failure).
 
 ## Aoxn language card -- write `.ax` directly, no probe files
 
@@ -474,12 +475,20 @@ stdin (no `input()`); `inf`/`nan` literals (`math.NaN()` / `math.Inf()`);
 
 ## Environment facts (non-obvious, verified)
 
-- **clang is the only external toolchain** (needed to compile the generated C
-  and to link). Resolution order: `AOXN_CLANG` env 鈫?PATH 鈫?repo-local
+- **clang is the only external toolchain for the C backend** (needed to
+  compile the generated C and to link); since v0.55.0 snapshot 5, **rustc is a
+  second, OPTIONAL toolchain** for `.rs` imports (see the Rust interoperability
+  section). clang Resolution order: `AOXN_CLANG` env 鈫?PATH 鈫?repo-local
   `LLVM\bin\clang.exe` 鈫?`C:\Program Files\LLVM\bin\clang.exe`. The winget
   "LLVM 23.1.0" install on this machine survives purely as clang's home 鈥?
   no LLVM library is probed, linked, or shipped since v0.29.0 (`build.rs`,
   `src/llvm.rs`, `src/codegen.rs` are deleted).
+- **On this dev machine clang lives at `E:\llvm\bin\clang.exe`** (LLVM 23.1.2;
+  the registry `InstallLocation` is `E:\llvm\`), NOT under
+  `C:\Program Files\LLVM`, so `find_clang` does not discover it on its own.
+  Every cargo test / aoxn invocation in a session here needs
+  `AOXN_CLANG=E:/llvm/bin/clang.exe`. rustc is at `~/.cargo/bin/rustc`
+  (rustup shim); Git Bash needs `PATH="$HOME/.cargo/bin:$PATH"`.
 - clang auto-detects MSVC Build Tools, which must be installed (Rust host is
   x86_64-pc-windows-msvc) for the final link. User programs needing C
   libraries pass `-l NAME` / `-L DIR` (forwarded to clang).
@@ -606,6 +615,12 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   reject imports; only path-based entry points resolve them. A resolved
   `.css` target is diverted to the asset pipeline (`src/assets.rs`) instead
   of a front end; see the CSS assets section below.
+- A resolved `.rs` target is scanned by the Rust bridge (`src/rust.rs`):
+  `load_file` synthesizes one extern `FnDecl` per `#[no_mangle] extern "C"`
+  export, so the file is a module like any other (all import forms, `symbols`,
+  the IDE). `build`/`run` compile it with `rustc --crate-type staticlib` and
+  link the artifact plus rustc's `native-static-libs` note; `check`/`c`/
+  `symbols` never invoke rustc. See the Rust interoperability section below.
 - **Namespaces (v0.43.0): `src/resolve.rs` is the module layer, and it runs
   BEFORE typecheck, ON THE AST.** Each module gets a binding table (what its
   imports bring in, plus the namespace `import m` binds); every reference is
@@ -628,6 +643,11 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   - **An entry module's own names are always visible** 鈥?`entries` is passed
     to `resolve` for exactly this. Without it every program's `main` would
     be prefixed.
+  - **Extern names are never mangled** (`externness` from `f.is_extern`): an
+    `extern def` IS a C symbol and codegen emits it verbatim, so a prefix
+    would link against a name that does not exist. This also keeps the Rust
+    bridge's synthesized externs callable. No working program's C changes (a
+    mangled extern could never link).
   - **An unquoted specifier probes the importing file's own directory; a
     quoted one does not.** `ImportDecl.path_quoted` carries that difference
     all the way into `scan_imports`, which the build-cache key depends on 鈥?
@@ -1124,7 +1144,8 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   (cwd `stdlib/` fallback).
   **Still outside the selfhost CLI**: package-manager commands (explicitly
   rejected, never forwarded to Rust), CSS assets / `--emit-assets` /
-  `--tailwind`, namespace/selective imports, build-command caching (run only),
+  `--tailwind`, Rust `.rs` imports (same loader-level boundary as CSS),
+  namespace/selective imports, build-command caching (run only),
   and full doctor parity (no installed-root/examples rows, no arch in
   `platform`, smoke compiles but does not capture child output). Imported
   symbols are reported against the entry path because the loader has no file
@@ -1226,6 +1247,56 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   not fail the build (a CDN font or a file another tool copies in is valid).
 - Reference: `docs/css-assets.md`. Tests: `tests/assets.rs`,
   `tests/assets_v36.rs`.
+
+## Rust interoperability (src/rust.rs, v0.55.0 snapshot 5)
+
+- **`import "./native.rs"` compiles a Rust file with rustc and binds its
+  `#[no_mangle] extern "C"` functions as ordinary externs.** The scan runs in
+  the LOADER (`load_file`) and synthesizes one `FnDecl` per export, so every
+  import form, `aoxn symbols` and the IDE work unchanged. By typecheck/codegen
+  time the bindings ARE externs, so there is **no codegen dispatch and no
+  self-host mirror obligation** (the CSS-assets construction). The selfhost CLI
+  does not resolve `.rs` imports — same boundary as `.css`. Reference:
+  `docs/rust-interop.md`; tests: `tests/rust_interop.rs`.
+- **The scan needs no rustc**: `check`, `c` and `symbols` work on a machine
+  with no Rust toolchain (pure source analysis). Only `build`/`run` invoke
+  `rustc --edition=2021 --crate-type staticlib --crate-name aoxnrust
+  -C opt-level=<N> --print native-static-libs`.
+- **The ABI is deliberately narrow and EXACT**: `i64` -> `int`, `f64` ->
+  `float`, `*const`/`*mut c_char` -> `string`, no return -> `void`. Rust
+  `bool` is 1 byte while Aoxn `bool` is C `int`, so `bool` is REJECTED (as are
+  `i32`, `u64`, `String`, `&str`, `*const i64`); do not add a "converting"
+  mapping — it would be a silent ABI bug. Also rejected: generics, `where`
+  (before OR after the return type), `async`, variadics (`...`), tuple
+  parameter patterns, `#[export_name]`, raw idents, C-keyword/`main` names,
+  non-`"C"` ABIs, and an `extern "C" fn` without `#[no_mangle]` (its symbol is
+  mangled).
+- **Top-level exports only; single file.** The scanner does not descend into
+  an inline `mod { ... }` (it still compiles, just binds nothing), and a
+  `mod name;` / `include!` pull in files the cache key cannot see — both are
+  rejected. The scan is comment/string/raw-string aware.
+- **`/defaultlib:NAME` in rustc's native-static-libs note is a LINKER
+  DIRECTIVE, not an input library.** Translating it to `-lNAME` puts the
+  dynamic CRT import lib (`msvcrt.lib`) in front of the static `libcmt` that
+  provides `printf`, so EVERY link fails with `undefined symbol: printf`.
+  `classify_native_tokens` maps it to `-Wl,/DEFAULTLIB:NAME`; `-lfoo` and
+  `foo.lib` become `-lfoo`.
+- **Artifact cache**: `<cache>/rust/<16-hex-key>/` (staged as `<key>.<pid>`,
+  published by rename, pruned to 32). The key = canonical path + content
+  digest + rustc identity + opt level. **rustc identity is the `--version`
+  string, never the binary's path/size/mtime** — `~/.cargo/bin/rustc` is a
+  rustup shim whose metadata survives every `rustup update`. The exe cache key
+  gains the rustc identity **only when `.rs` deps exist**, so pure-Aoxn cache
+  keys are unchanged. `AOXN_NO_CACHE=1` / `AOXN_CACHE_DIR` apply.
+- **Extern names are never namespace-mangled** (`src/resolve.rs`
+  `externness`): an extern IS a C symbol emitted verbatim, so a prefix would
+  link against a name that does not exist. This rule predates the bridge but
+  the synthesized Rust externs depend on it.
+- **`aoxn doctor` reports rustc as an OPTIONAL row** (version when found,
+  "not found (optional)" otherwise); it never fails the report.
+- **CI requires BOTH toolchains** for `--test rust_interop`
+  (`AOXN_TEST_REQUIRE_CLANG` + `AOXN_TEST_REQUIRE_RUSTC`); GitHub runners ship
+  rustc. The scanner and the no-rustc paths run without either.
 
 ## Web benchmark suite (web/) 鈥?facts for future sessions
 
@@ -1486,7 +1557,7 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
 - **None of the new modules may be imported into `stdlib/stdlib.ax`** (the
   self-host critical path). All are plain Aoxn EXCEPT `hmac.ax` (fn-ptr 鈥?
   header-marked `selfhost 灏氫笉鍙紪璇慲, off the fixed-point path).
-- **CSV / random / socket (v0.56 unreleased)** are standalone modules, not on
+- **CSV / random / socket (v0.55.0 snapshots 4-5)** are standalone modules, not on
   the selfhost critical path, and all three are compiled and run by the
   selfhost CLI in tests:
   - `stdlib/csv.ax` is RFC 4180 parse/serialize with value errors

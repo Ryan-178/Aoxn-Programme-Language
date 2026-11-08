@@ -9,13 +9,19 @@ Rust compiler emits ISO C99 and invokes external clang. The compiler library
 `src/` has no external Rust crate dependencies or LLVM library dependency. The
 independent package manager has dependencies pinned in `Cargo.lock`.
 
-**Compiler 0.55.0; package-manager crate 0.42.0.** The latest versioned
-[changelog](CHANGELOG.md) entry fixes exponentiation precedence: `-2 ** 2` is
-`-4`. Unreleased work optimizes exception propagation/module/struct-cycle
-handling, ports None/dict/function-pointer/exception support into the
-self-hosted compiler, extends the Aoxn-written CLI (run/symbols/doctor/JSON/
-cache/options), and adds the CSV, random and socket stdlib modules. This does
-not introduce C source compatibility. See [C compatibility](docs/c-compatibility.md).
+**Compiler 0.55.0; package-manager crate 0.42.0.** The latest
+[changelog](CHANGELOG.md) entry, `[0.55.0-snapshot-5] - 2026-11-08`, is a
+pre-release snapshot of the same 0.55.0 line, not a new minor. It adds the
+**Rust bridge**: `import "./native.rs"` compiles a self-contained Rust file with
+rustc as a static library and binds its `#[no_mangle] extern "C"` functions as
+ordinary Aoxn `extern def` declarations, so the full Rust language and
+ecosystem stay available behind a narrow, explicit C ABI. Every import form,
+`aoxn symbols` and the IDE work unchanged; see
+[Rust interoperability](docs/rust-interop.md). Earlier 0.55.0 work brought the
+v0.40.0 language surface to the self-hosted compiler, extended the Aoxn-written
+CLI, added the CSV/random/socket stdlib modules, and fixed the
+`-2 ** 2 == -4` precedence. None of this
+introduces C source compatibility; see [C compatibility](docs/c-compatibility.md).
 
 ```python
 import * from "stdlib"
@@ -29,6 +35,26 @@ def main() -> int:
     return 0
 ```
 
+```python
+import * from "./native.rs"   # binds native.rs's #[no_mangle] extern "C" fns
+
+def main() -> int:
+    print(rs_add(2, 40))      # 42
+    return 0
+```
+
+```rust
+// native.rs
+#[no_mangle]
+pub extern "C" fn rs_add(a: i64, b: i64) -> i64 {
+    a + b
+}
+```
+
+rustc is an **optional** external toolchain, discovered like clang. `check`,
+`c` and `symbols` never invoke it, because the binding scan is pure source
+analysis; only `build` and `run` need Rust installed.
+
 ### Installation, platforms and commands
 
 Windows is first-class, Linux is supported, macOS is unsupported. The
@@ -36,8 +62,10 @@ Windows is first-class, Linux is supported, macOS is unsupported. The
 `Aoxn-<version>-Setup.exe` from the [release page](https://github.com/AlonechatWorkspace/Aoxn-language/releases).
 It unpacks into `%LOCALAPPDATA%\aoxn`, updates PATH and runs `aoxn doctor`.
 **Nothing is downloaded by default**; `-InstallClang` explicitly opts in.
-clang is external; Windows linking needs MSVC-compatible build tools. Unsigned
-binaries can be quarantined by OS policy; see [installation](docs/install.md).
+clang is external; Windows linking needs MSVC-compatible build tools. Rust is
+an external prerequisite only for `.rs` imports; `aoxn doctor` lists rustc as
+an optional row and never fails on its absence. Unsigned binaries can be
+quarantined by OS policy; see [installation](docs/install.md).
 
 Build the compiler with Rust. Compile native Aoxn programs with clang as well.
 Linux GUI programs need X11/Xft/fontconfig development libraries.
@@ -54,14 +82,16 @@ cargo run -- version
 ```
 
 On Linux use an output such as `-o fib`. `check`, `c` and `symbols` do not invoke
-clang. `--json` provides machine-readable diagnostics. `--O0` through `--O3`
-select clang optimization (default O3), not different C text. `--clang-arg`, `-g`
-and `--cc-warnings` expose clang options, debug information and warnings.
+clang or rustc. `--json` provides machine-readable diagnostics. `--O0` through
+`--O3` select clang optimization (default O3), not different C text.
+`--clang-arg`, `-g` and `--cc-warnings` expose clang options, debug information
+and warnings.
 
 `run`/`build` share a content-keyed cache. `AOXN_NO_CACHE=1` disables it;
-`AOXN_CACHE_DIR` relocates it. `AOXN_CLANG` selects clang; `AOXN_HOME` and
-`AOXN_STDLIB` select installed toolchain/library paths. `AOXN_DUMP_C=1` prints
-C, and `AOXN_TIME=1` reports lex/parse/resolve/typecheck/codegen/link phases.
+`AOXN_CACHE_DIR` relocates it. `AOXN_CLANG` selects clang and `AOXN_RUSTC`
+selects rustc; `AOXN_HOME` and `AOXN_STDLIB` select installed
+toolchain/library paths. `AOXN_DUMP_C=1` prints C, and `AOXN_TIME=1` reports
+lex/parse/resolve/typecheck/codegen/link phases.
 
 ### Language, ABI and self-hosting
 
@@ -77,6 +107,16 @@ C, and `AOXN_TIME=1` reports lex/parse/resolve/typecheck/codegen/link phases.
   maps to `long long`, not arbitrary C `int`; bool maps to C `int`, not a promise
   of `_Bool` compatibility. Externs are fixed-arity, not variadic. Internal
   aggregate ABI is not arbitrary C struct-by-value extern compatibility.
+- The Rust bridge accepts exact ABI pairs only: `i64` to `int`, `f64` to
+  `float`, `*const`/`*mut c_char` to `string`, and no return to `void`.
+  Everything else — Rust `bool` (one byte against Aoxn's C `int`), `i32`,
+  `u64`, `String`, `&str`, `*const i64`, generics, `where` clauses, `async`,
+  variadics, tuple parameter patterns, `#[export_name]`, raw identifiers,
+  C-keyword or `main` symbol names and non-`"C"` ABIs — is a diagnostic, not
+  a guess. An `extern "C" fn` without `#[no_mangle]` is rejected. Only
+  top-level exports bind, and the crate must be a single file (`mod name;` and
+  `include!` are rejected). The bindings are synthesized in the loader, so no
+  codegen dispatch exists and there is no self-host mirror obligation.
 - The TypeScript front end is a supported subset, not full TS/JavaScript.
   Closures, objects and GC remain gaps; see the [TS plan](docs/ts-m1-spec.md).
 
@@ -99,9 +139,10 @@ content-keyed run cache (`AOXN_NO_CACHE`/`AOXN_CACHE_DIR`) and
 
 Still outside the selfhost CLI, and rejected rather than forwarded: package
 commands, CSS assets/`--emit-assets`/`--tailwind`, and namespace/selective
-imports. Build caching, full doctor rows, imported-symbol file attribution and
-exact diagnostic spans are incomplete; Linux-native execution was not run this
-round. The Rust CLI remains the production entry point. Read
+imports. It also does not resolve `.rs` imports, exactly as it does not resolve
+`.css` assets. Build caching, full doctor rows, imported-symbol file attribution
+and exact diagnostic spans are incomplete; Linux-native execution was not run
+this round. The Rust CLI remains the production entry point. Read
 [C compatibility](docs/c-compatibility.md), the [spec](docs/spec.md),
 [language card](AGENTS.md) and [gaps](docs/language-gaps.md).
 
@@ -114,10 +155,12 @@ heapq, CSV, random and socket. Core containers/I/O remain in
 dialect; random is deterministic MINSTD and explicitly NOT cryptographically
 secure; socket is blocking IPv4 TCP (no DNS/UDP/IPv6/TLS) with Windows
 `-l ws2_32`, and its Linux branch is implemented but not natively executed in
-this round. The [UI](docs/ui.md) shares widgets across Win32/GDI and Linux
-X11/Xft. The [OpenAI](docs/openai-sdk.md) and
-[Anthropic](docs/anthropic-sdk.md) SDKs share JSON/HTTP/SSE; WinHTTP transport
-is Windows-only.
+this round. The [Rust bridge](docs/rust-interop.md) is the second foreign-code
+path beside clang FFI: a `.rs` import becomes synthesized extern declarations
+and a rustc-built static library, with rustc required only for `build`/`run`.
+The [UI](docs/ui.md) shares widgets across Win32/GDI and Linux X11/Xft. The
+[OpenAI](docs/openai-sdk.md) and [Anthropic](docs/anthropic-sdk.md) SDKs share
+JSON/HTTP/SSE; WinHTTP transport is Windows-only.
 
 The [package manager](docs/pkg-manager.md) uses `aoxn.json`, `aoxn.lock` and
 `aox_modules/`, with init/add/remove/install/update/list/freeze/tree/why/audit/
@@ -136,15 +179,17 @@ Main CI explicitly runs `cargo test -p aoxn --locked` and
 `cargo test -p aoxn-pkg --locked` on Windows/Linux: the root non-virtual workspace
 otherwise defaults to only `aoxn`. A separate named step reruns
 `--test c_emitter_parity --test c_abi` with `AOXN_TEST_REQUIRE_CLANG=1`; missing
-clang fails that gate instead of silently skipping the comparisons. Linux also
-runs the X11 probe under Xvfb. Release packaging/install smoke runs on tags or
-manual dispatch, not every push;
+clang fails that gate instead of silently skipping the comparisons. Both
+Windows and Linux jobs also run a named `Test Rust bridge` step,
+`cargo test -p aoxn --locked --test rust_interop`, with
+`AOXN_TEST_REQUIRE_CLANG=1` and `AOXN_TEST_REQUIRE_RUSTC=1`, so a missing rustc
+fails rather than skips. Linux also runs the X11 probe under Xvfb. Release
+packaging/install smoke runs on tags or manual dispatch, not every push;
 web benchmarks and IDE checks are separate. The web-bench workflow's bash steps
 use forward-slash paths: Git Bash treats a backslash as an escape, which had
 turned `web\server_win.ax` into `webserver_win.ax` and failed the build step.
-Windows smoke commands now check
-native exit codes immediately. Release notes match the installer's opt-in clang
-download behavior.
+Windows smoke commands now check native exit codes immediately. Release notes
+match the installer's opt-in clang download behavior.
 
 Current specifications and contributor instructions have been reconciled with
 the C backend; LLVM-era reports retain historical data with explicit boundaries.
@@ -166,22 +211,34 @@ links, execute documented commands, validate anchors or replace a security audit
 ```powershell
 $env:AOXN_CLANG = "E:/llvm/bin/clang.exe"  # choose an existing clang
 $env:AOXN_TEST_REQUIRE_CLANG = "1"
+$env:AOXN_TEST_REQUIRE_RUSTC = "1"
 cargo test -p aoxn --locked --no-fail-fast
 cargo test -p aoxn --locked --test c_emitter_parity --test c_abi
+cargo test -p aoxn --locked --test rust_interop
 cargo test -p aoxn-pkg --locked
 cargo check --workspace --tests --target x86_64-unknown-linux-gnu
 ```
 
-Final Windows validation for the current tree (2026-11-07, clang 23.1.2):
-**357 root + 105 package = 462 passed, 0 failed/ignored**; the complete log is
-`target/final-test.log`. Nineteen full-C comparison inputs, 22 rejection
-fixtures and three separately pinned known gaps are distinct categories, not
-parity successes. The four ABI tests (O0/O3), both parity targets, the original
+Final Windows validation for the current tree (2026-11-08, clang 23.1.2, rustc
+from rustup): **368 root + 105 package = 473 passed, 0 failed, 0 ignored**.
+The previous tree recorded 357 root tests; the eleven new `rust_interop` tests
+account for the difference. The 105 package tests are the last recorded
+`aoxn-pkg` result — that suite was not rerun this batch because no `aoxn-pkg`
+source changed. A second full run of the root suite stalled for more than 60 s
+in the single `selfhost_cli` test while a concurrent rebuild competed for the
+host; that test passes on its own in 68.67 s, so this is host contention, not a
+failure. Nineteen full-C comparison inputs, 22 rejection fixtures and three
+separately pinned known gaps are distinct categories, not parity successes. The
+suite includes the four ABI tests (O0/O3), both parity targets, the original
 fixed point, both CLI stages, real socket loopback (Rust and selfhost builds),
-random cross-process vectors and the Python `csv` differential all ran.
+random cross-process vectors and the Python `csv` differential. A manual mixed
+Aoxn+Rust program — Rust using `std` `HashMap`, `CStr` and `char`s, called from
+Aoxn — compiled and ran through `aoxn run` with exit 0.
 `cargo check --workspace --tests --target x86_64-unknown-linux-gnu` passed;
-Linux native linking/runtime was not executed. Reruns are not added to the
-counts. IDE tests and full installer packaging were not run for this batch.
+Linux native linking/runtime was not executed. `python -B tools/check_doc_links.py`
+reported `missing-path=0`, `historical-path=0` and 25 heuristic command-drift
+warnings (warning-only by default). IDE tests and full installer packaging were
+not run for this batch.
 
 **Dependency security, 2026-11-01**: the two JS manifests were re-audited and
 upgraded — `ide` to `next` 16.4.3 plus dompurify 3.4.17, `web/next-app` to
@@ -224,7 +281,7 @@ checker limitation.
 
 | Location | Purpose |
 |---|---|
-| `src/`, `tests/` | compiler, CLI, installer and regression suites |
+| `src/`, `tests/` | compiler, CLI, installer, C ABI/parity and Rust bridge suites |
 | `selfhost/` | self-hosted compiler subset |
 | `stdlib/`, `examples/` | libraries and examples |
 | `crates/aoxn-pkg/` | independent package manager |
@@ -247,11 +304,16 @@ Aoxn 是使用 Python 风格缩进的静态类型原生语言。Rust 编译器�
 再调用外部 clang；`src/` 编译器库没有外部 Rust crate 或 LLVM 库依赖。
 独立包管理器的依赖固定在 `Cargo.lock`。
 
-**编译器 0.55.0，包管理器 crate 0.42.0**；以清单和
-[CHANGELOG](CHANGELOG.md) 最新版本条目为准，0.55.0 修复 `-2 ** 2 == -4`。
-未发布工作优化异常传播/模块/结构体环检查，把 None/dict/函数指针/异常移植进自举、
-扩展 Aoxn 编写的 CLI（run/symbols/doctor/JSON/缓存/选项），并新增 CSV、random、
-socket 标准库模块。不新增 C 源码兼容。见 [C 兼容边界](docs/c-compatibility.md)。
+**编译器 0.55.0，包管理器 crate 0.42.0**。最新
+[CHANGELOG](CHANGELOG.md) 条目 `[0.55.0-snapshot-5] - 2026-11-08` 仍是 0.55.0
+线上的预发布快照，不是新小版本。本批新增 **Rust 桥**：`import "./native.rs"`
+把自包含 Rust 文件用 rustc 编译为静态库，并把其中 `#[no_mangle] extern "C"`
+函数绑定为普通 Aoxn `extern def` 声明，因此完整 Rust 语言与生态在一条窄而明确的
+C ABI 之后保持可用。所有导入形式、`aoxn symbols` 与 IDE 行为不变，详见
+[Rust 互操作](docs/rust-interop.md)。0.55.0 早前工作把 v0.40.0 语言面移植进
+自举、扩展了 Aoxn 编写的 CLI、新增 CSV/random/socket 标准库模块，并修复
+`-2 ** 2 == -4` 优先级。这些都不引入 C 源码兼容，见
+[C 兼容边界](docs/c-compatibility.md)。
 
 ```python
 import * from "stdlib"
@@ -265,13 +327,33 @@ def main() -> int:
     return 0
 ```
 
+```python
+import * from "./native.rs"   # 绑定 native.rs 的 #[no_mangle] extern "C" 函数
+
+def main() -> int:
+    print(rs_add(2, 40))      # 42
+    return 0
+```
+
+```rust
+// native.rs
+#[no_mangle]
+pub extern "C" fn rs_add(a: i64, b: i64) -> i64 {
+    a + b
+}
+```
+
+rustc 是**可选**外部工具链，发现顺序与 clang 相同。`check`、`c`、`symbols`
+从不调用它——绑定扫描是纯源码分析；只有 `build` 与 `run` 需要安装 Rust。
+
 ### 平台、安装和命令
 
 Windows 为一等平台，支持 Linux，不支持 macOS，以
 [平台政策](docs/platform-support.md) 为准。[Windows 发布包](https://github.com/AlonechatWorkspace/Aoxn-language/releases)
 为 `Aoxn-<version>-Setup.exe`，解包至 `%LOCALAPPDATA%\aoxn`、设置 PATH、
 运行 doctor。**默认不下载**；`-InstallClang` 显式启用下载。
-clang 为外部前提，Windows 链接需要 MSVC 兼容工具；未签名程序可能被系统隔离。
+clang 为外部前提，Windows 链接需要 MSVC 兼容工具；Rust 仅在 `.rs` 导入时需要，
+`aoxn doctor` 把 rustc 列为可选行，缺失也不判失败。未签名程序可能被系统隔离。
 见[安装指南](docs/install.md)。
 
 构建编译器需要 Rust，编译 Aoxn 程序还需 clang；Linux 图形程序另需
@@ -288,11 +370,11 @@ cargo run -- doctor --json
 cargo run -- version
 ```
 
-Linux 输出可写 `-o fib`。check/c/symbols 不调用 clang；`--json` 提供结构化诊断。
-`--O0` 至 `--O3` 仅选择 clang 优化级别（默认 O3），不改变 C 文本。
-`--clang-arg`、`-g`、`--cc-warnings` 用于透传参数、调试信息和警告。
+Linux 输出可写 `-o fib`。check/c/symbols 既不调用 clang 也不调用 rustc；
+`--json` 提供结构化诊断。`--O0` 至 `--O3` 仅选择 clang 优化级别（默认 O3），
+不改变 C 文本。`--clang-arg`、`-g`、`--cc-warnings` 用于透传参数、调试信息和警告。
 run/build 共享内容缓存；AOXN_NO_CACHE 禁用，AOXN_CACHE_DIR 改位置。
-AOXN_CLANG 指定 clang，AOXN_HOME/AOXN_STDLIB 指定安装位置；
+AOXN_CLANG 指定 clang，AOXN_RUSTC 指定 rustc，AOXN_HOME/AOXN_STDLIB 指定安装位置；
 AOXN_DUMP_C 打印 C，AOXN_TIME 输出各编译阶段耗时。
 
 ### 语言、ABI 与自举
@@ -305,6 +387,14 @@ AOXN_DUMP_C 打印 C，AOXN_TIME 输出各编译阶段耗时。
 - C FFI/原始内存依赖调用方正确约定。int 对应 long long 而不是任意 C int；
   bool 对应 C int，并不保证兼容 _Bool。extern 固定参数，不支持可变参数；
   内部聚合 ABI 不等于任意 C struct-by-value extern 兼容。
+- Rust 桥只接受精确 ABI 配对：`i64` 对应 `int`，`f64` 对应 `float`，
+  `*const`/`*mut c_char` 对应 `string`，无返回值对应 `void`。其余一律是
+  诊断而非猜测——Rust `bool`（1 字节，而 Aoxn `bool` 是 C `int`）、`i32`、
+  `u64`、`String`、`&str`、`*const i64`、泛型、`where` 子句、`async`、可变参数、
+  元组参数模式、`#[export_name]`、原始标识符、C 关键字或 `main` 符号名，以及
+  非 `"C"` ABI 都被拒绝；没有 `#[no_mangle]` 的 `extern "C" fn` 也被拒绝。
+  只绑定顶层导出，crate 必须是单文件（`mod name;` 与 `include!` 被拒绝）。
+  绑定由加载器合成，因此没有 codegen 分支，也没有自举镜像义务。
 - TS 前端为子集而非完整 TS/JS；对象、闭包、GC 仍有缺口，见[计划](docs/ts-m1-spec.md)。
 
 自举现覆盖 v0.40.0 语言面：None/`T | None`、`dict[V]`、函数指针与
@@ -321,9 +411,10 @@ W001、内容键 run 缓存（`AOXN_NO_CACHE`/`AOXN_CACHE_DIR`）与
 `AOXN_STDLIB`/`AOXN_HOME` 解析已实现。
 
 仍不在自举 CLI 内、且明确拒绝而非转发：包管理器命令、CSS 资源/
-`--emit-assets`/`--tailwind`、命名空间/选择性导入。build 缓存、完整 doctor 行、
-导入符号文件归属和精确诊断跨度仍不完整；本轮未执行 Linux 原生运行。生产 CLI 仍是
-Rust。见[C 边界](docs/c-compatibility.md)、[规范](docs/spec.md)、
+`--emit-assets`/`--tailwind`、命名空间/选择性导入。它同样不解析 `.rs` 导入，
+就像不解析 `.css` 资源。build 缓存、完整 doctor 行、导入符号文件归属和精确诊断
+跨度仍不完整；本轮未执行 Linux 原生运行。生产 CLI 仍是 Rust。见
+[C 边界](docs/c-compatibility.md)、[规范](docs/spec.md)、
 [语言卡](AGENTS.md)和[语言缺口](docs/language-gaps.md)。
 
 ### 库与工具
@@ -333,7 +424,9 @@ base64/hashlib/hmac/os/glob/json/bisect/heapq/csv/random/socket；核心容器�
 在 stdlib/stdlib.ax。CSV 是 RFC 4180 + 值错误，不等于 Python 全部 dialect；
 random 是确定性 MINSTD，**明确非密码学安全**；socket 是 blocking IPv4 TCP
 （无 DNS/UDP/IPv6/TLS），Windows 需 `-l ws2_32`，Linux 分支已实现但本轮未原生
-运行。[UI](docs/ui.md)共享控件层，后端为 Win32/GDI 与 X11/Xft。
+运行。[Rust 桥](docs/rust-interop.md)是 clang FFI 之外的第二条外部代码路径：
+`.rs` 导入变成合成的 extern 声明加 rustc 构建的静态库，只有 build/run 需要 rustc。
+[UI](docs/ui.md)共享控件层，后端为 Win32/GDI 与 X11/Xft。
 [OpenAI](docs/openai-sdk.md)/[Anthropic](docs/anthropic-sdk.md) SDK 共享传输基础，
 WinHTTP 为 Windows-only。
 
@@ -351,6 +444,9 @@ ZCode 衍生的 Zai 设计系统，并带助手、终端、Git 与预览面板�
 `cargo test -p aoxn-pkg --locked`；非虚拟工作区裸 cargo test 默认只测试根包。
 独立命名步骤以 `AOXN_TEST_REQUIRE_CLANG=1` 重跑
 `--test c_emitter_parity --test c_abi`，缺少 clang 会判定门禁失败，不再静默跳过比较。
+Windows 与 Linux 另有命名步骤 `Test Rust bridge`，执行
+`cargo test -p aoxn --locked --test rust_interop`，并设
+`AOXN_TEST_REQUIRE_CLANG=1` 与 `AOXN_TEST_REQUIRE_RUSTC=1`：缺 rustc 会失败而不是跳过。
 Linux 另跑 Xvfb 下 X11 probe。安装打包与冒烟在 tag/手动触发，不是每次 push；
 Web 基准和 IDE 独立。web-bench 工作流的 bash 步骤改用正斜杠路径：Git Bash 把
 反斜杠当转义吞掉（`web\server_win.ax` 变成 `webserver_win.ax`），曾导致构建步骤
@@ -374,18 +470,27 @@ python tools/check_doc_links.py
 ```powershell
 $env:AOXN_CLANG = "E:/llvm/bin/clang.exe"  # 替换为已有 clang
 $env:AOXN_TEST_REQUIRE_CLANG = "1"
+$env:AOXN_TEST_REQUIRE_RUSTC = "1"
 cargo test -p aoxn --locked --no-fail-fast
 cargo test -p aoxn --locked --test c_emitter_parity --test c_abi
+cargo test -p aoxn --locked --test rust_interop
 cargo test -p aoxn-pkg --locked
 cargo check --workspace --tests --target x86_64-unknown-linux-gnu
 ```
 
-当前树 Windows 最终验证（2026-11-07，clang 23.1.2）：**357根+105包=462项通过，
-0失败/忽略**；完整日志 `target/final-test.log`。19个完整 C 比较输入、22个拒绝样例、
-3个独立 known gaps 分别计证，不混算为 parity。4项 ABI（O0/O3）、两项 parity、
-原不动点、两阶段 CLI、真实 socket 回环（Rust 与 selfhost 构建）、随机数跨进程向量
-与 Python `csv` 差分均执行。`cargo check --workspace --tests --target
-x86_64-unknown-linux-gnu` 通过，未执行 Linux 原生链接/运行；重跑不重复计数。
+当前树 Windows 最终验证（2026-11-08，clang 23.1.2，rustc 来自 rustup）：
+**368根+105包=473项通过，0失败，0忽略**。上一棵树记录 357 项根测试，新增的
+11 项 `rust_interop` 测试正好是差额；105 项包测试是 `aoxn-pkg` 最后一次记录结果
+——本批未重跑该套件，因为 `aoxn-pkg` 源码未改。第二次完整跑根套件时，在并发重建
+争抢主机的情况下单个 `selfhost_cli` 测试停顿超过 60 秒；该测试单独运行 68.67 秒
+通过，因此这是主机竞争，不是失败。19个完整 C 比较输入、22个拒绝样例、
+3个独立 known gaps 分别计证，不混算为 parity。套件包含 4 项 ABI（O0/O3）、
+两项 parity、原不动点、两阶段 CLI、真实 socket 回环（Rust 与 selfhost 构建）、
+随机数跨进程向量与 Python `csv` 差分。一份手写的 Aoxn+Rust 混合程序（Rust 侧
+使用 `std` 的 `HashMap`、`CStr` 与 `char`，由 Aoxn 调用）经 `aoxn run` 编译运行，
+退出码 0。`cargo check --workspace --tests --target x86_64-unknown-linux-gnu`
+通过，未执行 Linux 原生链接/运行。`python -B tools/check_doc_links.py` 报告
+`missing-path=0`、`historical-path=0` 与 25 条启发式命令漂移警告（默认仅警告）。
 本批未运行 IDE 测试或完整安装器打包。
 
 **依赖安全 2026-11-01**：两份 JS 清单重新审计并升级——`ide` 到 `next` 16.4.3
@@ -417,9 +522,10 @@ Linux 的 `Test package manager` 不再中断，`Smoke test` 与 Xvfb 下的 X11
 1600 结构体合成链 typecheck 中位数 602.866→2.398ms，不能推为所有项目端到端加速。
 数组等包装类型间接结构体环仍为已知检查器限制。
 
-目录：src/tests 为编译器与回归，selfhost 为自举子集，stdlib/examples 为库/示例，
-crates/aoxn-pkg 为包管理，ide/web 为 IDE/Windows Web 基准；dist/package.ps1 打包，
-tools/compiler_perf.py 测量编译耗时；docs 为维护文档，**wiki 冻结且不作为当前权威**。
+目录：src/tests 为编译器与回归（C ABI/parity 及 Rust 桥套件），selfhost 为自举子集，
+stdlib/examples 为库/示例，crates/aoxn-pkg 为包管理，ide/web 为 IDE/Windows Web
+基准；dist/package.ps1 打包，tools/compiler_perf.py 测量编译耗时；
+docs 为维护文档，**wiki 冻结且不作为当前权威**。
 
 贡献遵守 [AGENTS.md](AGENTS.md)，漏洞私报见 [SECURITY.md](SECURITY.md)。
 许可证 [Apache-2.0](LICENSE)。

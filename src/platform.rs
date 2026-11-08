@@ -34,6 +34,17 @@ pub fn obj_ext() -> &'static str {
     }
 }
 
+/// Static library extension: `.lib` on Windows (MSVC convention, what
+/// `rustc --crate-type staticlib` produces for the MSVC target), `.a`
+/// elsewhere.
+pub fn staticlib_ext() -> &'static str {
+    if cfg!(windows) {
+        ".lib"
+    } else {
+        ".a"
+    }
+}
+
 /// Linker flag to give the main thread 8MB of stack: the default is 1MB and
 /// large stack-allocated arrays (the compiler's own allocas) overflow it.
 /// MSVC's `link.exe` spells this `/STACK:<bytes>`. Linux needs no flag —
