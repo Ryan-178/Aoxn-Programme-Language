@@ -212,7 +212,7 @@ match args[0].as_str() {
         "pkg" => std::process::exit(aoxn_pkg::run(&args[1..])),
         "init" | "add" | "remove" | "install" | "update" | "outdated" | "tree" | "why"
         | "publish" | "yank" | "audit" | "uninstall" | "cache" | "npm-import" | "list"
-        | "freeze" | "trust" => std::process::exit(aoxn_pkg::run(&args)),
+        | "freeze" | "trust" | "migrate" => std::process::exit(aoxn_pkg::run(&args)),
         other => {
             eprintln!("error: unknown command '{other}' (try: Aoxn --help)");
             std::process::exit(2);
@@ -250,7 +250,9 @@ fn print_help() {
          --json      emit diagnostics as JSON (AI-agent friendly)\n\n\
          PACKAGES:\n  \
          Aoxn pkg <cmd>         package management (same as the direct aliases below)\n  \
-         Aoxn init|add|remove|install|update|outdated|tree|why|publish|yank|audit|cache|npm-import\n\n\
+         Aoxn init|install|uninstall|migrate|add|remove|update|outdated|tree|why|list|freeze\n  \
+         Aoxn publish|yank|audit|trust|cache|npm-import\n  \
+         Aoxn install <pkg>      declare in aoxn.toml and install, e.g. `Aoxn install http>=1.2`\n\n\
          ENV:\n  \
          AOXN_CPU=native         same as --cpu native\n  \
          AOXN_NO_CACHE=1         disable the `Aoxn run` build cache\n  \

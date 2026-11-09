@@ -59,7 +59,7 @@ impl DepScope {
 }
 
 pub struct Ctx {
-    /// directory of the nearest aoxn.json
+    /// directory of the nearest manifest (`aoxn.toml` / legacy `aoxn.json`)
     pub project: PathBuf,
     pub manifest: Manifest,
     pub ws: Option<Workspace>,
@@ -95,7 +95,7 @@ impl Ctx {
 
     /// The default registry with no project around it, from the global
     /// config or `AOXN_REGISTRY`. `aoxn trust check` is a CI gate and has to
-    /// work from a directory that has no `aoxn.json`.
+    /// work from a directory that has no manifest.
     pub fn probe_default(offline: bool) -> Result<Ctx, PkgError> {
         let url = read_global_config(&Cache::global())
             .default_registry
@@ -171,7 +171,7 @@ impl Ctx {
                 return Ok(h.to_string());
             }
             return Err(PkgError::Config(format!(
-                "registry `{h}` is not declared in aoxn.json `registries`"
+                "registry `{h}` is not declared in the manifest's [tool.aoxn.registries]"
             )));
         }
         if let Some(url) = lookup("default") {
@@ -187,8 +187,9 @@ impl Ctx {
             return Ok(url.clone());
         }
         Err(PkgError::Config(
-            "no registry configured. Add to aoxn.json:\n  \
-             \"registries\": { \"default\": { \"url\": \"https://github.com/you/aoxn-registry\" } }\n\
+            "no registry configured. Add to aoxn.toml:\n  \
+             [tool.aoxn.registries.default]\n  \
+             url = \"https://github.com/you/aoxn-registry\"\n\
              or set the AOXN_REGISTRY environment variable"
                 .into(),
         ))
@@ -322,7 +323,7 @@ impl Ctx {
                     })?;
                     if !Manifest::exists_in(&abs) {
                         return Err(PkgError::Manifest(format!(
-                            "path dependency `{dep}` of `{}`: {} has no aoxn.json",
+                            "path dependency `{dep}` of `{}`: {} has no aoxn.toml or aoxn.json",
                             manifest.name,
                             abs.display()
                         )));
@@ -353,7 +354,12 @@ fn read_global_config(cache: &Cache) -> GlobalConfig {
 /// with one? Discovery reports both as config errors, and only the former
 /// may be answered by falling back to a registry-only context.
 fn is_no_project(e: &PkgError) -> bool {
-    matches!(e, PkgError::Config(msg) if msg.contains("no aoxn.json found"))
+    matches!(
+        e,
+        PkgError::Config(msg)
+            if msg.contains("no aoxn.toml or aoxn.json found")
+                || msg.contains("no aoxn.json found")
+    )
 }
 
 impl PackageSource for Ctx {

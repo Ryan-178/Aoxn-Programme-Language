@@ -1,9 +1,10 @@
 //! Workspace (monorepo) support.
 //!
-//! A workspace is an `aoxn.json` that declares `"workspace": {"members":
-//! ["packages/*"]}`. One lockfile lives at the workspace root; members
-//! depend on each other via path dependencies. `discover` finds both the
-//! nearest manifest (the "current package") and the enclosing workspace.
+//! A workspace is an `aoxn.toml` (or legacy `aoxn.json`) that declares
+//! `[tool.aoxn.workspace] members = ["packages/*"]`. One lockfile lives at
+//! the workspace root; members depend on each other via path dependencies.
+//! `discover` finds both the nearest manifest (the "current package") and
+//! the enclosing workspace.
 
 use std::path::{Path, PathBuf};
 
@@ -14,7 +15,7 @@ use crate::manifest::Manifest;
 pub struct Workspace {
     /// directory holding the root manifest + shared `aoxn.lock`
     pub root: PathBuf,
-    /// member package directories (each with its own `aoxn.json`)
+    /// member package directories (each with its own manifest)
     pub members: Vec<PathBuf>,
 }
 
@@ -82,7 +83,7 @@ fn expand_pattern(root: &Path, pattern: &str) -> Result<Vec<PathBuf>, PkgError> 
             return Ok(vec![dir]);
         }
         return Err(PkgError::Config(format!(
-            "workspace member `{pattern}` has no aoxn.json"
+            "workspace member `{pattern}` has no aoxn.toml or aoxn.json"
         )));
     }
     let (head, rest) = match norm.split_once('/') {
@@ -118,8 +119,9 @@ fn expand_pattern(root: &Path, pattern: &str) -> Result<Vec<PathBuf>, PkgError> 
     Ok(out)
 }
 
-/// Find the nearest `aoxn.json` walking up from `start`, then continue up to
-/// find an enclosing workspace. Returns `(project_dir, workspace_opt)`.
+/// Find the nearest manifest (`aoxn.toml`, else legacy `aoxn.json`) walking
+/// up from `start`, then continue up to find an enclosing workspace.
+/// Returns `(project_dir, workspace_opt)`.
 pub fn discover(start: &Path) -> Result<(PathBuf, Option<Workspace>), PkgError> {
     let start = if start.is_absolute() {
         start.to_path_buf()
@@ -152,7 +154,7 @@ pub fn discover(start: &Path) -> Result<(PathBuf, Option<Workspace>), PkgError> 
     }
     let Some(project) = project else {
         return Err(PkgError::Config(format!(
-            "no aoxn.json found in {} or any parent (run `aoxn init` first)",
+            "no aoxn.toml or aoxn.json found in {} or any parent (run `aoxn init` first)",
             start.display()
         )));
     };
@@ -179,9 +181,9 @@ mod tests {
         d
     }
 
-    fn write_manifest(dir: &Path, json: &str) {
+    fn write_manifest(dir: &Path, body: &str) {
         std::fs::create_dir_all(dir).unwrap();
-        std::fs::write(Manifest::path_for(dir), json).unwrap();
+        std::fs::write(Manifest::preferred_path(dir), body).unwrap();
     }
 
     #[test]
@@ -189,10 +191,10 @@ mod tests {
         let root = temp_root("expand");
         write_manifest(
             &root,
-            r#"{"name":"root","version":"0.1.0","workspace":{"members":["packages/*"]}}"#,
+            "[project]\nname = \"root\"\nversion = \"0.1.0\"\n\n[tool.aoxn.workspace]\nmembers = [\"packages/*\"]\n",
         );
-        write_manifest(&root.join("packages").join("a"), r#"{"name":"a","version":"0.1.0"}"#);
-        write_manifest(&root.join("packages").join("b"), r#"{"name":"b","version":"0.1.0"}"#);
+        write_manifest(&root.join("packages").join("a"), "[project]\nname = \"a\"\nversion = \"0.1.0\"\n");
+        write_manifest(&root.join("packages").join("b"), "[project]\nname = \"b\"\nversion = \"0.1.0\"\n");
         std::fs::create_dir_all(root.join("packages").join("empty")).unwrap(); // no manifest
 
         let ws = Workspace::load(&root, &Manifest::load(&Manifest::path_for(&root)).unwrap()).unwrap();
@@ -209,10 +211,26 @@ mod tests {
     #[test]
     fn standalone_project_has_no_workspace() {
         let root = temp_root("standalone");
-        write_manifest(&root, r#"{"name":"solo","version":"0.1.0"}"#);
+        write_manifest(&root, "[project]\nname = \"solo\"\nversion = \"0.1.0\"\n");
         let (project, found) = discover(&root).unwrap();
         assert_eq!(project, root);
         assert!(found.is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn legacy_json_projects_are_still_discovered() {
+        let root = temp_root("legacy");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            Manifest::legacy_path(&root),
+            r#"{"name":"solo","version":"0.1.0"}"#,
+        )
+        .unwrap();
+        let (project, found) = discover(&root).unwrap();
+        assert_eq!(project, root);
+        assert!(found.is_none());
+        assert_eq!(Manifest::path_for(&root), Manifest::legacy_path(&root));
         let _ = std::fs::remove_dir_all(&root);
     }
 }

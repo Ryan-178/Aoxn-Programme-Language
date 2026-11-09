@@ -220,7 +220,7 @@ lockfile regeneration cannot silently drop it.
   which is the case a per-file search would miss.
 - **Packages** (v0.33.0) — a second sidebar view (the crate icon in the
   activity bar) over the package manager. It reads the workspace's
-  `aoxn.json` tolerantly (missing is a normal state offering Init; broken
+  `aoxn.toml` (or legacy `aoxn.json`) tolerantly (missing is a normal state offering Init; broken
   JSON is reported in the panel), lists the dependencies and what is
   unpacked in `aox_modules/`, and exposes the whitelisted verbs as buttons:
   Init, Add, Install, Update, Outdated, Tree, Audit, Why, Remove. Every
@@ -236,7 +236,7 @@ lockfile regeneration cannot silently drop it.
   whitelisted, both read-only) and shows the **resolved** version — what
   the lockfile says was installed — next to its scope and source
   registry, plus an `old → new` marker for anything behind. This is the
-  difference from reading `aoxn.json` alone, which only says what the
+  difference from reading the manifest alone, which only says what the
   project *asks* for (`^2`). Neither report is fatal: no lockfile yet or
   a registry that did not answer costs one section and is reported in
   the panel, so a failed `outdated` never reads as "everything is

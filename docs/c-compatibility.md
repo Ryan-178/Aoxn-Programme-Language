@@ -205,7 +205,7 @@ and ABI implementation itself:
 
 Validated on Windows x86_64 with Rust 1.94.1 and explicitly selected clang
 23.1.2 (`AOXN_CLANG=E:/llvm/bin/clang.exe`), on the `c-parity-abi` worktree
-based on `8f90aca`. Versions remain compiler 0.55.0 / package crate 0.42.0;
+based on `8f90aca`. Versions remain compiler 0.55.0 / package crate 0.43.0;
 these are uncommitted/unreleased changes, not a new release claim.
 
 - Final `cargo test --no-fail-fast`: **349 passed, 0 failed, 0 ignored**.

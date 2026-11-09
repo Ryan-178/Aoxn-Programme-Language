@@ -5,8 +5,8 @@
 ### Supported versions and reporting
 
 The compiler is **0.55.0**, supported on the **0.55.x** line; the current tree
-is the **0.55.0-snapshot-5** pre-release. The independent package-manager crate
-is **0.42.0**. Fixes land on main first; earlier minor lines are not maintained.
+is the **0.55.0-snapshot-6** pre-release. The independent package-manager crate
+is **0.43.0**. Fixes land on main first; earlier minor lines are not maintained.
 Windows and Linux are supported, macOS is not. Version history is in
 [CHANGELOG.md](CHANGELOG.md).
 
@@ -35,7 +35,10 @@ vectors; the selfhost CLI's `run` spawns the compiled program with an argv vecto
 are CRT-quoted so empty/spaced/special values survive; that is correctness, not
 sanitization. Package commands and CSS/Tailwind options are rejected rather than
 forwarded, and the selfhost CLI does not resolve `.rs` imports (the same boundary
-as `.css` assets). The content-keyed build cache trusts files already present in
+as `.css` assets). The package manifest may be TOML (`aoxn.toml`) or legacy
+JSON; dependency names are validated against the same package-name allowlist
+before they become `aox_modules/<name>` directories, and path dependencies must
+contain a readable manifest before materialization. The content-keyed build cache trusts files already present in
 a writable cache directory: a hostile cache can substitute an executable, and it
 can also substitute the compiled Rust static libraries cached under
 `<cache>/rust/`. PATH is not authenticated, output creation is not exclusive, and
@@ -181,9 +184,10 @@ execution.
 `tools/check_doc_links.py` is read-only and dependency-free. It reads local Git
 history, never fetches URLs or executes documented commands, and defaults to
 warning-only. Its explicit historical allowlist and command heuristics limit
-coverage; it is not a security/link-completeness guarantee. On 2026-11-08 it
+coverage; it is not a security/link-completeness guarantee. On 2026-11-09 it
 reported `missing-path=0`, `historical-path=0` and 25 heuristic command-drift
-warnings. The [artifact audit](docs/repository-audit.md) documents
+warnings; its own test suite passed 11/11. The
+[artifact audit](docs/repository-audit.md) documents
 provenance/retention rather than deleting or certifying stored archives. No
 archive content was executed.
 
@@ -201,21 +205,22 @@ permissions, and the bridge checks its declarations, not its behavior.
 The thirteen findings from the 2026-10-17 audit were fixed in 0.51.0/0.51.1;
 that is history, not absence of new defects. Baseline **8f90aca** recorded
 343 root + 104 package tests on Windows with explicit clang 23.1.2. Current-tree
-validation passed **368 root + 105 package tests (473), 0 failed/ignored** on
-Windows (2026-11-08, clang 23.1.2, rustc from rustup); the eleven new
-`rust_interop` tests are the difference from the previous tree's 357 root tests,
-and the 105 package tests are the last recorded `aoxn-pkg` result (that suite was
-not rerun this batch — no `aoxn-pkg` source changed). A second full run stalled
-in the single `selfhost_cli` test while a concurrent rebuild competed for the
-host; that test passes alone in 68.67 s, so this is host contention, not a
-failure. The root suite includes all four ABI and two parity targets; this batch
-did not separately re-invoke the `AOXN_TEST_REQUIRE_CLANG=1` gate command.
+validation passed **375 root + 116 package tests (491), 0 failed/ignored** on
+Windows (2026-11-09, clang 23.1.2, rustc from rustup); the package suite grew
+with TOML-manifest and migration coverage, and the root suite grew with six
+compiler manifest-reader tests plus a TOML package-import pipeline test. IDE
+Rust tests passed 46/46. The IDE frontend ran 62/63: `theme.test.ts` could not
+load `react` because `node_modules` is absent in this checkout, while the
+package-manager frontend tests passed; `pnpm typecheck` could not run for the
+same reason. The root suite includes all four ABI and two parity targets; this
+batch did not separately re-invoke the `AOXN_TEST_REQUIRE_CLANG=1` gate command.
 Nineteen full-C inputs, 22 rejection fixtures and three known gaps are distinct
 categories. Native ABI cases ran at O0/O3; the original fixed point, both CLI
 stages, real socket loopback (Rust and selfhost builds), random cross-process
-vectors and the Python CSV differential are part of the suite. A manual mixed
-Aoxn+Rust program using `std` `HashMap`, `CStr` and `char` compiled and ran under
-`aoxn run` with exit 0. Linux Rust workspace/tests cross-check passed, not Linux
+vectors and the Python CSV differential are part of the suite. The manifest v2
+flows were exercised end to end (init, path install, directory-registry
+publish/install, migrate with round-trip verification). Linux Rust
+workspace/tests cross-check passed, not Linux
 native runtime. See [verification evidence](docs/c-compatibility.md). No fresh
 security audit, IDE validation, Linux native runtime or full installer release is
 implied. The P2 maintenance follow-up reran the explicit locked compiler/package
@@ -233,8 +238,8 @@ Xvfb) ran again.
 
 ### 支持版本与报告
 
-编译器 **0.55.0**，支持系列 **0.55.x**；当前树是 **0.55.0-snapshot-5**
-预发布。独立包管理器 crate **0.42.0**。修复先落 main，旧小版本不维护；
+编译器 **0.55.0**，支持系列 **0.55.x**；当前树是 **0.55.0-snapshot-6**
+预发布。独立包管理器 crate **0.43.0**。修复先落 main，旧小版本不维护；
 支持 Windows/Linux，不支持 macOS。见 [CHANGELOG](CHANGELOG.md)。
 
 漏洞先私报 **zmjsjsg3@163.com**，不要先发公开 issue。提供 commit/版本、系统架构、
@@ -254,7 +259,9 @@ Rust 与自举驱动都用参数向量调用 clang；自举 CLI 的 run 也用 a
 （Windows CRT `_spawnvp`、POSIX `fork`/`execvp`），绝不经过 shell。Windows 参数按
 CRT 规则引用，保证空串/空格/特殊字符原样到达，这不是消毒。包管理器命令与
 CSS/Tailwind 选项明确拒绝而非转发，自举 CLI 也不解析 `.rs` 导入（与 `.css`
-资源同一边界）。内容键构建缓存信任可写缓存目录中已存在的文件：恶意缓存既可替换
+资源同一边界）。包清单可以是 TOML（`aoxn.toml`）或旧 JSON；依赖名在成为
+`aox_modules/<name>` 目录之前仍按同一包名白名单校验，路径依赖物化前必须含可读
+清单。内容键构建缓存信任可写缓存目录中已存在的文件：恶意缓存既可替换
 可执行文件，也可替换缓存于 `<cache>/rust/` 下的 Rust 静态库；PATH 未经认证，
 输出不是独占创建；`stdlib/socket` 以调用者权限进行真实网络 I/O；
 `stdlib/random` 明确非密码学安全。对不可信项目使用系统/容器文件、网络和凭据隔离；
@@ -352,9 +359,9 @@ runner 会失败而不是跳过桥测试。Windows 冒烟/发布逐条检查原�
 
 文档检查器只读、无外部依赖，仅读本地 Git 历史，不访问 URL 或执行文档命令，
 默认仅警告。历史白名单与命令启发式限制其覆盖，不是安全/链接完整性保证。
-2026-11-08 它的报告为 `missing-path=0`、`historical-path=0` 和 25 条启发式命令
-漂移警告。[产物审计](docs/repository-audit.md)记录来源与保留决定，不删除或认证
-归档，没有执行归档内容。
+2026-11-09 它的报告为 `missing-path=0`、`historical-path=0` 和 25 条启发式命令
+漂移警告，其自身测试 11/11 通过。[产物审计](docs/repository-audit.md)记录来源与
+保留决定，不删除或认证归档，没有执行归档内容。
 
 ### 有意限制与证据
 
@@ -366,17 +373,17 @@ runner 会失败而不是跳过桥测试。Windows 冒烟/发布逐条检查原�
 
 2026-10-17 审计13项已在0.51.0/0.51.1修复，不保证没有新缺陷。
 历史基线 **8f90aca** 在 Windows 显式 clang 23.1.2 记录343根+104包；当前树最终
-**368根+105包=473项通过，0失败/忽略**（2026-11-08，clang 23.1.2，rustc 来自
-rustup）；新增的 11 项 `rust_interop` 测试正是相对上一棵树 357 项根测试的差额，
-105 项包测试是 `aoxn-pkg` 最后一次记录结果（本批未重跑该套件——`aoxn-pkg` 源码
-未改）。第二次完整跑时单个 `selfhost_cli` 测试在并发重建争抢主机时停顿；该测试
-单独运行 68.67 秒通过，因此是主机竞争而非失败。根套件包含全部4项 ABI 与2项
-parity；本批未单独重跑 `AOXN_TEST_REQUIRE_CLANG=1` 门禁命令。
+**375根+116包=491项通过，0失败/忽略**（2026-11-09，clang 23.1.2，rustc 来自
+rustup）；包套件新增 TOML 清单与迁移覆盖，根套件新增 6 项编译器清单读取测试和
+1 项 TOML 包导入流水线测试。IDE Rust 测试 46/46 通过；IDE 前端 62/63，
+`theme.test.ts` 因本检出缺少 `node_modules` 无法加载 `react`，包管理器前端测试
+通过，缺少 `node_modules` 也使 `pnpm typecheck` 无法运行。根套件包含全部4项
+ABI 与2项 parity；本批未单独重跑 `AOXN_TEST_REQUIRE_CLANG=1` 门禁命令。
 19个完整 C 输入、22个拒绝样例、3个 known gaps 分别计证；ABI 实际执行 O0/O3，
 原不动点、两阶段 CLI、真实 socket 回环（Rust 与 selfhost 构建）、随机数跨进程向量
-与 Python CSV 差分都在套件内。一份手写 Aoxn+Rust 混合程序（使用 `std` 的
-`HashMap`、`CStr` 与 `char`）经 `aoxn run` 编译运行，退出码 0。
-Linux Rust workspace/tests cross-check 通过，不等于原生运行。
+与 Python CSV 差分都在套件内。清单 v2 流程已端到端跑过（init、路径安装、
+目录注册表发布/安装、带往返校验的 migrate）。Linux Rust workspace/tests
+cross-check 通过，不等于原生运行。
 见[C 兼容证据](docs/c-compatibility.md)。不暗示新安全审计、IDE 验证、Linux 原生运行
 或完整安装器发布。P2维护后又执行显式locked编译器/包测试，结果与Python检查器
 测试见[仓库维护证据](docs/repository-audit.md)。该次维护未触发托管CI，

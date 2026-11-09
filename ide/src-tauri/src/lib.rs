@@ -164,8 +164,9 @@ fn ide_doctor(state: State<AppState>) -> Result<ExecResult, String> {
 
 // ---- packages ----
 
-/// The workspace's `aoxn.json`, read tolerantly (missing is a normal
-/// state, broken JSON is reported, never fatal).
+/// The workspace's manifest (`aoxn.toml`, else legacy `aoxn.json`), read
+/// tolerantly (missing is a normal state, a parse error is reported, never
+/// fatal).
 #[tauri::command]
 fn ide_pkg_manifest(state: State<AppState>) -> Result<PkgManifestInfo, String> {
     let ws = workspace(&state)?;

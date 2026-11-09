@@ -256,7 +256,7 @@ pub fn bootstrap(registry: Option<String>, offline: bool) -> Result<i32, PkgErro
 pub fn list(json: bool) -> Result<i32, PkgError> {
     let ui = crate::ui::current();
     // works inside a project or outside one: a CI trust gate usually runs
-    // from a directory with no aoxn.json
+    // from a directory with no project manifest
     let mut ctx = Ctx::discover_or_probe(false)?;
     let url = ctx.registry_url(None)?;
     let trust = index_of(&mut ctx, &url)?.ok_or_else(|| {

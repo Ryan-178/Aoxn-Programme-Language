@@ -142,11 +142,11 @@ export function handler(): void { ... }
 
 | 项 | 设计 |
 |----|------|
-| manifest | `aoxn.json`：name/version/main/exports/types/dependencies |
+| manifest | `aoxn.toml`（pyproject 形状：`[project]` name/version/main/exports/types/dependencies；旧 `aoxn.json` 仍可读） |
 | lockfile | `aoxn.lock`（内容寻址，含完整性哈希） |
 | 包目录 | `aox_modules/`（扁平 + 版本后缀消解冲突） |
 | registry | 已实现目录/git/只读 HTTP 镜像；不代表自建鉴权 registry 服务已完成 |
-| **npm 桥（已实现）** | `aoxn npm-import <npm-pkg>[@ver]`（或 `aoxn pkg npm-import`）：用 npm CLI 获取含 `aoxn.json` 的包，写入 `vendor/<name>/` 并记录 path dependency；拒绝普通 JS 包，不自动翻译或发布到 registry。实现/测试见 `crates/aoxn-pkg/src/npm.rs` |
+| **npm 桥（已实现）** | `aoxn npm-import <npm-pkg>[@ver]`（或 `aoxn pkg npm-import`）：用 npm CLI 获取含 `aoxn.toml`（或旧 `aoxn.json`）的包，写入 `vendor/<name>/` 并记录 path dependency；拒绝普通 JS 包，不自动翻译或发布到 registry。实现/测试见 `crates/aoxn-pkg/src/npm.rs` |
 
 ## 5. 验收样本（无真实项目期间的基线）
 

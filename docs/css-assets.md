@@ -124,7 +124,7 @@ import * from "./generated.css";
 ```
 
 This is deliberate. Tailwind is a plain-JavaScript npm package with no
-`aoxn.json`, and `aoxn npm-import` **rejects** those by design
+an Aoxn manifest, and `aoxn npm-import` **rejects** those by design
 (`crates/aoxn-pkg/src/npm.rs`, pinned by the `plain_js_package_is_rejected`
 test) — Aoxn links Aoxn packages, not JavaScript. Shelling out to the CLI the
 way the compiler shells out to clang would also make Node a build prerequisite,

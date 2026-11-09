@@ -2914,6 +2914,56 @@ fn pkg_manifest_subpath_exports() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// v0.56.0: `aoxn.toml` (`[project]` + `[project.exports]`) is the current
+/// package manifest. The compiler's zero-dependency reader must walk a
+/// pyproject-shaped file — including a multi-line dependency array it does
+/// not use — and resolve both the root and a subpath export.
+#[test]
+fn pkg_toml_manifest_resolution() {
+    let base = std::env::temp_dir().join(format!("Aoxn-pkg-toml-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(base.join("aox_modules/mypkg/src")).unwrap();
+    std::fs::write(
+        base.join("aox_modules/mypkg/aoxn.toml"),
+        "[project]\n\
+         name = \"mypkg\"\n\
+         version = \"0.1.0\"\n\
+         main = \"src/lib.ax\"\n\
+         dependencies = [\n\
+           \"http>=1.2\",\n\
+           \"other ^2\",\n\
+         ]\n\
+         \n\
+         [project.exports]\n\
+         \".\" = \"src/lib.ax\"\n\
+         \"./sub\" = \"src/sub.ax\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        base.join("aox_modules/mypkg/src/lib.ax"),
+        "def toml_root() -> int:\n    return 11\n",
+    )
+    .unwrap();
+    std::fs::write(
+        base.join("aox_modules/mypkg/src/sub.ax"),
+        "def toml_sub() -> int:\n    return 31\n",
+    )
+    .unwrap();
+    std::fs::write(
+        base.join("main.ax"),
+        "import * from \"mypkg\"\nimport * from \"mypkg/sub\"\n\ndef main() -> int:\n    print(toml_root() + toml_sub())\n    return 0\n",
+    )
+    .unwrap();
+
+    let exe = base.join(format!("main{EXE}"));
+    aoxn::build_paths_opts_lvl(&[base.join("main.ax").display().to_string()], &exe, 3, &[], &[])
+        .expect("TOML package manifest should resolve imports");
+    let out = Command::new(&exe).output().expect("failed to run");
+    assert!(out.status.success(), "stderr: {:?}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// v0.29.1 back-compat: a package without `aoxn.json` still imports via the
 /// legacy `aox_modules/<name>/index.ax` probe — the manifest reader returns
 /// None and `resolve_import` falls through.

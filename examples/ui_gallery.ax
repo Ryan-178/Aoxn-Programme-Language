@@ -74,7 +74,7 @@ def main() -> int:
     tm_set(tm, 6, 0, "README.md")
     tm_set(tm, 6, 1, "docs")
     tm_set(tm, 6, 2, "240")
-    tm_set(tm, 7, 0, "aoxn.json")
+    tm_set(tm, 7, 0, "aoxn.toml")
     tm_set(tm, 7, 1, "manifest")
     tm_set(tm, 7, 2, "18")
     tr = tree_model_new(8)

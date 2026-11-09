@@ -40,7 +40,7 @@ test('a well-formed report survives normalization', () => {
 })
 
 test('a missing or malformed report becomes an empty one, not a crash', () => {
-  // The panel must open in a folder with no aoxn.json and show a hint.
+  // The panel must open in a folder with no manifest and show a hint.
   for (const junk of [null, undefined, 42, 'text', [], { installed: 'no' }]) {
     const r = formatReport(junk)
     assert.deepEqual(r.installed, [])

@@ -21,7 +21,7 @@ pub fn run(allow_dirty: bool, dry_run: bool) -> Result<i32, PkgError> {
     // ---- preflight
     let Some(entry) = manifest.entry_file(&ctx.project) else {
         return Err(PkgError::Manifest(format!(
-            "`{}` declares no entry: set \"main\" in aoxn.json or add index.ax/main.ax",
+            "`{}` declares no entry: set `main` under [project] in aoxn.toml or add index.ax/main.ax",
             manifest.name
         )));
     };

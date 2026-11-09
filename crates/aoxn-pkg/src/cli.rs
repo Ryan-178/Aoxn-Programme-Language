@@ -38,7 +38,7 @@ pub struct Cli {
 
 #[derive(clap::Subcommand, Debug)]
 pub enum Cmd {
-    /// create aoxn.json (and a hello-world main) in the current directory
+    /// create aoxn.toml (and a hello-world main) in the current directory
     Init {
         /// default registry URL to record in the manifest
         #[arg(long)]
@@ -47,16 +47,22 @@ pub enum Cmd {
         #[arg(long)]
         name: Option<String>,
     },
-    /// add registry dependency(ies): <name>[@<req>] (req default: ^latest)
+    /// alias for `aoxn install <pkg>` (records the dependency, then installs)
     Add {
-        /// packages to add, e.g. `http@^2` or `json`
+        /// packages to add, e.g. `http>=1.2`, `http ^2`, `local @ path:../local`
         pkgs: Vec<String>,
-        /// add to devDependencies instead of dependencies
+        /// add to the `dev` extra instead of runtime dependencies
         #[arg(short = 'D', long)]
         dev: bool,
-        /// bind the dependency to a named registry from aoxn.json `registries`
+        /// bind the dependency to a named registry from aoxn.toml `registries`
         #[arg(long)]
         registry: Option<String>,
+    },
+    /// convert a legacy aoxn.json project to aoxn.toml
+    Migrate {
+        /// keep aoxn.json next to the new aoxn.toml
+        #[arg(long)]
+        keep: bool,
     },
     /// remove dependency(ies) from the manifest
     Remove {
@@ -66,8 +72,18 @@ pub enum Cmd {
         #[arg(short = 'D', long)]
         dev: bool,
     },
-    /// install everything per aoxn.json / aoxn.lock
+    /// install per aoxn.toml / aoxn.lock; with package arguments, record
+    /// them in the manifest first (pip-style `aoxn install http>=1.2`)
     Install {
+        /// packages to declare and install, e.g. `http>=1.2` or `./local-lib`
+        pkgs: Vec<String>,
+        /// record the packages in the `dev` extra (with no packages: install
+        /// dev dependencies only)
+        #[arg(short = 'D', long)]
+        dev: bool,
+        /// registry for packages being declared
+        #[arg(long)]
+        registry: Option<String>,
         /// re-resolve even when the lockfile matches the manifests
         #[arg(long)]
         force: bool,
@@ -78,7 +94,7 @@ pub enum Cmd {
         /// production only: leave dev-only packages out of aox_modules/
         #[arg(long, conflicts_with = "dev_only")]
         prod: bool,
-        /// dev tooling only: install devDependencies and skip the rest
+        /// dev tooling only: install dev dependencies and skip the rest
         #[arg(long)]
         dev_only: bool,
         /// parallel tarball downloads (default 8; 1 = serial)
@@ -154,11 +170,11 @@ pub enum Cmd {
         #[command(subcommand)]
         sub: TrustCmd,
     },
-    /// remove dependencies and clean up aox_modules
+    /// remove dependencies and clean up aox_modules (the pip spelling)
     Uninstall {
         /// package names to remove
         pkgs: Vec<String>,
-        /// remove from devDependencies only
+        /// remove from the `dev` extra only
         #[arg(short = 'D', long)]
         dev: bool,
     },
@@ -238,17 +254,57 @@ fn run_command(cli: Cli) -> Result<i32, PkgError> {
         Cmd::Add { pkgs, dev, registry } => {
             crate::manage::add(&pkgs, dev, registry.as_deref(), cli.dry_run, cli.offline)
         }
+        Cmd::Migrate { keep } => crate::manage::migrate(keep, cli.dry_run),
         Cmd::Remove { pkgs, dev } => crate::manage::remove(&pkgs, dev, cli.dry_run, cli.offline),
         Cmd::Uninstall { pkgs, dev } => crate::manage::remove(&pkgs, dev, cli.dry_run, cli.offline),
-        Cmd::Install { force, frozen, prod, dev_only, jobs } => crate::manage::install_cmd(
-            force,
-            frozen,
-            crate::manage::scope_from_flags(prod, dev_only),
-            crate::manage::jobs_from_flag(jobs),
-            cli.dry_run,
-            cli.offline,
-            cli.json,
-        ),
+        Cmd::Install { pkgs, dev, registry, force, frozen, prod, dev_only, jobs } => {
+            if pkgs.is_empty() {
+                if registry.is_some() {
+                    return Err(PkgError::Manifest(
+                        "`--registry` needs a package argument".into(),
+                    ));
+                }
+                if dev && (prod || dev_only) {
+                    return Err(PkgError::Manifest(
+                        "`--dev` means dev-only here and cannot be combined with --prod/--dev-only"
+                            .into(),
+                    ));
+                }
+                crate::manage::install_cmd(
+                    force,
+                    frozen,
+                    crate::manage::scope_from_flags(prod, dev_only || dev),
+                    crate::manage::jobs_from_flag(jobs),
+                    cli.dry_run,
+                    cli.offline,
+                    cli.json,
+                )
+            } else {
+                if frozen {
+                    return Err(PkgError::Manifest(
+                        "`--frozen` cannot be combined with package arguments: declaring a \
+                         dependency necessarily changes the manifest"
+                            .into(),
+                    ));
+                }
+                if prod || dev_only {
+                    return Err(PkgError::Manifest(
+                        "package arguments cannot be combined with --prod/--dev-only; \
+                         use --dev to record a dev dependency"
+                            .into(),
+                    ));
+                }
+                crate::manage::install_packages(
+                    &pkgs,
+                    dev,
+                    registry.as_deref(),
+                    crate::manage::jobs_from_flag(jobs),
+                    cli.dry_run,
+                    cli.offline,
+                    cli.json,
+                )
+            }
+        }
         Cmd::Update { pkgs, latest, dev, jobs } => crate::manage::update(
             &pkgs,
             latest,

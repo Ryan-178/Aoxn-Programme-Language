@@ -239,7 +239,7 @@ export default function Workbench() {
     }
   }, [])
 
-  /** Re-read `aoxn.json` + `aox_modules/` for the packages panel. */
+  /** Re-read `aoxn.toml` (or legacy `aoxn.json`) + `aox_modules/` for the packages panel. */
   const refreshPkg = useCallback(async () => {
     try {
       setPkg(await api.pkgManifest())
@@ -2013,7 +2013,7 @@ function PromptDialog({
 // ---- packages panel ----
 
 /**
- * The packages view: the workspace's `aoxn.json` at the top, the installed
+ * The packages view: the workspace's `aoxn.toml` at the top, the installed
  * packages under it, and the whitelisted `aoxn pkg` verbs as buttons. Every
  * command's output goes to the output panel verbatim — the panel is a
  * remote control for the real package manager, not a reimplementation.
@@ -2042,7 +2042,7 @@ function PackagesPanel({
       <div className="flex h-9 flex-none items-center gap-1.5 border-b border-border px-2.5">
         <PackageIcon className="size-3.5 text-foreground-subtle" />
         <span className="min-w-0 flex-1 truncate text-ui-sm font-semibold">Packages</span>
-        <Button aria-label="Re-read aoxn.json" onClick={onRefresh} size="icon-xs" type="button" variant="ghost">
+        <Button aria-label="Re-read manifest" onClick={onRefresh} size="icon-xs" type="button" variant="ghost">
           <RefreshCwIcon className="size-3.5" />
         </Button>
       </div>
@@ -2054,7 +2054,7 @@ function PackagesPanel({
         ) : !pkg.hasManifest ? (
           <div className="flex flex-col items-center gap-3 px-3 py-8 text-center">
             <div className="text-ui-sm text-foreground-subtle">
-              No aoxn.json in this folder. Init one to start tracking dependencies.
+              No aoxn.toml in this folder. Init one to start tracking dependencies.
             </div>
             <Button disabled={busy} onClick={() => onRun('init')} size="sm" type="button" variant="outline">
               Init

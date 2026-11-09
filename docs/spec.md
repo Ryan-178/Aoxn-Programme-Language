@@ -239,7 +239,8 @@ def main() -> int:
   specifier additionally looks in the importing file's own directory first, so
   `import util` finds the `util.ax` beside it, the way Python finds a sibling
   module; failing that it is resolved as a package import under
-  `aox_modules/` (through the package's `aoxn.json` `main` / `exports`), then
+  `aox_modules/` (through the package's `aoxn.toml` `[project]` `main` /
+  `exports`, or a legacy `aoxn.json`), then
   against the **installed standard library** (v0.30.0), where `stdlib` means
   the stdlib directory and `stdlib/ui` a module inside it 闁?`$AOXN_STDLIB`,
   else `$AOXN_HOME/lib/stdlib`, else the checkout, so a program written
@@ -975,7 +976,7 @@ Ordered by how much they cost the language's Python parity.
    AST.
 3. ~~Default parameter values~~ — **`def f(x: int = 3)` shipped in v0.51.0**
    (materialized at the call site).
-4. Package layout (`aoxn.json` `exports` conventions are already honoured;
+4. Package layout (`aoxn.toml` / legacy `aoxn.json` `exports` conventions are already honoured;
    publishing conventions are not). Module qualification and selective
    imports **shipped in v0.43.0**.
 5. ~~String indexing / iteration~~ — **shipped in v0.51.2**: `s[i]` yields a

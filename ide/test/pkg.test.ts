@@ -55,7 +55,16 @@ test('formatDep marks dev dependencies', () => {
 })
 
 test('package-name validation mirrors the Rust whitelist', () => {
-  for (const ok of ['http', 'json', 'http@^2', 'my-pkg_2', 'a@~1.0', 'x*y']) {
+  for (const ok of [
+    'http',
+    'json',
+    'http@^2',
+    'http>=1.2,<2',
+    'http==1.2.3',
+    'my-pkg_2',
+    'a@~1.0',
+    'x*y',
+  ]) {
     assert.equal(validatePkgName(ok), null, `${ok} should be accepted`)
   }
   for (const bad of ['', '   ', '-x', 'a b', '../evil', 'a/b', 'a\\b', 'a;b', '$PATH', 'x'.repeat(101)]) {

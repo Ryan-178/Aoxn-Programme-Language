@@ -167,10 +167,14 @@ pub fn install(ctx: &mut Ctx, ui: &Ui, opts: InstallOpts) -> Result<InstallRepor
     if needs_resolve {
         // dev and prod resolve together into one lockfile
         let roots = ctx.roots(DepScope::All)?;
-        let default_registry = if roots.is_empty() {
-            String::new()
-        } else {
+        // Only roots without their own registry hint need a default. A
+        // project whose dependencies are all bound to named/dir/HTTP
+        // registries (or declared with `aoxn install --registry <dir>`) must
+        // not be forced to configure one.
+        let default_registry = if roots.iter().any(|r| r.registry.is_none()) {
             ctx.registry_url(None)?
+        } else {
+            String::new()
         };
         let overrides = collect_overrides(&packages);
         let locked = old_lock.locked_versions();
@@ -396,8 +400,7 @@ fn check_engines(res: &Resolution) -> Result<(), PkgError> {
         .filter(|(_, sel)| {
             sel.min_aoxn
                 .as_deref()
-                .and_then(|r| semver::VersionReq::parse(r).ok())
-                .map(|req| !req.matches(&current))
+                .map(|r| !min_aoxn_admits(r, &current))
                 .unwrap_or(false)
         })
         .collect();
@@ -425,6 +428,26 @@ fn check_engines(res: &Resolution) -> Result<(), PkgError> {
             .unwrap_or_default(),
         detail,
     ))
+}
+
+/// Does a published minimum compiler version admit `current`?
+///
+/// The registry stores the publishing tool's version as a bare string
+/// (`"0.42.0"`), and the field means **at least** this version — the error
+/// text has always said `>=`. Parsing it as a semver requirement would make
+/// `0.42.0` the caret range `^0.42.0`, so every 0.43 install would reject
+/// packages published by 0.42. Prefix a bare version with `>=`; an explicit
+/// operator is honoured as written.
+fn min_aoxn_admits(min: &str, current: &semver::Version) -> bool {
+    let raw = min.trim();
+    let expr = if raw.starts_with(|c: char| c.is_ascii_digit()) {
+        format!(">={raw}")
+    } else {
+        raw.to_string()
+    };
+    semver::VersionReq::parse(&expr)
+        .map(|req| req.matches(current))
+        .unwrap_or(false)
 }
 
 /// Consult each registry's trust index and name the packages it has no
@@ -1072,6 +1095,23 @@ mod tests {
     fn packages_within_the_running_compiler_pass() {
         let res = resolution_of(vec![("ok", Some(">=0.0.1")), ("unbounded", None)]);
         check_engines(&res).unwrap();
+    }
+
+    /// A bare recorded version is a MINIMUM, not a caret range. Published
+    /// manifests store the publishing tool's version without an operator, and
+    /// `^0.42.0` excludes the next 0.x minor — which made every package
+    /// published by 0.42 uninstallable under 0.43 (caught end to end by
+    /// `aoxn install hello-pkg`).
+    #[test]
+    fn a_bare_minimum_version_means_at_least_that_version() {
+        let res = resolution_of(vec![("older", Some("0.42.0"))]);
+        check_engines(&res).unwrap();
+        let res = resolution_of(vec![("newer", Some("999.0.0"))]);
+        assert!(check_engines(&res).is_err());
+        let current = semver::Version::parse("1.2.3").unwrap();
+        assert!(min_aoxn_admits("1.0.0", &current));
+        assert!(min_aoxn_admits(">=1.2.3", &current));
+        assert!(!min_aoxn_admits(">1.2.3", &current));
     }
 
     #[test]

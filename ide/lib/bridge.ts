@@ -215,16 +215,13 @@ def main() -> int:
     print(clamp_i(300, 0, 255))
     return 0
 `,
-  '/preview/aoxn.json': `{
-  "name": "preview-fixture",
-  "version": "0.1.0",
-  "dependencies": {
-    "stdlib-demo": "^1.2"
-  },
-  "devDependencies": {
-    "axtest": "*"
-  }
-}
+  '/preview/aoxn.toml': `[project]
+name = "preview-fixture"
+version = "0.1.0"
+dependencies = ["stdlib-demo>=1.2"]
+
+[project.optional-dependencies]
+dev = ["axtest"]
 `,
   '/preview/aoxn.lock': '{ "lockfile_version": 1 }\n',
   '/preview/README.txt': 'Aoxn IDE — browser preview fixture.',
@@ -310,20 +307,26 @@ export const toolchain = (): Promise<ToolchainInfo> =>
 export const doctor = (): Promise<ExecResult> => call('ide_doctor', {}, notInBrowser)
 
 /**
- * The workspace's `aoxn.json`, read tolerantly. The fixture ships a small
- * manifest so the packages panel has something real to show in the browser.
+ * The workspace's `aoxn.toml`, read tolerantly. The fixture ships a small
+ * manifest so the packages panel has something real to show in the browser;
+ * the native backend parses TOML/JSON, the fixture answers with the already
+ * normalized shape.
  */
 export const pkgManifest = (): Promise<PkgManifest> =>
   call('ide_pkg_manifest', undefined, () => {
-    const raw = FIXTURE[`${FIXTURE_ROOT}/aoxn.json`]
+    const raw = FIXTURE[`${FIXTURE_ROOT}/aoxn.toml`]
     if (raw === undefined) return { ...EMPTY_MANIFEST, installed: [] }
-    let parsed: Record<string, unknown>
-    try {
-      parsed = JSON.parse(raw) as Record<string, unknown>
-    } catch (e) {
-      return { ...formatManifest(null), parseError: String(e) }
-    }
-    return formatManifest({ ...parsed, hasManifest: true, hasLockfile: true })
+    return formatManifest({
+      hasManifest: true,
+      name: 'preview-fixture',
+      version: '0.1.0',
+      hasLockfile: true,
+      dependencies: [
+        { name: 'stdlib-demo', req: '>=1.2', dev: false },
+        { name: 'axtest', req: '*', dev: true },
+      ],
+      installed: ['stdlib-demo', 'axtest'],
+    })
   })
 
 /**

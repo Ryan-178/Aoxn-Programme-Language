@@ -378,7 +378,7 @@ impl DependencyProvider for Provider<'_> {
 /// Resolve `roots` given the package source, the default registry URL and
 /// the locked versions (soft preference — see the module docs).
 ///
-/// `overrides` are forced requirements (`aoxn.json` `"overrides"`): wherever
+/// `overrides` are forced requirements (`[tool.aoxn.overrides]`): wherever
 /// the graph mentions one of these packages, the published requirement is
 /// discarded in favour of ours.
 pub fn resolve_deps(

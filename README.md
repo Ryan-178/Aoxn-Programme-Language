@@ -9,19 +9,22 @@ Rust compiler emits ISO C99 and invokes external clang. The compiler library
 `src/` has no external Rust crate dependencies or LLVM library dependency. The
 independent package manager has dependencies pinned in `Cargo.lock`.
 
-**Compiler 0.55.0; package-manager crate 0.42.0.** The latest
-[changelog](CHANGELOG.md) entry, `[0.55.0-snapshot-5] - 2026-11-08`, is a
-pre-release snapshot of the same 0.55.0 line, not a new minor. It adds the
-**Rust bridge**: `import "./native.rs"` compiles a self-contained Rust file with
-rustc as a static library and binds its `#[no_mangle] extern "C"` functions as
-ordinary Aoxn `extern def` declarations, so the full Rust language and
-ecosystem stay available behind a narrow, explicit C ABI. Every import form,
-`aoxn symbols` and the IDE work unchanged; see
-[Rust interoperability](docs/rust-interop.md). Earlier 0.55.0 work brought the
-v0.40.0 language surface to the self-hosted compiler, extended the Aoxn-written
-CLI, added the CSV/random/socket stdlib modules, and fixed the
-`-2 ** 2 == -4` precedence. None of this
-introduces C source compatibility; see [C compatibility](docs/c-compatibility.md).
+**Compiler 0.55.0; package-manager crate 0.43.0.** The latest
+[changelog](CHANGELOG.md) entry, `[0.55.0-snapshot-6] - 2026-11-09`, is a
+pre-release snapshot of the same 0.55.0 line, not a new minor. It turns the
+project manifest into a pyproject-shaped **`aoxn.toml`** (`[project]` plus a
+`dev` extra and `[tool.aoxn]` tables) and the dependency CLI into pip's
+`install`/`uninstall` vocabulary; `aoxn install <pkg>` declares then installs,
+and legacy `aoxn.json` projects keep working and convert with `aoxn migrate`.
+Snapshot 5 added the **Rust bridge**: `import "./native.rs"` compiles a
+self-contained Rust file with rustc as a static library and binds its
+`#[no_mangle] extern "C"` functions as ordinary Aoxn `extern def`
+declarations, so the full Rust language and ecosystem stay available behind a
+narrow, explicit C ABI. Earlier 0.55.0 work brought the v0.40.0 language
+surface to the self-hosted compiler, extended the Aoxn-written CLI, added the
+CSV/random/socket stdlib modules, and fixed the `-2 ** 2 == -4` precedence.
+None of this introduces C source compatibility; see
+[C compatibility](docs/c-compatibility.md).
 
 ```python
 import * from "stdlib"
@@ -162,12 +165,15 @@ The [UI](docs/ui.md) shares widgets across Win32/GDI and Linux X11/Xft. The
 [OpenAI](docs/openai-sdk.md) and [Anthropic](docs/anthropic-sdk.md) SDKs share
 JSON/HTTP/SSE; WinHTTP transport is Windows-only.
 
-The [package manager](docs/pkg-manager.md) uses `aoxn.json`, `aoxn.lock` and
-`aox_modules/`, with init/add/remove/install/update/list/freeze/tree/why/audit/
-trust/publish/yank/cache/npm-import commands and direct aliases. Registries are
-directories, git or read-only plain HTTP. npm-import requires Aoxn metadata,
-not arbitrary JS. Warm reuse rechecks content hashes, excluding only its own
-`index.ax` shim. [CSS assets](docs/css-assets.md) include CSS Modules,
+The [package manager](docs/pkg-manager.md) uses a pyproject-shaped `aoxn.toml`
+(`[project]` + `[project.optional-dependencies]` + `[tool.aoxn]`), `aoxn.lock`
+and `aox_modules/`; legacy `aoxn.json` projects are still read and convert with
+`aoxn migrate`. `aoxn install <pkg>` declares then installs, `aoxn install`
+syncs, and `uninstall/list/freeze/tree/why/outdated/audit/trust/publish/yank/
+cache/npm-import` follow the pip vocabulary; `add`/`remove` remain aliases.
+Registries are directories, git or read-only plain HTTP. npm-import requires
+Aoxn metadata, not arbitrary JS. Warm reuse rechecks content hashes, excluding
+only its own `index.ax` shim. [CSS assets](docs/css-assets.md) include CSS Modules,
 minification, URL handling and `--emit-assets`; built-in `--tailwind` is a subset.
 The [IDE](docs/ide.md) is a Tauri/Next.js/Monaco application with a
 ZCode-derived Zai design system, assistant, terminal, source-control and
@@ -219,26 +225,30 @@ cargo test -p aoxn-pkg --locked
 cargo check --workspace --tests --target x86_64-unknown-linux-gnu
 ```
 
-Final Windows validation for the current tree (2026-11-08, clang 23.1.2, rustc
-from rustup): **368 root + 105 package = 473 passed, 0 failed, 0 ignored**.
-The previous tree recorded 357 root tests; the eleven new `rust_interop` tests
-account for the difference. The 105 package tests are the last recorded
-`aoxn-pkg` result — that suite was not rerun this batch because no `aoxn-pkg`
-source changed. A second full run of the root suite stalled for more than 60 s
-in the single `selfhost_cli` test while a concurrent rebuild competed for the
-host; that test passes on its own in 68.67 s, so this is host contention, not a
-failure. Nineteen full-C comparison inputs, 22 rejection fixtures and three
-separately pinned known gaps are distinct categories, not parity successes. The
-suite includes the four ABI tests (O0/O3), both parity targets, the original
-fixed point, both CLI stages, real socket loopback (Rust and selfhost builds),
-random cross-process vectors and the Python `csv` differential. A manual mixed
-Aoxn+Rust program — Rust using `std` `HashMap`, `CStr` and `char`s, called from
-Aoxn — compiled and ran through `aoxn run` with exit 0.
-`cargo check --workspace --tests --target x86_64-unknown-linux-gnu` passed;
-Linux native linking/runtime was not executed. `python -B tools/check_doc_links.py`
-reported `missing-path=0`, `historical-path=0` and 25 heuristic command-drift
-warnings (warning-only by default). IDE tests and full installer packaging were
-not run for this batch.
+Final Windows validation for the current tree (2026-11-09, clang 23.1.2, rustc
+from rustup): **375 root + 116 package = 491 passed, 0 failed, 0 ignored**.
+The package suite grew from 105 to 116 (TOML manifest parse/round-trip/rejection,
+legacy JSON preservation, dependency-string forms, workspace discovery and TOML
+round-trip tests); the root suite grew from 368 to 375 (six new compiler
+manifest-reader tests plus the TOML package-import pipeline test). IDE Rust
+tests: **46 passed** (three new TOML manifest tests). The IDE frontend ran
+62/63: `test/theme.test.ts` cannot load `react` because `node_modules` is
+absent in this checkout; the package-manager frontend tests (`pkg.test.ts`,
+`pkgreport.test.ts`) pass, and `pnpm typecheck` cannot run without
+`node_modules` either. `cargo check --workspace --tests --target
+x86_64-unknown-linux-gnu` passed; Linux native linking/runtime was not executed.
+The manifest v2 flows were also exercised end to end on Windows: `aoxn init`,
+`aoxn install ./local-lib`, publishing a TOML package to a directory registry,
+`aoxn install hello-pkg --registry <dir>`, and `aoxn migrate` (including its
+round-trip verification and second-run refusal). Nineteen full-C comparison
+inputs, 22 rejection fixtures and three separately pinned known gaps are
+distinct categories, not parity successes. The suite includes the four ABI
+tests (O0/O3), both parity targets, the original fixed point, both CLI stages,
+real socket loopback (Rust and selfhost builds), random cross-process vectors
+and the Python `csv` differential. `python -B tools/check_doc_links.py` reported
+`missing-path=0`, `historical-path=0` and 25 heuristic command-drift warnings
+(warning-only); its own test suite passed 11/11. Full installer packaging was
+not run.
 
 **Dependency security, 2026-11-01**: the two JS manifests were re-audited and
 upgraded — `ide` to `next` 16.4.3 plus dompurify 3.4.17, `web/next-app` to
@@ -304,13 +314,17 @@ Aoxn 是使用 Python 风格缩进的静态类型原生语言。Rust 编译器�
 再调用外部 clang；`src/` 编译器库没有外部 Rust crate 或 LLVM 库依赖。
 独立包管理器的依赖固定在 `Cargo.lock`。
 
-**编译器 0.55.0，包管理器 crate 0.42.0**。最新
-[CHANGELOG](CHANGELOG.md) 条目 `[0.55.0-snapshot-5] - 2026-11-08` 仍是 0.55.0
-线上的预发布快照，不是新小版本。本批新增 **Rust 桥**：`import "./native.rs"`
-把自包含 Rust 文件用 rustc 编译为静态库，并把其中 `#[no_mangle] extern "C"`
-函数绑定为普通 Aoxn `extern def` 声明，因此完整 Rust 语言与生态在一条窄而明确的
-C ABI 之后保持可用。所有导入形式、`aoxn symbols` 与 IDE 行为不变，详见
-[Rust 互操作](docs/rust-interop.md)。0.55.0 早前工作把 v0.40.0 语言面移植进
+**编译器 0.55.0，包管理器 crate 0.43.0**。最新
+[CHANGELOG](CHANGELOG.md) 条目 `[0.55.0-snapshot-6] - 2026-11-09` 仍是 0.55.0
+线上的预发布快照，不是新小版本。本批把项目清单改为 pyproject 形状的
+**`aoxn.toml`**（`[project]` + `dev` extra + `[tool.aoxn]` 表），依赖 CLI 改为
+pip 的 install/uninstall 词汇：`aoxn install <pkg>` 先声明再安装，旧的
+`aoxn.json` 项目继续可读，并用 `aoxn migrate` 转换。snapshot 5 新增 **Rust 桥**：
+`import "./native.rs"` 把自包含 Rust 文件用 rustc 编译为静态库，并把其中
+`#[no_mangle] extern "C"` 函数绑定为普通 Aoxn `extern def` 声明，因此完整
+Rust 语言与生态在一条窄而明确的 C ABI 之后保持可用。所有导入形式、
+`aoxn symbols` 与 IDE 行为不变，详见 [Rust 互操作](docs/rust-interop.md)。
+0.55.0 早前工作把 v0.40.0 语言面移植进
 自举、扩展了 Aoxn 编写的 CLI、新增 CSV/random/socket 标准库模块，并修复
 `-2 ** 2 == -4` 优先级。这些都不引入 C 源码兼容，见
 [C 兼容边界](docs/c-compatibility.md)。
@@ -430,10 +444,14 @@ random 是确定性 MINSTD，**明确非密码学安全**；socket 是 blocking 
 [OpenAI](docs/openai-sdk.md)/[Anthropic](docs/anthropic-sdk.md) SDK 共享传输基础，
 WinHTTP 为 Windows-only。
 
-[包管理器](docs/pkg-manager.md)使用 aoxn.json/aoxn.lock/aox_modules，提供
-init/add/remove/install/update/list/freeze/tree/why/audit/trust/publish/yank/cache/
-npm-import 与直接别名；注册表为目录/git/只读明文 HTTP。npm-import 只收 Aoxn
-元数据，不支持任意 JS。热安装复用前重算内容哈希，仅排除自身 index.ax shim。
+[包管理器](docs/pkg-manager.md)使用 pyproject 形状的 `aoxn.toml`
+（`[project]` + `[project.optional-dependencies]` + `[tool.aoxn]`）、`aoxn.lock`
+与 `aox_modules/`；旧 `aoxn.json` 项目仍可读，并用 `aoxn migrate` 转换。
+`aoxn install <pkg>` 先声明再安装，`aoxn install` 按清单同步，其余采用 pip
+词汇（uninstall/list/freeze/tree/why/outdated/audit/trust/publish/yank/cache/
+npm-import），add/remove 保留为别名；注册表为目录/git/只读明文 HTTP。
+npm-import 只收 Aoxn 元数据，不支持任意 JS。热安装复用前重算内容哈希，
+仅排除自身 index.ax shim。
 [CSS](docs/css-assets.md)支持 Modules、压缩、URL、emit-assets，内建 Tailwind 是子集。
 [IDE](docs/ide.md)为独立测试的 Tauri/Next.js/Monaco 应用，界面采用
 ZCode 衍生的 Zai 设计系统，并带助手、终端、Git 与预览面板。
@@ -478,20 +496,27 @@ cargo test -p aoxn-pkg --locked
 cargo check --workspace --tests --target x86_64-unknown-linux-gnu
 ```
 
-当前树 Windows 最终验证（2026-11-08，clang 23.1.2，rustc 来自 rustup）：
-**368根+105包=473项通过，0失败，0忽略**。上一棵树记录 357 项根测试，新增的
-11 项 `rust_interop` 测试正好是差额；105 项包测试是 `aoxn-pkg` 最后一次记录结果
-——本批未重跑该套件，因为 `aoxn-pkg` 源码未改。第二次完整跑根套件时，在并发重建
-争抢主机的情况下单个 `selfhost_cli` 测试停顿超过 60 秒；该测试单独运行 68.67 秒
-通过，因此这是主机竞争，不是失败。19个完整 C 比较输入、22个拒绝样例、
+当前树 Windows 最终验证（2026-11-09，clang 23.1.2，rustc 来自 rustup）：
+**375根+116包=491项通过，0失败，0忽略**。包套件从 105 增至 116（TOML 清单
+解析/往返/拒绝、旧 JSON 保留、依赖字符串、工作区发现等测试）；根套件从 368 增至
+375（6 项编译器清单读取测试 + 1 项 TOML 包导入流水线测试）。IDE Rust 测试
+**46 项通过**（新增 3 项 TOML 清单测试）；IDE 前端 62/63，`test/theme.test.ts`
+因本检出缺少 `node_modules` 无法加载 `react`，包管理器前端测试
+（`pkg.test.ts`、`pkgreport.test.ts`）通过，缺少 `node_modules` 也使
+`pnpm typecheck` 无法运行。`cargo check --workspace --tests --target
+x86_64-unknown-linux-gnu` 通过，未执行 Linux 原生链接/运行。清单 v2 的端到端
+流程也在 Windows 上跑过：`aoxn init`、`aoxn install ./local-lib`、把 TOML 包
+发布到目录注册表、`aoxn install hello-pkg --registry <dir>`，以及
+`aoxn migrate`（含往返校验与二次运行拒绝）。19个完整 C 比较输入、22个拒绝样例、
 3个独立 known gaps 分别计证，不混算为 parity。套件包含 4 项 ABI（O0/O3）、
 两项 parity、原不动点、两阶段 CLI、真实 socket 回环（Rust 与 selfhost 构建）、
-随机数跨进程向量与 Python `csv` 差分。一份手写的 Aoxn+Rust 混合程序（Rust 侧
-使用 `std` 的 `HashMap`、`CStr` 与 `char`，由 Aoxn 调用）经 `aoxn run` 编译运行，
-退出码 0。`cargo check --workspace --tests --target x86_64-unknown-linux-gnu`
+随机数跨进程向量与 Python `csv` 差分。
+`cargo check --workspace --tests --target x86_64-unknown-linux-gnu`
 通过，未执行 Linux 原生链接/运行。`python -B tools/check_doc_links.py` 报告
-`missing-path=0`、`historical-path=0` 与 25 条启发式命令漂移警告（默认仅警告）。
-本批未运行 IDE 测试或完整安装器打包。
+`missing-path=0`、`historical-path=0` 与 25 条启发式命令漂移警告（默认仅警告），
+其自身测试 11/11 通过。IDE Rust 测试 46 项通过；前端 62/63（`theme.test.ts`
+因缺少 `node_modules` 无法加载 `react`，包管理器前端测试通过）。完整安装器
+打包未运行。
 
 **依赖安全 2026-11-01**：两份 JS 清单重新审计并升级——`ide` 到 `next` 16.4.3
 加 dompurify 3.4.17，`web/next-app` 到 `next` 15.5.28，共关闭 7 项公告；两份清单

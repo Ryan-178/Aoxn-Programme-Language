@@ -3,6 +3,65 @@
 Notable changes to the Aoxn compiler and language. Aoxn follows semver-ish
 minor bumps while pre-1.0: each minor version is a language milestone.
 
+## [0.55.0-snapshot-6] - 2026-11-09
+
+**Package manifest v2 and a pip-style dependency CLI.** The project manifest
+is now a pyproject-shaped `aoxn.toml`, and `aoxn install` follows pip's
+vocabulary. The compiler version stays 0.55.0; the `aoxn-pkg` crate moves to
+**0.43.0**.
+
+### `aoxn.toml` (manifest v2)
+
+- `[project]` carries `name`, `version`, `description`, Aoxn's `main` /
+  `types` / `exports`, and `dependencies` as an array of PEP 508-flavoured
+  strings: `http>=1.2,<2`, `json ^1`, `http==1.2.3`, `http~=1.2`, and local
+  packages as `my-utils @ path:../my-utils` (`file:` accepted too). Extras
+  and environment markers are diagnosed rather than guessed.
+- `[project.optional-dependencies].dev` is the dev extra (also readable from
+  PEP 735 `[dependency-groups].dev`); `[tool.aoxn]` holds registry hints
+  (`{ registry = "mirror" }`), `overrides`, named `registries`, and
+  `workspace.members`. A poetry-style `[tool.aoxn.dependencies]` entry may
+  introduce a dependency with `version` / `path` / `registry` on its own.
+- **Legacy `aoxn.json` is still read everywhere** — the package manager, the
+  compiler's package-entry resolver, npm imports, workspaces and the IDE. A
+  new project writes TOML; editing a legacy project keeps its JSON format.
+  `aoxn migrate [--keep]` converts in place, re-reads and re-serializes the
+  new file to prove a stable round trip before deleting the JSON.
+- The compiler's `src/pkg_manifest.rs` gained a zero-dependency TOML subset
+  reader (tables, dotted/quoted keys, strings, arrays, inline tables, arrays
+  of tables skipped) and prefers `aoxn.toml` over `aoxn.json`. Entry
+  resolution still falls through to the legacy `index.ax` probe when no
+  manifest resolves.
+
+### pip-style CLI
+
+- `aoxn install <pkg>...` **declares then installs** (the uv/pip hybrid the
+  declarative `aox_modules/` model requires): unpinned registry specs select
+  the newest release and record `^latest`, `--dev` records the `dev` extra,
+  and a directory argument (`aoxn install ./local-lib`) becomes a path
+  dependency named by its manifest. `aoxn install` with no arguments syncs
+  the manifest; `--frozen` and `--prod`/`--dev-only` keep their meanings.
+- `aoxn uninstall` is the primary removal spelling; `add`/`remove` remain
+  aliases. `aoxn init` writes `aoxn.toml` and points at `aoxn install`.
+  `aoxn migrate` is a direct alias alongside the other package commands.
+- Fixed: resolution required a default registry even when every root had its
+  own registry hint, so `aoxn install pkg --registry <dir>` failed right
+  after a successful index read. The default is now required only for roots
+  without a hint.
+- Fixed: the recorded minimum compiler version was parsed as a bare semver
+  requirement (`0.42.0` ⇒ `^0.42.0`), so a 0.43 tool rejected every package
+  published by 0.42 even though the field means “at least” — its error text
+  has always said `>=`. Bare minimums are now prefixed with `>=`; explicit
+  operators are honoured as written. A regression test covers the cross-minor
+  case that the end-to-end install exposed.
+- The IDE packages panel reads `aoxn.toml` first (legacy JSON second), accepts
+  pip-style requirement punctuation in its package prompt, and offers
+  `migrate`; the browser fixture ships a TOML manifest.
+- New tests: manifest TOML parse/round-trip/rejection, legacy JSON
+  preservation, dependency-string forms, workspace discovery in both formats,
+  IDE manifest parsing, and a compiler pipeline test that builds and runs a
+  program importing a TOML-manifest package with a subpath export.
+
 ## [0.55.0-snapshot-5] - 2026-11-08
 
 **Snapshot 5 adds the Rust bridge**: the Aoxn compiler can compile Rust code.

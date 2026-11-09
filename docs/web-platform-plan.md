@@ -72,7 +72,7 @@ import express from "express";            // 包导入
 export function handler(req: Request) { ... }
 ```
 
-以下三条是原始方案，不是当前实现：当前使用 `aox_modules/` + `aoxn.json`，
+以下三条是原始方案，不是当前实现：当前使用 `aox_modules/` + `aoxn.toml`（旧 `aoxn.json` 仍可读），
 不读取 node_modules；旧导入已恢复，自举 loader 也未获得完整绑定层。
 
 - 原计划解析规则采用 **node_modules 式自底向上查找** + `package.json`
@@ -100,7 +100,7 @@ npm 桥接范围见 §8，不表示鉴权 registry 服务和 npm 代码转换已
 
 **已决策：A2 独立包管理**（自有 registry / 包格式 / lockfile）。设计要点：
 
-- **包格式**：自有 manifest（暂称 `aoxn.json`）+ 自有 lockfile；版本号
+- **包格式**：自有 manifest（`aoxn.toml`，pyproject 形状；旧 `aoxn.json` 仍可读）+ 自有 lockfile；版本号
   沿用 semver（学习成本最低）。
 - **registry**：自建 registry 服务（协议对齐 npm Registry API 的成熟
   子集，便于工具链复用），支持私有 scope 与鉴权。
@@ -207,7 +207,7 @@ Modules**。落地形态：
   改写器识别选择器上下文，字符串字面量、`@media` 参数、声明值中的 `.`
   均不误改（各有测试钉住）；
 - **Tailwind 类工具链**：**接入方式已定为「预生成产物」**（v0.34.0）。
-  Tailwind 本体是纯 JS npm 包、无 `aoxn.json`，而 `aoxn npm-import` 按设计
+  Tailwind 本体是纯 JS npm 包、无 Aoxn manifest，而 `aoxn npm-import` 按设计
   拒绝这类包（`plain_js_package_is_rejected`）——Aoxn 链接的是 Aoxn 包，
   不是 JavaScript。改为前端自行运行 Tailwind CLI，产物作为普通 `.css`
   进入同一管线：既不把 Node 变成构建前置（一键安装刻意避免），也与
@@ -236,7 +236,7 @@ Modules**。落地形态：
 - 【C 历史决策】W1 曾一次切换；**v0.43.0 已恢复旧导入**为整模块形式，
   当前以 `src/resolve.rs` 的绑定语义为准，不再把移除旧语法列作待办。
 - 【A2 配套已落地】`aoxn npm-import <pkg>` 用 npm CLI 获取**已有
-  `aoxn.json`** 的包，vendor 为 path dependency；拒绝普通 JS 包，不做
+  `aoxn.toml`（或旧 `aoxn.json`）** 的包，vendor 为 path dependency；拒绝普通 JS 包，不做
   自动转换/发布或透明代理（`crates/aoxn-pkg/src/npm.rs`）。
 - 【TS】TS-M1 验收样本：暂以 3 个规范样本（REST API 服务 / SSR 页面渲染 /
   泛型工具库）作为验收基线，团队真实项目到位后替换。

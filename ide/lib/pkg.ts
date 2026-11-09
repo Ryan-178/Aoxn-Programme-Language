@@ -84,8 +84,8 @@ export function validatePkgName(raw: string): string | null {
   if (name.startsWith('-')) return "A package name cannot start with '-'."
   if (/\s/.test(name)) return 'A package name cannot contain spaces.'
   if (name.includes('/') || name.includes('\\')) return 'A package name is not a path.'
-  if (!/^[A-Za-z0-9_.@^~*-]+$/.test(name)) {
-    return 'Only letters, digits and - _ . @ ^ ~ * are allowed in a package name.'
+  if (!/^[A-Za-z0-9_.@^~*<>=!,+-]+$/.test(name)) {
+    return 'Only letters, digits and - _ . @ ^ ~ * < > = ! , are allowed in a package spec.'
   }
   return null
 }
@@ -136,7 +136,7 @@ export interface ResolvedDep extends InstalledPkg {
  * This is the join the panel exists for: the manifest says what the project
  * ASKS for (`^2`), the lockfile says what it GOT (`2.1.0`), and the
  * registry says what is available (`2.4.0`). Showing only the first is what
- * a package panel that reads `aoxn.json` alone shows, and it is the reason
+ * a package panel that reads the manifest alone shows, and it is the reason
  * `pip list` and `pnpm outdated` are separate commands people run.
  */
 export function withUpgrades(report: PkgReport): ResolvedDep[] {

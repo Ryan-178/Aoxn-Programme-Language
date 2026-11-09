@@ -126,13 +126,22 @@ package 鈫?install 鈫?doctor 鈫?run check on every push. clang stays an
 external prerequisite (Aoxn emits C).
 
 Package management (`crates/aoxn-pkg`, beta): `Aoxn pkg <cmd>` plus direct
-aliases `Aoxn init|add|remove|install|update|outdated|list|freeze|tree|why|
-publish|yank|audit|trust|cache|npm-import`. Manifest `aoxn.json`, lockfile
-`aoxn.lock`, install dir
+aliases `Aoxn init|install|uninstall|migrate|add|remove|update|outdated|list|
+freeze|tree|why|publish|yank|audit|trust|cache|npm-import`. Manifest
+`aoxn.toml`, lockfile `aoxn.lock`, install dir
 `aox_modules/`; registries are directories, git repos, or read-only HTTP mirrors (`http://`, v0.29.4); resolution is
-PubGrub; `Cargo.lock` pins aoxn-pkg's own dependencies. v0.29.1: bare
+PubGrub; `Cargo.lock` pins aoxn-pkg's own dependencies. **v0.55.0 snapshot 6
+is manifest v2**: `aoxn.toml` is pyproject-shaped (`[project] name/version/
+description/main/types/dependencies = ["http>=1.2"]`, the `dev` extra under
+`[project.optional-dependencies]`, and `[tool.aoxn]` for registry hints,
+overrides, registries and workspaces). `aoxn install <pkg>` declares the
+dependency then installs (pip/uv spelling; `add`/`remove` stay aliases),
+`aoxn install` syncs, `aoxn uninstall` removes, and `aoxn migrate` converts
+a legacy `aoxn.json` and verifies the TOML round trip before deleting it.
+Legacy JSON is still read by the package manager, the compiler and the IDE.
+v0.29.1: bare
 package imports resolve entries via the manifest's `main`/`exports`/`types`
-(`src/pkg_manifest.rs`, zero-dep JSON reader). v0.29.4: read-only HTTP
+(`src/pkg_manifest.rs`, zero-dep TOML/JSON subset reader). v0.29.4: read-only HTTP
 registry backend (`crates/aoxn-pkg/src/registry/http.rs`, TLS-free
 `std::net` client; `packages/names.json` feeds the typosquat guard).
 v0.29.5: npm bridge `aoxn npm-import` (`npm.rs`) 鈥?the npm CLI is the
@@ -841,7 +850,7 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
     解析结果不变，本地包仍然优先于同名同目录文件。全都找不到时错误指向同目录
     位置，而不是幻影 `aox_modules\<name>`。
   - **`resolve_pkg_entry` 与 `stdlib_dir()` 都有 per-process 记忆。** 前者过去
-    每条 import 边都重读+重解析同一个 `aoxn.json`；后者每次落空的包拼法都要
+    每条 import 边都重读+重解析同一个清单文件（`aoxn.toml`，或旧 `aoxn.json`）；后者每次落空的包拼法都要
     `getenv` + `is_dir` 探测。`doctor` 要**活的**答案，走
     `stdlib_dir_uncached`——它诊断的就是这个目录。
   - **构建缓存的 key 由"边走边哈希"得到**（`dependency_digests`）。过去
@@ -1223,7 +1232,7 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   partials) or editing a stylesheet silently serves a stale cached exe.
   `cache_key` (src/main.rs) hashes whatever that returns.
 - **Tailwind is PRE-GENERATED CSS, deliberately** 鈥?not a dependency. It is a
-  plain-JS npm package with no `aoxn.json`, which `aoxn npm-import` rejects by
+  plain-JS npm package with no Aoxn manifest, which `aoxn npm-import` rejects by
   design (`plain_js_package_is_rejected`). Shelling out to the Tailwind CLI
   would make Node a build prerequisite; the one-click install avoids that.
   v0.36.0 added a **built-in utility subset** (`src/tailwind.rs`,
@@ -1302,7 +1311,7 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
 
 - Platform direction decided (docs/web-platform-plan.md + docs/ts-m1-spec.md):
   TS front end -> existing pipeline (full TS syntax compatibility goal),
-  **independent** package management (own manifest `aoxn.json`/`aoxn.lock`/
+  **independent** package management (own manifest `aoxn.toml`/`aoxn.lock`/
   `aox_modules/`; no registry proxy), CSS full compatibility + Tailwind
   toolchain (as pre-generated CSS) + CSS Modules (both landed v0.34.0).
   Acceptance baseline: 3 canonical samples

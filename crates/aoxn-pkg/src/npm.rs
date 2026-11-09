@@ -8,10 +8,11 @@
 //!   work). A registry-proxy backend would need an HTTPS client in this
 //!   crate, which the zero-build-script dependency constraint forbids.
 //! - only **Aoxn packages** can be imported: the tarball must contain an
-//!   `aoxn.json` in its package root. Plain JavaScript packages are
-//!   rejected with an explanation — Aoxn cannot link JavaScript.
-//! - the imported package lands in `vendor/<name>/` and is recorded in
-//!   `aoxn.json` as a **path dependency** (`{"path": "vendor/<name>"}`).
+//!   `aoxn.toml` (or legacy `aoxn.json`) in its package root. Plain
+//!   JavaScript packages are rejected with an explanation — Aoxn cannot
+//!   link JavaScript.
+//! - the imported package lands in `vendor/<name>/` and is recorded as a
+//!   **path dependency** (`vendor/<name>`) in the project manifest.
 //!   This reuses the whole existing pipeline (materialization shims,
 //!   manifest-hash integrity via `install`) with zero new concepts;
 //!   `vendor/` is excluded from packing like `aox_modules/`.
@@ -44,8 +45,8 @@ pub fn import(specs: &[String], from: Option<&str>, dry_run: bool) -> Result<i32
     let project = std::env::current_dir()?;
     if !Manifest::exists_in(&project) {
         return Err(PkgError::Manifest(format!(
-            "no aoxn.json in {} — run `aoxn init` first; npm imports are \
-             recorded as path dependencies of an existing project",
+            "no aoxn.toml or aoxn.json in {} — run `aoxn init` first; npm imports \
+             are recorded as path dependencies of an existing project",
             project.display()
         )));
     }
@@ -133,9 +134,9 @@ fn import_tarball(
     if !manifest_path.exists() {
         let _ = std::fs::remove_dir_all(&scratch);
         return Err(PkgError::Manifest(
-            "the npm package has no aoxn.json in its root — it is a plain \
-             JavaScript package, which Aoxn cannot link. Only Aoxn packages \
-             published to npm (with their aoxn.json included) can be imported"
+            "the npm package has no aoxn.toml or aoxn.json in its root — it is a \
+             plain JavaScript package, which Aoxn cannot link. Only Aoxn packages \
+             published to npm (with their manifest included) can be imported"
                 .into(),
         ));
     }
@@ -477,7 +478,7 @@ mod tests {
         let project = tmp.join("project");
         init_project(&project);
         let err = import_tarball(&project, &tgz, "left-pad@1.3.0", false).unwrap_err();
-        assert!(format!("{err}").contains("no aoxn.json"), "got: {err}");
+        assert!(format!("{err}").contains("no aoxn.toml or aoxn.json"), "got: {err}");
         assert!(!project.join("vendor").exists());
         let _ = std::fs::remove_dir_all(&tmp);
     }

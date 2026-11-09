@@ -720,12 +720,12 @@ fn resolve_import_spelled(dir: &Path, import: &str, quoted: bool) -> PathBuf {
         }
     }
     // Bare identifiers are package imports (`import * from "http"`). Since
-    // v0.29.1 the loader consults the package's `aox_modules/<name>/aoxn.json`
-    // manifest: it resolves the entry via `main` / `exports` (incl. subpath
-    // imports like `"http/client"`), so an installed package whose entry is
-    // not literally `index.ax` is now importable. A package without a
-    // manifest — or one whose manifest has no resolvable entry for this
-    // subpath — falls back to the legacy directory probe below.
+    // v0.29.1 the loader consults the package's manifest — `aoxn.toml`
+    // (`[project] main` / `exports`), or the legacy `aoxn.json` — so an
+    // installed package whose entry is not literally `index.ax` is
+    // importable, including subpath imports like `"http/client"`. A package
+    // without a manifest — or one whose manifest has no resolvable entry for
+    // this subpath — falls back to the legacy directory probe below.
     let (pkg_name, subpath) = match import.split_once('/') {
         Some((name, rest)) => (name, Some(rest)),
         None => (import, None),
