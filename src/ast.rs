@@ -339,6 +339,10 @@ pub enum Expr {
     /// `as`/numeric-tower promotions here; the Aoxn surface syntax never
     /// produces it, so the self-hosted compiler never sees this node
     Cast { expr: Box<Expr>, to: Type, pos: Pos },
+    /// `sizeof(T)` (unreleased) — the byte size of a TYPE's C representation,
+    /// a compile-time `int`. The argument is a type, not an expression, so
+    /// the parser gives it its own node instead of a Call.
+    SizeOf { ty: Type, pos: Pos },
 }
 
 impl Expr {
@@ -358,7 +362,8 @@ impl Expr {
             | Expr::ArrayRep { pos, .. }
             | Expr::DictLit { pos, .. }
             | Expr::StructLit { pos, .. }
-            | Expr::Cast { pos, .. } => *pos,
+            | Expr::Cast { pos, .. }
+            | Expr::SizeOf { pos, .. } => *pos,
         }
     }
 

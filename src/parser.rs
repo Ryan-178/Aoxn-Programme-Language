@@ -1183,6 +1183,15 @@ impl Parser {
                         }
                     };
                     self.bump(); // '('
+                    // `sizeof(T)` takes a TYPE, not an expression (unreleased).
+                    // Only the bare builtin is special; `m.sizeof(x)` stays
+                    // an ordinary call.
+                    if name == "sizeof" {
+                        let ty = self.ty()?;
+                        self.eat(&Tok::RParen)?;
+                        e = Expr::SizeOf { ty, pos: e.pos() };
+                        continue;
+                    }
                     let args = self.call_args()?;
                     self.eat(&Tok::RParen)?;
                     let pos = e.pos();

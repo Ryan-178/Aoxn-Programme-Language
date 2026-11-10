@@ -14,7 +14,7 @@ repo IS the
 compiler (Rust workspace: root `aoxn` crate + `crates/aoxn-pkg`).
 Language sources use the `.ax` extension. Language rules live in
 `docs/spec.md` (platform policy: `docs/platform-support.md`) 鈥?keep it in sync with `src/parser.rs` + `src/typecheck.rs`
-when the grammar changes. **v0.55.0 snapshot 5 adds a Rust bridge**: `import "./x.rs"` compiles a self-contained Rust file with rustc and binds its `#[no_mangle] extern "C"` functions as ordinary externs (`src/rust.rs`, `docs/rust-interop.md`); rustc is an optional external toolchain like clang. **Writing or editing `.ax` code: start from the
+when the grammar changes. **v0.55.0 snapshot 5 adds a Rust bridge**: `import "./x.rs"` compiles a self-contained Rust file with rustc and binds its `#[no_mangle] extern "C"` functions as ordinary externs (`src/rust.rs`, `docs/rust-interop.md`); rustc is an optional external toolchain like clang. **The unreleased batch adds `sizeof(T)` + `addr_of(x)`** (gap A2): compile-time type sizes and live lvalue addresses, the prerequisite for struct containers; Rust-compiler-only, stage-2 rejects both forms (see the language card's Builtins and `docs/selfhost.md`). **Writing or editing `.ax` code: start from the
 language card below** (`## Aoxn language card`) -- the whole surface,
 condensed from `docs/spec.md` + the stdlib sources, so a correct program can
 be written first-shot WITHOUT probe files. Update `CHANGELOG.md` on every version bump.
@@ -24,6 +24,16 @@ sync. AGENTS.md is a published repo file (tracked since v0.29.3) 鈥?update it
 in the session bench like any other file.
 
 ## Commit policy (user instruction, standing)
+
+**不发布版本 / no version releases (user instruction, standing, 2026-11-10 起)**:
+never bump the compiler version, create `v*` tags, or publish a release
+unless the user EXPLICITLY asks. New language/library work lands on main as
+**Unreleased / 未发布**: CHANGELOG entries use `## [Unreleased]` (no version
+number, no release date), `Cargo.toml` keeps its current version, and
+README/SECURITY describe the tree as "current version + unreleased work".
+The standing merge-back workflow still applies — `release.yml` fires only on
+`v*` tags or manual dispatch, so merging to main is not a release.
+**以后没有用户明确指示，一律不发布新版本。**
 
 **姣忓璇濈嫭绔嬪伐浣滄爲 / per-session worktree bench (v2, 2026-09-29 璧?**:
 every conversation works in its OWN git worktree ("bench") created at the
@@ -329,8 +339,14 @@ time (platform branches constant-fold away before codegen) | `range` (a
 `for` form). Raw memory (the stdlib's escape hatch, no checks):
 `load_i64(addr)` / `store_i64(addr, v)`, `load_f64` / `store_f64`,
 `load_u8(base, off)` / `store_u8(base, off, v)` (`base` may be a string),
-`as_string(p)` / `as_ptr(s)` (strings only). No `sizeof`, no
-address-of-struct.
+`as_string(p)` / `as_ptr(s)` (strings only). **Unreleased**: `sizeof(T)`
+(takes a TYPE, compile-time int: the C representation's byte size —
+int/float/string 8, bool 4, `int | None` 16; void/None rejected; generic
+`sizeof(T)`/`sizeof([T; N])` substitute per instantiation) and `addr_of(x)`
+(live address of an int/float/bool/struct/array LVALUE as int; writes via
+store_* are seen by the owner; a struct param's address is the callee's
+copy; temporaries, strings, fn pointers, dicts and ANY nullable-rooted
+lvalue — even narrowed — are rejected).
 
 ### Strings are BYTES
 
@@ -477,7 +493,7 @@ Closures/lambdas; classes/methods/inheritance; enums, tagged unions, `Any`
 (`a, b = f()`); set literals; comprehensions; generators/`yield`; `with`;
 decorators; a `char` type; implicit numeric conversions; truthiness
 (conditions must be `bool`); `??`; f-string format specifiers; augmented
-bitwise assignment; unsigned ints; `sizeof` / address-of a struct; keyword
+bitwise assignment; unsigned ints; keyword
 arguments at call sites; top-level statements (everything lives in `def`);
 stdin (no `input()`); `inf`/`nan` literals (`math.NaN()` / `math.Inf()`);
 `**=` and friends; array slicing.
@@ -492,12 +508,19 @@ stdin (no `input()`); `inf`/`nan` literals (`math.NaN()` / `math.Inf()`);
   "LLVM 23.1.0" install on this machine survives purely as clang's home 鈥?
   no LLVM library is probed, linked, or shipped since v0.29.0 (`build.rs`,
   `src/llvm.rs`, `src/codegen.rs` are deleted).
-- **On this dev machine clang lives at `E:\llvm\bin\clang.exe`** (LLVM 23.1.2;
-  the registry `InstallLocation` is `E:\llvm\`), NOT under
-  `C:\Program Files\LLVM`, so `find_clang` does not discover it on its own.
-  Every cargo test / aoxn invocation in a session here needs
-  `AOXN_CLANG=E:/llvm/bin/clang.exe`. rustc is at `~/.cargo/bin/rustc`
-  (rustup shim); Git Bash needs `PATH="$HOME/.cargo/bin:$PATH"`.
+- **On this dev machine clang lives at `C:\Program Files\LLVM\bin\clang.exe`**
+  (LLVM 23.1.0, verified 2026-11-10). The old `E:\llvm` install (23.1.2) is
+  GONE — `E:\llvm\bin\clang.exe` no longer exists. `find_clang` discovers the
+  new location through its `C:\Program Files\LLVM` fallback, so bare
+  invocations work; when setting `AOXN_CLANG` explicitly use
+  `AOXN_CLANG="C:/Program Files/LLVM/bin/clang.exe"` (quote it — the path has
+  a space). **A stale `AOXN_CLANG=E:/llvm/bin/clang.exe` is a split failure**:
+  the Rust resolver falls back and every Rust-side test passes, but the
+  selfhost driver uses the env value VERBATIM (`_spawnvp`), so all five
+  selfhost driver tests fail with "clang failed ... exit 127". That exact
+  signature means "the AOXN_CLANG path is dead", not a codegen bug. rustc is
+  at `~/.cargo/bin/rustc` (rustup shim); Git Bash needs
+  `PATH="$HOME/.cargo/bin:$PATH"`.
 - clang auto-detects MSVC Build Tools, which must be installed (Rust host is
   x86_64-pc-windows-msvc) for the final link. User programs needing C
   libraries pass `-l NAME` / `-L DIR` (forwarded to clang).
@@ -1748,8 +1771,9 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   `out = out + ...` in a loop (`j_dumps`) 鈥?concatenation allocates a fresh
   buffer per step and abandons the old one, so it is O(n^2) allocations AND
   O(n^2) leaked bytes; the serializer is now one pass into a byte sink that
-  grows geometrically (`JOut`/`jw_*`), threaded BY VALUE because the language
-  has no address-of.
+  grows geometrically (`JOut`/`jw_*`), threaded BY VALUE because that is the
+  write-back discipline (the unreleased batch added `addr_of`, but a raw address is an
+  unchecked escape hatch, not a reference parameter).
 - **A `realloc` that can SHRINK is a bug waiting for a large input.** It bit
   the JSON builder (`jb_grow_*`, above). When the recorded capacity of a
   buffer may be 0 or stale while the block is really wider, floor the new
@@ -1757,8 +1781,10 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
 - **"Vec[T] 鍩哄骇" resolved as slot views, not a new type** (stdlib-todo
   搂0.3): a Vec slot is 8 bytes 鈥?int/bool natively, f64 via
   `store_f64`/`load_f64` views (the bisect `_f` family is the worked
-  example), strings via `as_ptr` (`vec_push_str`/`vec_get_str`). Generic
-  STRUCT containers remain impossible (no address-of-struct/no sizeof);
+  example), strings via `as_ptr` (`vec_push_str`/`vec_get_str`). The
+  unreleased batch removed the language-level blocker for generic STRUCT containers
+  (`sizeof(T)` + `addr_of(x)` + `memcpy` suffice to build one), but the
+  stdlib `Vec` is still slot-only and no struct container ships yet;
   heterogeneous records still go through the tagged-slab pattern.
 
 

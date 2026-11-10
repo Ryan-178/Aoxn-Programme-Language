@@ -745,6 +745,9 @@ impl<'a> Ctx<'a> {
                 *to = self.ty(to);
                 self.expr(expr);
             }
+            Expr::SizeOf { ty, .. } => {
+                *ty = self.ty(ty);
+            }
             Expr::Int(..) | Expr::Float(..) | Expr::Str(..) | Expr::Bool(..) | Expr::NoneLit(..) => {}
         }
     }

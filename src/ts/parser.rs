@@ -1529,6 +1529,7 @@ impl Parser {
             Expr::DictLit { .. } => None,
             Expr::Var { name, .. } => self.vars.get(name).cloned(),
             Expr::Cast { to, .. } => Some(to.clone()),
+            Expr::SizeOf { .. } => Some(Type::Int),
             Expr::Unary { op, expr, .. } => match op {
                 UnOp::Not => Some(Type::Bool),
                 // TypeScript's `~` is a bitwise NOT over `number`, which is
@@ -1779,6 +1780,7 @@ fn fill_expr(e: &mut Expr, opts: &HashMap<String, Vec<(usize, Expr)>>, totals: &
             fill_expr(rhs, opts, totals);
         }
         Expr::Cast { expr, .. } => fill_expr(expr, opts, totals),
+        Expr::SizeOf { .. } => {}
         Expr::Index { arr, idx, .. } => {
             fill_expr(arr, opts, totals);
             fill_expr(idx, opts, totals);

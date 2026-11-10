@@ -4,9 +4,11 @@
 
 ### Supported versions and reporting
 
-The compiler is **0.55.0**, supported on the **0.55.x** line; the current tree
-is the **0.55.0-snapshot-6** pre-release. The independent package-manager crate
-is **0.43.0**. Fixes land on main first; earlier minor lines are not maintained.
+The compiler remains **0.55.0**, supported on the **0.55.x** line. The current
+source tree adds **unreleased `sizeof(T)` / `addr_of(x)`** work after
+0.55.0-snapshot-6; this is not a new version or release. The independent
+package-manager crate remains **0.43.0**. Fixes land on main first; earlier
+minor lines are not maintained.
 Windows and Linux are supported, macOS is not. Version history is in
 [CHANGELOG.md](CHANGELOG.md).
 
@@ -193,6 +195,14 @@ archive content was executed.
 
 ### Deliberate limitations and evidence
 
+The unreleased `addr_of` is an unchecked raw-memory escape hatch, not a
+reference type: its address is valid only while the owner lives. A struct
+parameter's address belongs to the callee's copy. Nullable-rooted lvalues are
+rejected even when narrowed because their C storage is an `ax_opt` wrapper;
+this rejection prevents representation confusion, not lifetime errors.
+`sizeof(T)` reports the C representation, including padding. Stage-2 rejects
+both forms; it does not silently implement them differently.
+
 User-program signed overflow, unchecked array indexing, invalid raw-memory/FFI
 use remain undefined behavior. `as_string` aliases memory that must remain live.
 Strings are NUL-terminated bytes; concatenation leaks by design. There is no GC
@@ -205,15 +215,16 @@ permissions, and the bridge checks its declarations, not its behavior.
 The thirteen findings from the 2026-10-17 audit were fixed in 0.51.0/0.51.1;
 that is history, not absence of new defects. Baseline **8f90aca** recorded
 343 root + 104 package tests on Windows with explicit clang 23.1.2. Current-tree
-validation passed **375 root + 116 package tests (491), 0 failed/ignored** on
-Windows (2026-11-09, clang 23.1.2, rustc from rustup); the package suite grew
-with TOML-manifest and migration coverage, and the root suite grew with six
-compiler manifest-reader tests plus a TOML package-import pipeline test. IDE
+validation passed **383 root + 116 package tests (499), 0 failed/ignored** on
+Windows (2026-11-10, clang 23.1.0 at `C:\Program Files\LLVM\bin\clang.exe`,
+rustc from rustup), with `AOXN_TEST_REQUIRE_CLANG=1`. Package tests ran via
+`bash run_pkg_tests.sh`; eight root tests cover sizeof/addr_of, generic
+substitution, live storage, value semantics and rejection diagnostics.
+IDE validation below is historical, not rerun for this batch: IDE
 Rust tests passed 46/46. The IDE frontend ran 62/63: `theme.test.ts` could not
 load `react` because `node_modules` is absent in this checkout, while the
 package-manager frontend tests passed; `pnpm typecheck` could not run for the
-same reason. The root suite includes all four ABI and two parity targets; this
-batch did not separately re-invoke the `AOXN_TEST_REQUIRE_CLANG=1` gate command.
+same reason. The root suite includes all four ABI and two parity targets.
 Nineteen full-C inputs, 22 rejection fixtures and three known gaps are distinct
 categories. Native ABI cases ran at O0/O3; the original fixed point, both CLI
 stages, real socket loopback (Rust and selfhost builds), random cross-process
@@ -238,8 +249,9 @@ Xvfb) ran again.
 
 ### 支持版本与报告
 
-编译器 **0.55.0**，支持系列 **0.55.x**；当前树是 **0.55.0-snapshot-6**
-预发布。独立包管理器 crate **0.43.0**。修复先落 main，旧小版本不维护；
+编译器保持 **0.55.0**，支持系列 **0.55.x**；当前源码在 snapshot-6 后加入
+**未发布的 `sizeof(T)` / `addr_of(x)`**，不代表新版本或发布。
+独立包管理器 crate 保持 **0.43.0**。修复先落 main，旧小版本不维护；
 支持 Windows/Linux，不支持 macOS。见 [CHANGELOG](CHANGELOG.md)。
 
 漏洞先私报 **zmjsjsg3@163.com**，不要先发公开 issue。提供 commit/版本、系统架构、
@@ -365,6 +377,11 @@ runner 会失败而不是跳过桥测试。Windows 冒烟/发布逐条检查原�
 
 ### 有意限制与证据
 
+未发布的 `addr_of` 是不检查生命周期的原始内存逃生通道，不是引用类型；地址只在
+所有者存活期间有效。结构体参数地址属于被调方副本。nullable 为根的左值即使收窄
+也拒绝取址，因为其 C 存储仍是 `ax_opt` 包装；这是防表示混淆，不是生命周期保证。
+`sizeof(T)` 报告包含填充的 C 表示大小。stage-2 明确拒绝两种形式，不静默采用另一套语义。
+
 用户数组越界、带符号溢出、无效原始内存/FFI 是 UB。as_string 别名存储必须存活；
 字符串 NUL 结束、拼接故意泄漏，没有 GC/通用运行时内存安全。库处理外部数据损坏
 与调用方主动不安全操作有别；窗口服务和注册表等级不沙箱或认证程序。通过 `.rs`
@@ -373,12 +390,14 @@ runner 会失败而不是跳过桥测试。Windows 冒烟/发布逐条检查原�
 
 2026-10-17 审计13项已在0.51.0/0.51.1修复，不保证没有新缺陷。
 历史基线 **8f90aca** 在 Windows 显式 clang 23.1.2 记录343根+104包；当前树最终
-**375根+116包=491项通过，0失败/忽略**（2026-11-09，clang 23.1.2，rustc 来自
-rustup）；包套件新增 TOML 清单与迁移覆盖，根套件新增 6 项编译器清单读取测试和
-1 项 TOML 包导入流水线测试。IDE Rust 测试 46/46 通过；IDE 前端 62/63，
+**383根+116包=499项通过，0失败/忽略**（2026-11-10，clang 23.1.0 位于
+`C:\Program Files\LLVM\bin\clang.exe`，rustc 来自 rustup），设置了
+`AOXN_TEST_REQUIRE_CLANG=1`。包测试通过 `bash run_pkg_tests.sh` 执行；新增八项
+根测试覆盖 sizeof/addr_of、泛型替换、活存储、值语义与拒绝诊断。
+以下 IDE 证据为历史记录，本批未重跑：IDE Rust 测试 46/46 通过；IDE 前端 62/63，
 `theme.test.ts` 因本检出缺少 `node_modules` 无法加载 `react`，包管理器前端测试
 通过，缺少 `node_modules` 也使 `pnpm typecheck` 无法运行。根套件包含全部4项
-ABI 与2项 parity；本批未单独重跑 `AOXN_TEST_REQUIRE_CLANG=1` 门禁命令。
+ABI 与2项 parity。
 19个完整 C 输入、22个拒绝样例、3个 known gaps 分别计证；ABI 实际执行 O0/O3，
 原不动点、两阶段 CLI、真实 socket 回环（Rust 与 selfhost 构建）、随机数跨进程向量
 与 Python CSV 差分都在套件内。清单 v2 流程已端到端跑过（init、路径安装、

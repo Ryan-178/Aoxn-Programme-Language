@@ -3,6 +3,78 @@
 Notable changes to the Aoxn compiler and language. Aoxn follows semver-ish
 minor bumps while pre-1.0: each minor version is a language milestone.
 
+## [Unreleased]
+
+**`sizeof(T)` and `addr_of(x)`** — the language-level blocker for every
+non-8-byte-slot container (gap A2 in `docs/language-gaps.md`, ranked #2)
+is gone. This batch is **unreleased**: per the standing no-release rule
+(2026-11-10), the compiler version stays **0.55.0** and no version tag is
+created until the user asks for a release.
+
+### The two forms
+
+- **`sizeof(T) -> int`** takes a TYPE, not an expression (a dedicated
+  `Expr::SizeOf` node; the parser's `ty()` parses the argument). It emits
+  `((long long)sizeof(<C type>))`, which clang folds at compile time, and
+  `c_type` registers whatever typedef/struct the operand names — a struct
+  used ONLY inside `sizeof` still gets its C definition. Sizes are the C
+  representation's: `int`/`float`/`string` 8, `bool` 4 (C `int`),
+  `[int; 4]` 32, `int | None` 16 (the `ax_opt` wrapper), `dict[V]` and
+  `fn(...)` pointers 8. `sizeof(void)` / `sizeof(None)` are errors (no
+  value representation). Inside generic bodies `sizeof(T)` and
+  `sizeof([T; N])` substitute per instantiation — `subst_expr` traverses
+  nested expressions even without a length parameter, substitutes SizeOf
+  operands, and walks `IfExp`/`DictLit` it previously skipped.
+- **`addr_of(x) -> int`** is the live address of an LVALUE (variable,
+  struct field, array element) of type int/float/bool/struct/array,
+  emitted as `((long long)(&<lvalue>))` through the existing `emit_lvalue`.
+  Writes through `store_i64`/`store_f64` are seen by the owner. A struct
+  PARAMETER's address is the callee's own copy — value semantics are
+  unchanged. Like the load/store family it is an unchecked escape hatch:
+  the address is valid only while the owner lives.
+
+### What is rejected (and why)
+
+- Temporaries (`addr_of(42)`), wrong arity, keyword arguments.
+- Strings (`as_ptr` already does that), function pointers (`to_int`),
+  dicts (already a heap handle).
+- **Any lvalue rooted at a nullable local — even inside a narrowed
+  branch.** The C slot is the `ax_opt` wrapper, not the inner value, so
+  handing out its address would type-confuse every reader. Narrowing
+  rewrites `scopes` in place, so the check consults BOTH `scopes` and the
+  checker's `narrowed` table (which keeps the declared Opt type); a
+  re-assignment inside the branch does not change the C slot either. The
+  diagnostic names the declared `T | None` type, not the narrowed view.
+
+### Self-hosting boundary
+
+Stage-2 has no type-argument call form and no `addr_of` builtin: it
+REJECTS both forms (parse/type errors, verified with the selfhost CLI),
+never silently miscompiles them. Programs using neither emit
+byte-identical C, so the fixed point needs no `selfhost/` mirror (the
+v0.51.0 precedent). Recorded in `docs/selfhost.md` and
+`docs/c-compatibility.md`.
+
+### Tests
+
+Eight new pins in `tests/pipeline.rs` (`sizeof_*` / `addr_of_*`):
+representation sizes incl. a sizeof-only struct, live read/write through
+variable/element/field addresses, struct-param copy isolation, generic
+substitution with and without a length parameter, and the rejection
+cases above. Full suite green on Windows (clang 23.1.0), including the
+fixed point, `c_emitter_parity`, `c_abi` and `rust_interop`; aoxn-pkg
+suite green; `cargo check --workspace --tests --target
+x86_64-unknown-linux-gnu` clean.
+
+### Environment note
+
+The dev machine's clang moved: `E:\llvm` no longer exists; clang 23.1.0
+now lives at `C:\Program Files\LLVM\bin\clang.exe`. The Rust resolver's
+fallback found it, but the selfhost driver uses `AOXN_CLANG` verbatim —
+a stale `AOXN_CLANG=E:/llvm/bin/clang.exe` made all five selfhost driver
+tests fail with `_spawnvp` exit 127 while every Rust-side test passed.
+AGENTS.md's environment facts are updated.
+
 ## [0.55.0-snapshot-6] - 2026-11-09
 
 **Package manifest v2 and a pip-style dependency CLI.** The project manifest

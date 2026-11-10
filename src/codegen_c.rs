@@ -1730,6 +1730,13 @@ fn block_returns_all(block: &Block) -> bool {
 
     fn emit_expr_inner(&mut self, expr: &Expr) -> Result<Type, String> {
         match expr {
+            Expr::SizeOf { ty, .. } => {
+                // c_type registers the array typedef / opt / dict structs it
+                // names, so the sizeof operand is always a complete C type.
+                let ct = self.c_type(ty);
+                self.out.push_str(&format!("((long long)sizeof({ct}))"));
+                return Ok(Type::Int);
+            }
             Expr::Cast { expr: inner, to, .. } => {
                 let from = self.hint(inner)?;
                 if from == *to {
@@ -2410,6 +2417,17 @@ fn block_returns_all(block: &Block) -> bool {
             self.out.push_str("))");
             return Ok(Type::Int);
         }
+        if name == "addr_of" {
+            if args.len() != 1 {
+                return Err("internal error: addr_of expects 1 argument".into());
+            }
+            // the checker proved the target is a real lvalue (not Opt-rooted),
+            // so emit_lvalue renders a genuine C lvalue here
+            self.out.push_str("((long long)(&");
+            self.emit_lvalue(&args[0].value)?;
+            self.out.push_str("))");
+            return Ok(Type::Int);
+        }
         // struct construction through call syntax: Name(field = value, ...)
         if !self.sigs.contains_key(name) {
             if self.struct_names.contains(name) {
@@ -2696,6 +2714,7 @@ if matches!(op, Is | IsNot) {
     fn hint(&self, expr: &Expr) -> Result<Type, String> {
         match expr {
             Expr::Cast { to, .. } => Ok(to.clone()),
+            Expr::SizeOf { .. } => Ok(Type::Int),
             Expr::Int(..) => Ok(Type::Int),
             Expr::Float(..) => Ok(Type::Float),
             Expr::Bool(..) => Ok(Type::Bool),
@@ -2769,7 +2788,7 @@ if matches!(op, Is | IsNot) {
                 if eff == "target_os" || eff == "as_string" {
                     return Ok(Type::Str);
                 }
-                if eff == "as_ptr" || eff == "load_i64" || eff == "load_u8" {
+                if eff == "as_ptr" || eff == "addr_of" || eff == "load_i64" || eff == "load_u8" {
                     return Ok(Type::Int);
                 }
                 if eff == "load_f64" {

@@ -9,32 +9,38 @@ Rust compiler emits ISO C99 and invokes external clang. The compiler library
 `src/` has no external Rust crate dependencies or LLVM library dependency. The
 independent package manager has dependencies pinned in `Cargo.lock`.
 
-**Compiler 0.55.0; package-manager crate 0.43.0.** The latest
-[changelog](CHANGELOG.md) entry, `[0.55.0-snapshot-6] - 2026-11-09`, is a
-pre-release snapshot of the same 0.55.0 line, not a new minor. It turns the
-project manifest into a pyproject-shaped **`aoxn.toml`** (`[project]` plus a
-`dev` extra and `[tool.aoxn]` tables) and the dependency CLI into pip's
-`install`/`uninstall` vocabulary; `aoxn install <pkg>` declares then installs,
-and legacy `aoxn.json` projects keep working and convert with `aoxn migrate`.
-Snapshot 5 added the **Rust bridge**: `import "./native.rs"` compiles a
-self-contained Rust file with rustc as a static library and binds its
-`#[no_mangle] extern "C"` functions as ordinary Aoxn `extern def`
-declarations, so the full Rust language and ecosystem stay available behind a
-narrow, explicit C ABI. Earlier 0.55.0 work brought the v0.40.0 language
-surface to the self-hosted compiler, extended the Aoxn-written CLI, added the
-CSV/random/socket stdlib modules, and fixed the `-2 ** 2 == -4` precedence.
-None of this introduces C source compatibility; see
+**Compiler 0.55.0; package-manager crate 0.43.0.** The current tree carries
+**unreleased** language work (CHANGELOG `[Unreleased]`, no release until the
+user asks): **`sizeof(T)` and `addr_of(x)`**. `sizeof` takes a TYPE argument
+and folds to the C representation's byte size at compile time (works inside
+generic bodies, substituting per instantiation); `addr_of` yields the live
+address of an int/float/bool/struct/array lvalue as a plain `int`, so writes
+through `store_i64`/`store_f64` are seen by the owner. This removes the
+language-level blocker for every non-8-byte-slot container (gap A2): a struct
+container can now be written in Aoxn with `sizeof` + `addr_of` + `memcpy`,
+though the stdlib `Vec` itself still moves 8-byte slots. Temporaries,
+strings, dicts, function pointers and any nullable-rooted lvalue (even
+narrowed) are rejected with named diagnostics. The released 0.55.0 line
+shipped the pyproject-shaped `aoxn.toml` manifest and pip-style dependency
+CLI (snapshot 6) and the **Rust bridge** (snapshot 5): `import "./native.rs"`
+compiles a self-contained Rust file with rustc as a static library and binds
+its `#[no_mangle] extern "C"` functions as ordinary Aoxn `extern def`
+declarations. None of this introduces C source compatibility; see
 [C compatibility](docs/c-compatibility.md).
 
 ```python
 import * from "stdlib"
 
-def square(x: int, scale: int = 1) -> int:
-    return x ** 2 * scale
+struct Point:
+    x: int
+    y: int
 
 def main() -> int:
-    for value in [2, 3, 5]:
-        print(value, square(value))
+    print(sizeof(int), sizeof(Point), sizeof([int; 4]))   # 8 16 32
+    p = Point(x=3, y=4)
+    a = addr_of(p.x)          # live address of the field
+    store_i64(a, 30)
+    print(p.x)                # 30
     return 0
 ```
 
@@ -106,6 +112,10 @@ lex/parse/resolve/typecheck/codegen/link phases.
 - Dicts share heap handles and preserve insertion order with linear lookup.
   Nullable narrowing, function pointers and string-payload exceptions are supported
   by the Rust compiler. Concatenation intentionally leaks; there is no GC.
+- **`sizeof(T)` / `addr_of(x)` (unreleased)** extend the raw-memory escape hatch:
+  compile-time type sizes and live lvalue addresses. They perform no lifetime
+  checks — an address is valid only while its owner lives, and a struct
+  parameter's address is the callee's own copy (value semantics unchanged).
 - C FFI and raw-memory builtins require correct caller contracts. Aoxn `int`
   maps to `long long`, not arbitrary C `int`; bool maps to C `int`, not a promise
   of `_Bool` compatibility. Externs are fixed-arity, not variadic. Internal
@@ -123,10 +133,13 @@ lex/parse/resolve/typecheck/codegen/link phases.
 - The TypeScript front end is a supported subset, not full TS/JavaScript.
   Closures, objects and GC remain gaps; see the [TS plan](docs/ts-m1-spec.md).
 
-The self-hosted compiler now covers the v0.40.0 surface — `None`/`T | None`,
+The self-hosted compiler covers the v0.40.0 surface — `None`/`T | None`,
 `dict[V]`, function pointers and `raise`/`try`/`except` — with C that matches
 the Rust emitter byte-for-byte on the tested common subset. Programs without
-those features keep their previous C. Its stage fixed point compares
+those features keep their previous C. **`sizeof(T)` and `addr_of(x)` are
+Rust-compiler-only: stage-2 rejects both forms** (no type-argument call form,
+no `addr_of` builtin), and programs using neither emit byte-identical C, so
+the fixed point needs no stage-2 mirror. The stage fixed point compares
 self-hosted driver products across stages (masking Windows COFF timestamps) and
 remains independent of the direct Rust-vs-selfhost emitter comparison; neither
 finite corpus proves all-feature equivalence.
@@ -141,11 +154,11 @@ content-keyed run cache (`AOXN_NO_CACHE`/`AOXN_CACHE_DIR`) and
 `AOXN_STDLIB`/`AOXN_HOME` resolution are implemented.
 
 Still outside the selfhost CLI, and rejected rather than forwarded: package
-commands, CSS assets/`--emit-assets`/`--tailwind`, and namespace/selective
-imports. It also does not resolve `.rs` imports, exactly as it does not resolve
-`.css` assets. Build caching, full doctor rows, imported-symbol file attribution
-and exact diagnostic spans are incomplete; Linux-native execution was not run
-this round. The Rust CLI remains the production entry point. Read
+commands, CSS assets/`--emit-assets`/`--tailwind`, namespace/selective
+imports, and `sizeof`/`addr_of`. It also does not resolve `.rs` imports,
+exactly as it does not resolve `.css` assets. Build caching, full doctor rows,
+imported-symbol file attribution and exact diagnostic spans are incomplete.
+The Rust CLI remains the production entry point. Read
 [C compatibility](docs/c-compatibility.md), the [spec](docs/spec.md),
 [language card](AGENTS.md) and [gaps](docs/language-gaps.md).
 
@@ -215,7 +228,7 @@ links, execute documented commands, validate anchors or replace a security audit
 ### Validation and evidence
 
 ```powershell
-$env:AOXN_CLANG = "E:/llvm/bin/clang.exe"  # choose an existing clang
+$env:AOXN_CLANG = "C:/Program Files/LLVM/bin/clang.exe"  # choose an existing clang
 $env:AOXN_TEST_REQUIRE_CLANG = "1"
 $env:AOXN_TEST_REQUIRE_RUSTC = "1"
 cargo test -p aoxn --locked --no-fail-fast
@@ -225,30 +238,30 @@ cargo test -p aoxn-pkg --locked
 cargo check --workspace --tests --target x86_64-unknown-linux-gnu
 ```
 
-Final Windows validation for the current tree (2026-11-09, clang 23.1.2, rustc
-from rustup): **375 root + 116 package = 491 passed, 0 failed, 0 ignored**.
-The package suite grew from 105 to 116 (TOML manifest parse/round-trip/rejection,
-legacy JSON preservation, dependency-string forms, workspace discovery and TOML
-round-trip tests); the root suite grew from 368 to 375 (six new compiler
-manifest-reader tests plus the TOML package-import pipeline test). IDE Rust
-tests: **46 passed** (three new TOML manifest tests). The IDE frontend ran
-62/63: `test/theme.test.ts` cannot load `react` because `node_modules` is
-absent in this checkout; the package-manager frontend tests (`pkg.test.ts`,
-`pkgreport.test.ts`) pass, and `pnpm typecheck` cannot run without
-`node_modules` either. `cargo check --workspace --tests --target
-x86_64-unknown-linux-gnu` passed; Linux native linking/runtime was not executed.
-The manifest v2 flows were also exercised end to end on Windows: `aoxn init`,
-`aoxn install ./local-lib`, publishing a TOML package to a directory registry,
-`aoxn install hello-pkg --registry <dir>`, and `aoxn migrate` (including its
-round-trip verification and second-run refusal). Nineteen full-C comparison
-inputs, 22 rejection fixtures and three separately pinned known gaps are
-distinct categories, not parity successes. The suite includes the four ABI
-tests (O0/O3), both parity targets, the original fixed point, both CLI stages,
-real socket loopback (Rust and selfhost builds), random cross-process vectors
-and the Python `csv` differential. `python -B tools/check_doc_links.py` reported
-`missing-path=0`, `historical-path=0` and 25 heuristic command-drift warnings
-(warning-only); its own test suite passed 11/11. Full installer packaging was
-not run.
+Final Windows validation for the current tree (2026-11-10, clang 23.1.0 at
+`C:\Program Files\LLVM`, rustc from rustup): **383 root + 116 package = 499
+passed, 0 failed, 0 ignored**. The root suite grew from 375 to 383 with the
+eight `sizeof_*`/`addr_of_*` pipeline pins (representation sizes including a
+sizeof-only struct, live read/write through variable/element/field addresses,
+struct-parameter copy isolation, generic substitution with and without a
+length parameter, and the rejection cases). The full run includes the fixed
+point, both parity targets, the four ABI tests (O0/O3), both CLI stages, the
+Rust bridge (11 tests), real socket loopback, random cross-process vectors and
+the Python `csv` differential. The stage-2 rejection of `sizeof`/`addr_of` was
+verified by running the selfhost CLI on programs using them (parse errors,
+never silent miscompilation). `cargo check --workspace --tests --target
+x86_64-unknown-linux-gnu` passed; Linux native linking/runtime was not
+executed. The package suite ran through `run_pkg_tests.sh` (the Smart App
+Control hash-stamp workaround). Full installer packaging was not run; IDE
+suites were not re-run (no IDE source changed).
+
+**Environment change, 2026-11-10**: the dev machine's old `E:\llvm` clang
+install no longer exists; clang 23.1.0 now lives at
+`C:\Program Files\LLVM\bin\clang.exe`. A stale `AOXN_CLANG=E:/llvm/...` is a
+split failure: the Rust resolver falls back and Rust-side tests pass, but the
+selfhost driver uses the env value verbatim and all five driver tests fail
+with `_spawnvp` exit 127. That signature means "the AOXN_CLANG path is dead",
+not a codegen bug.
 
 **Dependency security, 2026-11-01**: the two JS manifests were re-audited and
 upgraded — `ide` to `next` 16.4.3 plus dompurify 3.4.17, `web/next-app` to
@@ -314,30 +327,34 @@ Aoxn 是使用 Python 风格缩进的静态类型原生语言。Rust 编译器�
 再调用外部 clang；`src/` 编译器库没有外部 Rust crate 或 LLVM 库依赖。
 独立包管理器的依赖固定在 `Cargo.lock`。
 
-**编译器 0.55.0，包管理器 crate 0.43.0**。最新
-[CHANGELOG](CHANGELOG.md) 条目 `[0.55.0-snapshot-6] - 2026-11-09` 仍是 0.55.0
-线上的预发布快照，不是新小版本。本批把项目清单改为 pyproject 形状的
-**`aoxn.toml`**（`[project]` + `dev` extra + `[tool.aoxn]` 表），依赖 CLI 改为
-pip 的 install/uninstall 词汇：`aoxn install <pkg>` 先声明再安装，旧的
-`aoxn.json` 项目继续可读，并用 `aoxn migrate` 转换。snapshot 5 新增 **Rust 桥**：
-`import "./native.rs"` 把自包含 Rust 文件用 rustc 编译为静态库，并把其中
-`#[no_mangle] extern "C"` 函数绑定为普通 Aoxn `extern def` 声明，因此完整
-Rust 语言与生态在一条窄而明确的 C ABI 之后保持可用。所有导入形式、
-`aoxn symbols` 与 IDE 行为不变，详见 [Rust 互操作](docs/rust-interop.md)。
-0.55.0 早前工作把 v0.40.0 语言面移植进
-自举、扩展了 Aoxn 编写的 CLI、新增 CSV/random/socket 标准库模块，并修复
-`-2 ** 2 == -4` 优先级。这些都不引入 C 源码兼容，见
+**编译器 0.55.0，包管理器 crate 0.43.0**。当前树带有**未发布**的语言工作
+（CHANGELOG `[Unreleased]`，未经用户明确要求不发布新版本）：
+**`sizeof(T)` 与 `addr_of(x)`**。`sizeof` 接收类型实参，编译期折叠为 C
+表示的字节大小（泛型体内随实例化代入）；`addr_of` 返回 int/float/bool/
+结构体/数组左值的活地址（普通 `int`），经 `store_i64`/`store_f64` 的写入
+对所有者可见。这解除了所有非 8 字节槽容器的语言层阻塞（缺口 A2）：
+结构体容器现在可以用 `sizeof` + `addr_of` + `memcpy` 在 Aoxn 里写出来，
+但 stdlib 的 `Vec` 本身仍是槽位实现。临时量、字符串、dict、函数指针以及
+任何以 nullable 局部为根的左值（即使已收窄）都被拒绝并给出明确诊断。
+已发布的 0.55.0 线交付了 pyproject 形状的 `aoxn.toml` 清单与 pip 风格依赖
+CLI（snapshot 6），以及 **Rust 桥**（snapshot 5）：`import "./native.rs"`
+把自包含 Rust 文件用 rustc 编译为静态库，并把其中 `#[no_mangle] extern "C"`
+函数绑定为普通 Aoxn `extern def` 声明。这些都不引入 C 源码兼容，见
 [C 兼容边界](docs/c-compatibility.md)。
 
 ```python
 import * from "stdlib"
 
-def square(x: int, scale: int = 1) -> int:
-    return x ** 2 * scale
+struct Point:
+    x: int
+    y: int
 
 def main() -> int:
-    for value in [2, 3, 5]:
-        print(value, square(value))
+    print(sizeof(int), sizeof(Point), sizeof([int; 4]))   # 8 16 32
+    p = Point(x=3, y=4)
+    a = addr_of(p.x)          # 字段的活地址
+    store_i64(a, 30)
+    print(p.x)                # 30
     return 0
 ```
 
@@ -398,6 +415,9 @@ AOXN_DUMP_C 打印 C，AOXN_TIME 输出各编译阶段耗时。
 - 结构体与定长数组按值复制；字符串是不可变 NUL 结束字节，字符串越界 clamp，
   数组索引不检查。dict 为保序共享堆句柄，查询线性。
 - Rust 编译器支持 nullable 收窄、函数指针与异常；拼接字符串故意不释放，没有 GC。
+- **`sizeof(T)` / `addr_of(x)`（未发布）**扩展原始内存逃生通道：编译期类型
+  大小与左值活地址。不做生命周期检查——地址只在所有者存活期间有效，结构体
+  参数的地址是被调方自己的副本（值语义不变）。
 - C FFI/原始内存依赖调用方正确约定。int 对应 long long 而不是任意 C int；
   bool 对应 C int，并不保证兼容 _Bool。extern 固定参数，不支持可变参数；
   内部聚合 ABI 不等于任意 C struct-by-value extern 兼容。
@@ -411,10 +431,12 @@ AOXN_DUMP_C 打印 C，AOXN_TIME 输出各编译阶段耗时。
   绑定由加载器合成，因此没有 codegen 分支，也没有自举镜像义务。
 - TS 前端为子集而非完整 TS/JS；对象、闭包、GC 仍有缺口，见[计划](docs/ts-m1-spec.md)。
 
-自举现覆盖 v0.40.0 语言面：None/`T | None`、`dict[V]`、函数指针与
+自举覆盖 v0.40.0 语言面：None/`T | None`、`dict[V]`、函数指针与
 raise/try/except；在已测试的共同子集上 C 与 Rust 发射器逐字节相同，不使用这些
-特性的程序 C 不变。跨阶段不动点与 Rust-vs-selfhost 直接比较仍是两项独立证据，
-有限语料都不证明全功能等价。
+特性的程序 C 不变。**`sizeof(T)` 与 `addr_of(x)` 仅 Rust 编译器支持：stage-2
+拒绝这两种形式**（没有类型实参调用形式，没有 `addr_of` 内建），不用它们的
+程序 C 逐字节不变，因此不动点无需 stage-2 镜像。跨阶段不动点与
+Rust-vs-selfhost 直接比较仍是两项独立证据，有限语料都不证明全功能等价。
 
 selfhost/cli.ax 是真正的 Aoxn 实现，提供 help/version/check/c/build/run/
 symbols/doctor。run 以精确 argv 向量启动子进程（Windows CRT spawn、POSIX
@@ -425,9 +447,9 @@ W001、内容键 run 缓存（`AOXN_NO_CACHE`/`AOXN_CACHE_DIR`）与
 `AOXN_STDLIB`/`AOXN_HOME` 解析已实现。
 
 仍不在自举 CLI 内、且明确拒绝而非转发：包管理器命令、CSS 资源/
-`--emit-assets`/`--tailwind`、命名空间/选择性导入。它同样不解析 `.rs` 导入，
-就像不解析 `.css` 资源。build 缓存、完整 doctor 行、导入符号文件归属和精确诊断
-跨度仍不完整；本轮未执行 Linux 原生运行。生产 CLI 仍是 Rust。见
+`--emit-assets`/`--tailwind`、命名空间/选择性导入，以及 sizeof/addr_of。
+它同样不解析 `.rs` 导入，就像不解析 `.css` 资源。build 缓存、完整 doctor 行、
+导入符号文件归属和精确诊断跨度仍不完整。生产 CLI 仍是 Rust。见
 [C 边界](docs/c-compatibility.md)、[规范](docs/spec.md)、
 [语言卡](AGENTS.md)和[语言缺口](docs/language-gaps.md)。
 
@@ -486,7 +508,7 @@ python tools/check_doc_links.py
 ### 验证与证据
 
 ```powershell
-$env:AOXN_CLANG = "E:/llvm/bin/clang.exe"  # 替换为已有 clang
+$env:AOXN_CLANG = "C:/Program Files/LLVM/bin/clang.exe"  # 替换为已有 clang
 $env:AOXN_TEST_REQUIRE_CLANG = "1"
 $env:AOXN_TEST_REQUIRE_RUSTC = "1"
 cargo test -p aoxn --locked --no-fail-fast
@@ -496,27 +518,24 @@ cargo test -p aoxn-pkg --locked
 cargo check --workspace --tests --target x86_64-unknown-linux-gnu
 ```
 
-当前树 Windows 最终验证（2026-11-09，clang 23.1.2，rustc 来自 rustup）：
-**375根+116包=491项通过，0失败，0忽略**。包套件从 105 增至 116（TOML 清单
-解析/往返/拒绝、旧 JSON 保留、依赖字符串、工作区发现等测试）；根套件从 368 增至
-375（6 项编译器清单读取测试 + 1 项 TOML 包导入流水线测试）。IDE Rust 测试
-**46 项通过**（新增 3 项 TOML 清单测试）；IDE 前端 62/63，`test/theme.test.ts`
-因本检出缺少 `node_modules` 无法加载 `react`，包管理器前端测试
-（`pkg.test.ts`、`pkgreport.test.ts`）通过，缺少 `node_modules` 也使
-`pnpm typecheck` 无法运行。`cargo check --workspace --tests --target
-x86_64-unknown-linux-gnu` 通过，未执行 Linux 原生链接/运行。清单 v2 的端到端
-流程也在 Windows 上跑过：`aoxn init`、`aoxn install ./local-lib`、把 TOML 包
-发布到目录注册表、`aoxn install hello-pkg --registry <dir>`，以及
-`aoxn migrate`（含往返校验与二次运行拒绝）。19个完整 C 比较输入、22个拒绝样例、
-3个独立 known gaps 分别计证，不混算为 parity。套件包含 4 项 ABI（O0/O3）、
-两项 parity、原不动点、两阶段 CLI、真实 socket 回环（Rust 与 selfhost 构建）、
-随机数跨进程向量与 Python `csv` 差分。
-`cargo check --workspace --tests --target x86_64-unknown-linux-gnu`
-通过，未执行 Linux 原生链接/运行。`python -B tools/check_doc_links.py` 报告
-`missing-path=0`、`historical-path=0` 与 25 条启发式命令漂移警告（默认仅警告），
-其自身测试 11/11 通过。IDE Rust 测试 46 项通过；前端 62/63（`theme.test.ts`
-因缺少 `node_modules` 无法加载 `react`，包管理器前端测试通过）。完整安装器
-打包未运行。
+当前树 Windows 最终验证（2026-11-10，clang 23.1.0 位于
+`C:\Program Files\LLVM`，rustc 来自 rustup）：**383 根 + 116 包 = 499 项
+通过，0 失败，0 忽略**。根套件从 375 增至 383，新增 8 项
+`sizeof_*`/`addr_of_*` 流水线钉测试（表示大小含仅被 sizeof 引用的结构体、
+变量/元素/字段地址的活读写、结构体参数副本隔离、带与不带长度参数的泛型
+代入、以及各拒绝病例）。完整运行包含不动点、两项 parity、4 项 ABI
+（O0/O3）、两阶段 CLI、Rust 桥（11 项）、真实 socket 回环、随机数跨进程
+向量与 Python `csv` 差分。stage-2 对 sizeof/addr_of 的拒绝已用自举 CLI
+实际运行验证（parse 错误，绝不静默错编）。`cargo check --workspace --tests
+--target x86_64-unknown-linux-gnu` 通过，未执行 Linux 原生链接/运行。
+包套件经 `run_pkg_tests.sh` 运行（Smart App Control 哈希戳 workaround）。
+完整安装器打包未运行；IDE 套件未重跑（IDE 源码未改动）。
+
+**环境变更 2026-11-10**：开发机旧 `E:\llvm` clang 安装已不存在；clang
+23.1.0 现位于 `C:\Program Files\LLVM\bin\clang.exe`。过期的
+`AOXN_CLANG=E:/llvm/...` 会造成分裂失败：Rust 解析器回退、Rust 侧测试全过，
+但自举 driver 原样使用该环境变量，五个 driver 测试全部以 `_spawnvp`
+exit 127 失败。该签名意为「AOXN_CLANG 路径已失效」，不是 codegen 缺陷。
 
 **依赖安全 2026-11-01**：两份 JS 清单重新审计并升级——`ide` 到 `next` 16.4.3
 加 dompurify 3.4.17，`web/next-app` 到 `next` 15.5.28，共关闭 7 项公告；两份清单

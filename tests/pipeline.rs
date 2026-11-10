@@ -2914,7 +2914,7 @@ fn pkg_manifest_subpath_exports() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
-/// v0.56.0: `aoxn.toml` (`[project]` + `[project.exports]`) is the current
+/// v0.55.0-snapshot-6: `aoxn.toml` (`[project]` + `[project.exports]`) is the current
 /// package manifest. The compiler's zero-dependency reader must walk a
 /// pyproject-shaped file — including a multi-line dependency array it does
 /// not use — and resolve both the root and a subpath export.
@@ -4980,4 +4980,228 @@ fn a_missing_directory_and_a_missing_file_are_told_apart() {
         assert!(missing_dir.contains("directory"), "{missing_dir}");
         assert!(missing_file.contains("file"), "{missing_file}");
     }
+}
+
+// ---- sizeof(T) + addr_of(x) (unreleased) ----
+
+/// sizeof reports the C representation's byte size, folded by clang at
+/// compile time. bool is C `int` (4), string/dict/fn-ptr are pointers (8),
+/// `T | None` is the two-word ax_opt wrapper, arrays are their element
+/// storage with no header. Q is never constructed: sizeof alone must
+/// register the struct's C definition.
+#[test]
+fn sizeof_reports_c_representation_sizes() {
+    let out = build_and_run(
+        r#"
+        struct P:
+            x: int
+            y: float
+
+        struct Q:
+            a: int
+            b: int
+            c: int
+
+        def main() -> int:
+            print(sizeof(int), sizeof(float), sizeof(bool), sizeof(string))
+            print(sizeof(P), sizeof(Q), sizeof([int; 4]))
+            print(sizeof(int | None), sizeof(dict[int]))
+            print(sizeof(fn(int) -> int))
+            return 0
+        "#,
+    );
+    assert_eq!(out, "8 8 4 8\n16 24 32\n16 8\n8\n");
+}
+
+/// addr_of yields the LIVE address: writes through load/store are seen by
+/// the owning variable, field, or element — not a copy.
+#[test]
+fn addr_of_reads_and_writes_live_storage() {
+    let out = build_and_run(
+        r#"
+        struct P:
+            x: int
+            y: float
+
+        def main() -> int:
+            a = 7
+            p = addr_of(a)
+            print(load_i64(p))
+            store_i64(p, 99)
+            print(a)
+            arr: [int; 3] = [10, 20, 30]
+            ep = addr_of(arr[1])
+            store_i64(ep, 77)
+            print(arr[0], arr[1], arr[2])
+            q = P(x=3, y=1.5)
+            xp = addr_of(q.x)
+            store_i64(xp, 42)
+            print(q.x)
+            yp = addr_of(q.y)
+            print(load_f64(yp))
+            store_f64(yp, 2.25)
+            print(q.y)
+            b = True
+            bp = addr_of(b)
+            store_u8(bp, 0, 0)
+            print(b)
+            return 0
+        "#,
+    );
+    assert_eq!(out, "7\n99\n10 77 30\n42\n1.500000\n2.250000\nfalse\n");
+}
+
+/// A struct parameter is the callee's own copy (value semantics): its
+/// address is real and writable, but writes never reach the caller.
+#[test]
+fn addr_of_struct_param_addresses_the_local_copy() {
+    let out = build_and_run(
+        r#"
+        struct P:
+            x: int
+
+        def poke(p: P) -> int:
+            a = addr_of(p)
+            store_i64(a, 100)
+            return p.x
+
+        def main() -> int:
+            q = P(x=1)
+            print(poke(q))
+            print(q.x)
+            return 0
+        "#,
+    );
+    assert_eq!(out, "100\n1\n");
+}
+
+/// sizeof(T) and sizeof([T; N]) inside generic bodies: the type argument
+/// is substituted at each instantiation, with and without a length param.
+#[test]
+fn sizeof_in_generic_bodies() {
+    let out = build_and_run(
+        r#"
+        def elem_size[T](x: T) -> int:
+            return sizeof(T)
+
+        def nested_size[T](x: T) -> int:
+            return sizeof(T) + elem_size(x)
+
+        def arr_size[T, N](a: [T; N]) -> int:
+            return sizeof([T; N])
+
+        def main() -> int:
+            print(elem_size(1), elem_size(1.5), elem_size(True))
+            print(nested_size(1), nested_size(True))
+            a: [int; 5] = [1, 2, 3, 4, 5]
+            b: [float; 2] = [1.0, 2.0]
+            print(arr_size(a), arr_size(b))
+            return 0
+        "#,
+    );
+    assert_eq!(out, "8 8 4\n16 8\n40 16\n");
+}
+
+#[test]
+fn sizeof_rejects_types_without_a_value_representation() {
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            x = sizeof(void)
+            return 0
+        "#,
+    );
+    assert!(msg.contains("sizeof(void) is not defined"), "{msg}");
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            x = sizeof(None)
+            return 0
+        "#,
+    );
+    assert!(msg.contains("sizeof(None) is not defined"), "{msg}");
+}
+
+#[test]
+fn sizeof_takes_a_type_not_an_expression() {
+    // `x` parses as a (struct) type name; nothing declares it
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            x = 5
+            y = sizeof(x)
+            return 0
+        "#,
+    );
+    assert!(msg.contains("sizeof"), "{msg}");
+}
+
+#[test]
+fn addr_of_rejects_non_lvalues_and_wrong_arity() {
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            p = addr_of(42)
+            return 0
+        "#,
+    );
+    assert!(msg.contains("requires an lvalue"), "{msg}");
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            a = 1
+            p = addr_of(a, a)
+            return 0
+        "#,
+    );
+    assert!(msg.contains("exactly 1 positional argument"), "{msg}");
+}
+
+#[test]
+fn addr_of_rejects_strings_dicts_and_nullables() {
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            s = "hi"
+            p = addr_of(s)
+            return 0
+        "#,
+    );
+    assert!(msg.contains("strings use as_ptr"), "{msg}");
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            d: dict[int] = {}
+            p = addr_of(d)
+            return 0
+        "#,
+    );
+    assert!(msg.contains("dict is already a handle"), "{msg}");
+    // a nullable local is an ax_opt wrapper in C even inside a narrowed
+    // branch — the address would type-confuse every reader
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            v: int | None = 5
+            if v is not None:
+                p = addr_of(v)
+                print(p)
+            return 0
+        "#,
+    );
+    assert!(msg.contains("int | None"), "{msg}");
+    assert!(msg.contains("a nullable has no single address"), "{msg}");
+    // re-assignment inside the branch does not change the C slot either
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            v: int | None = 5
+            if v is not None:
+                v = 6
+                p = addr_of(v)
+                print(p)
+            return 0
+        "#,
+    );
+    assert!(msg.contains("a nullable has no single address"), "{msg}");
 }

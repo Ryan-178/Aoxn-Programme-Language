@@ -92,7 +92,11 @@ byte-for-byte and failure-message fixtures are checked separately. Default
 parameters, namespace bindings and selective imports remain unimplemented in the
 self-hosted front end; selective imports are explicitly refused. String indexing /
 slices and several v0.51-era numeric conveniences also remain outside the
-self-hosted subset unless a fixture proves otherwise. Embedded NUL escapes and
+self-hosted subset unless a fixture proves otherwise. `sizeof(T)` and `addr_of(x)`
+(unreleased) are Rust-compiler-only: the selfhost parser has no type-argument call
+form and no `addr_of` builtin, so a program using them is rejected there, never
+silently miscompiled. Programs that use neither emit byte-identical C, which is
+what keeps the fixed point true without a stage-2 mirror. Embedded NUL escapes and
 noncanonical float spellings must not be assumed to produce identical C.
 Known-gap regression cases are not parity successes.
 `argc()`, `arg(i)`, `exit(code)` and `assert(cond[, message])` use the same

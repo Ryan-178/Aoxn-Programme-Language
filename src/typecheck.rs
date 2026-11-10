@@ -723,6 +723,19 @@ impl<'a> Tc<'a> {
 
     fn check_expr(&mut self, expr: &Expr, scopes: &mut Scopes) -> Result<Type, Diag> {
         match expr {
+            Expr::SizeOf { ty, pos } => {
+                // sizeof(T) (unreleased): the C representation's byte size.
+                // void/None have no value representation; an uninferred
+                // generic length has no size until instantiation.
+                if matches!(ty, Type::Void | Type::None) {
+                    return Err(self.err(pos.line, pos.col, format!("sizeof({ty}) is not defined ({ty} has no value representation)")));
+                }
+                if has_generic_len(ty) {
+                    return Err(self.err(pos.line, pos.col, "sizeof needs a concrete array length (the generic length is only known at the call site)"));
+                }
+                resolve_ty(ty, self.structs).map_err(|m| self.err(pos.line, pos.col, format!("sizeof: {m}")))?;
+                Ok(Type::Int)
+            }
             Expr::Cast { expr: inner, to, pos } => {
                 let from = self.check_expr(inner, scopes)?;
                 let ok = matches!(
@@ -1122,6 +1135,58 @@ impl<'a> Tc<'a> {
                     let t = self.check_expr(&args[0].value, scopes)?;
                     if t != Type::Str {
                         return Err(self.err(pos.line, pos.col, format!("as_ptr expects string, found {t}")));
+                    }
+                    return Ok(Type::Int);
+                }
+                if name == "addr_of" {
+                    // addr_of(x) (unreleased): the address of an LVALUE as a
+                    // plain int — the struct/array counterpart of as_ptr.
+                    // Like the load/store family this is an unchecked escape
+                    // hatch; the address is live (writes through it are seen
+                    // by the owner) and only valid while the owner lives.
+                    if args.len() != 1 || args[0].name.is_some() {
+                        return Err(self.err(pos.line, pos.col, "addr_of expects exactly 1 positional argument (an lvalue: variable, field, or array element)"));
+                    }
+                    let target = &args[0].value;
+                    if !target.is_lvalue() {
+                        return Err(self.err(target.pos().line, target.pos().col, "addr_of requires an lvalue (a variable, field, or array element); a temporary has no address"));
+                    }
+                    let t = self.check_expr(target, scopes)?;
+                    // a nullable local is an ax_opt wrapper in C, not the
+                    // inner value — even inside a narrowed branch. Handing
+                    // out its address (or a field/element of it) would
+                    // type-confuse every reader.
+                    let mut root = target;
+                    loop {
+                        match root {
+                            Expr::Field { obj, .. } => root = obj,
+                            Expr::Index { arr, .. } => root = arr,
+                            _ => break,
+                        }
+                    }
+                    let declared_opt = match root {
+                        Expr::Var { name, .. } => {
+                            // narrowing rewrites `scopes` in place; the
+                            // declared Opt type rides `self.narrowed` while
+                            // the branch is being checked
+                            matches!(scopes.get(name), Some(Type::Opt(_)))
+                                || matches!(self.narrowed.get(name), Some(Type::Opt(_)))
+                        }
+                        _ => false,
+                    };
+                    if declared_opt || !matches!(t, Type::Int | Type::Float | Type::Bool | Type::Struct(_) | Type::Array { .. }) {
+                        let shown = if declared_opt {
+                            let name = match root {
+                                Expr::Var { name, .. } => name.clone(),
+                                _ => unreachable!(),
+                            };
+                            self.narrowed.get(&name).cloned().unwrap_or_else(|| scopes.get(&name).cloned().unwrap_or(t.clone()))
+                        } else {
+                            t.clone()
+                        };
+                        return Err(self.err(target.pos().line, target.pos().col, format!(
+                            "addr_of requires an int, float, bool, struct, or array lvalue, found {shown} (strings use as_ptr, function pointers use to_int, dict is already a handle; a nullable has no single address)"
+                        )));
                     }
                     return Ok(Type::Int);
                 }
@@ -1633,7 +1698,7 @@ fn first_var_naming(e: &Expr, is_forbidden: &dyn Fn(&str) -> bool) -> Option<Str
             .find_map(|(k, v)| first_var_naming(k, is_forbidden).or_else(|| first_var_naming(v, is_forbidden))),
         Expr::StructLit { fields, .. } => fields.iter().find_map(|(_, v)| first_var_naming(v, is_forbidden)),
         Expr::Call { args, .. } => args.iter().find_map(|a| first_var_naming(&a.value, is_forbidden)),
-        Expr::Int(..) | Expr::Float(..) | Expr::Str(..) | Expr::Bool(..) | Expr::NoneLit(_) => None,
+        Expr::Int(..) | Expr::Float(..) | Expr::Str(..) | Expr::Bool(..) | Expr::NoneLit(_) | Expr::SizeOf { .. } => None,
     }
 }
 
@@ -1648,20 +1713,17 @@ fn subst_stmt_types(stmt: &mut Stmt, subst_t: &HashMap<String, Type>, n: Option<
     match stmt {
         Stmt::Let { ty: Some(t), expr, .. } => {
             *t = subst_type(t, subst_t, n)?;
-            subst_expr(expr, n, len_param);
-            Ok(())
+            subst_expr(expr, subst_t, n, len_param)
         }
         Stmt::Let { expr, .. } => {
-            subst_expr(expr, n, len_param);
-            Ok(())
+            subst_expr(expr, subst_t, n, len_param)
         }
         Stmt::Assign { target, expr, .. } => {
-            subst_expr(target, n, len_param);
-            subst_expr(expr, n, len_param);
-            Ok(())
+            subst_expr(target, subst_t, n, len_param)?;
+            subst_expr(expr, subst_t, n, len_param)
         }
         Stmt::If { cond, then_block, else_block, .. } => {
-            subst_expr(cond, n, len_param);
+            subst_expr(cond, subst_t, n, len_param)?;
             subst_block_types(then_block, subst_t, n, len_param)?;
             if let Some(eb) = else_block {
                 subst_block_types(eb, subst_t, n, len_param)?;
@@ -1669,80 +1731,91 @@ fn subst_stmt_types(stmt: &mut Stmt, subst_t: &HashMap<String, Type>, n: Option<
             Ok(())
         }
         Stmt::While { cond, body, .. } => {
-            subst_expr(cond, n, len_param);
+            subst_expr(cond, subst_t, n, len_param)?;
             subst_block_types(body, subst_t, n, len_param)
         }
         Stmt::For { iter, body, .. } => {
             match iter {
                 ForIter::Range(args) => {
                     for a in args {
-                        subst_expr(a, n, len_param);
+                        subst_expr(a, subst_t, n, len_param)?;
                     }
                 }
-                ForIter::Array(e) | ForIter::Dict(e) => subst_expr(e, n, len_param),
+                ForIter::Array(e) | ForIter::Dict(e) => subst_expr(e, subst_t, n, len_param)?,
             }
             subst_block_types(body, subst_t, n, len_param)
         }
         Stmt::Return { expr: Some(e), .. } => {
-            subst_expr(e, n, len_param);
-            Ok(())
+            subst_expr(e, subst_t, n, len_param)
         }
         Stmt::ExprStmt { expr } => {
-            subst_expr(expr, n, len_param);
-            Ok(())
+            subst_expr(expr, subst_t, n, len_param)
         }
         _ => Ok(()),
     }
 }
 
-/// replace the length parameter with its concrete int constant in expressions
-fn subst_expr(e: &mut Expr, n: Option<usize>, len_param: Option<&str>) {
-    let (lp, v) = match (len_param, n) {
-        (Some(lp), Some(v)) => (lp, v),
-        _ => return,
-    };
+/// replace the length parameter with its concrete int constant in expressions,
+/// and a `sizeof(T)` operand with its instantiated type (unreleased)
+fn subst_expr(e: &mut Expr, subst_t: &HashMap<String, Type>, n: Option<usize>, len_param: Option<&str>) -> Result<(), String> {
+    if let Expr::SizeOf { ty, .. } = e {
+        *ty = subst_type(ty, subst_t, n)?;
+        return Ok(());
+    }
     match e {
-        Expr::Var { name, .. } if name == lp => {
-            *e = Expr::Int(v as i64, Pos { line: 0, col: 0, file: u32::MAX });
+        Expr::Var { name, .. } if Some(name.as_str()) == len_param && n.is_some() => {
+            *e = Expr::Int(n.unwrap() as i64, Pos { line: 0, col: 0, file: u32::MAX });
         }
-        Expr::Unary { expr, .. } => subst_expr(expr, n, len_param),
+        Expr::Unary { expr, .. } => subst_expr(expr, subst_t, n, len_param)?,
         Expr::Binary { lhs, rhs, .. } => {
-            subst_expr(lhs, n, len_param);
-            subst_expr(rhs, n, len_param);
+            subst_expr(lhs, subst_t, n, len_param)?;
+            subst_expr(rhs, subst_t, n, len_param)?;
         }
         Expr::Index { arr, idx, .. } => {
-            subst_expr(arr, n, len_param);
-            subst_expr(idx, n, len_param);
+            subst_expr(arr, subst_t, n, len_param)?;
+            subst_expr(idx, subst_t, n, len_param)?;
         }
         Expr::Slice { base, from, to, .. } => {
-            subst_expr(base, n, len_param);
+            subst_expr(base, subst_t, n, len_param)?;
             if let Some(f) = from {
-                subst_expr(f, n, len_param);
+                subst_expr(f, subst_t, n, len_param)?;
             }
             if let Some(t) = to {
-                subst_expr(t, n, len_param);
+                subst_expr(t, subst_t, n, len_param)?;
             }
         }
-        Expr::Field { obj, .. } => subst_expr(obj, n, len_param),
+        Expr::IfExp { then_expr, cond, else_expr, .. } => {
+            subst_expr(cond, subst_t, n, len_param)?;
+            subst_expr(then_expr, subst_t, n, len_param)?;
+            subst_expr(else_expr, subst_t, n, len_param)?;
+        }
+        Expr::Field { obj, .. } => subst_expr(obj, subst_t, n, len_param)?,
         Expr::ArrayLit { elems, .. } => {
             for x in elems {
-                subst_expr(x, n, len_param);
+                subst_expr(x, subst_t, n, len_param)?;
             }
         }
-        Expr::ArrayRep { elem, .. } => subst_expr(elem, n, len_param),
+        Expr::ArrayRep { elem, .. } => subst_expr(elem, subst_t, n, len_param)?,
+        Expr::DictLit { entries, .. } => {
+            for (k, v) in entries {
+                subst_expr(k, subst_t, n, len_param)?;
+                subst_expr(v, subst_t, n, len_param)?;
+            }
+        }
         Expr::Call { args, .. } => {
             for a in args {
-                subst_expr(&mut a.value, n, len_param);
+                subst_expr(&mut a.value, subst_t, n, len_param)?;
             }
         }
         Expr::StructLit { fields, .. } => {
             for (_, fe) in fields {
-                subst_expr(fe, n, len_param);
+                subst_expr(fe, subst_t, n, len_param)?;
             }
         }
-        Expr::Cast { expr, .. } => subst_expr(expr, n, len_param),
+        Expr::Cast { expr, .. } => subst_expr(expr, subst_t, n, len_param)?,
         _ => {}
     }
+    Ok(())
 }
 
 /// deterministic mangled name for an instance: `name.<slug>.<len>`

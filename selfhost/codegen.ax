@@ -190,7 +190,7 @@ struct Gen:
     used_exit: int
     used_argv: int
     used_err: int
-    # clang invocation options (v0.56: CLI parity). Defaults keep the old
+    # clang invocation options (unreleased: CLI parity). Defaults keep the old
     # command shape: clang -O3 -w -c ...
     opt_level: int
     cc_warnings: int

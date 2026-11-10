@@ -1,4 +1,4 @@
-# Aoxn Language Specification (v0.55.0)
+# Aoxn Language Specification (v0.55.0, plus unreleased sizeof/addr_of)
 
 Aoxn is an AI-native, statically typed, ahead-of-time compiled language with a
 Python-style syntax. Design goals: minimal syntax, explicit semantics, native
@@ -588,6 +588,8 @@ out-of-range value is rejected with the maximum spelled in its own radix.
   through the dict's handle.
 - `to_int(f)` on a function value (v0.40.0) is its raw address; `f = addr as
   fn(...) -> ...` converts back. The FFI escape hatch.
+- `sizeof(T) -> int` / `addr_of(x) -> int` (unreleased) -- see Raw memory.
+  `sizeof` takes a TYPE argument; `addr_of` takes an lvalue.
 - `assert(cond)` / `assert(cond, message)` (v0.42.0) 闁?see Statements.
 - `exit(code: int)` (v0.42.0) 闁?terminate with `code`; `void`.
 - `argc() -> int` (v0.42.0) 闁?how many arguments the program was invoked with,
@@ -608,15 +610,32 @@ IO in Aoxn itself; they perform no checks.
 
 - `load_i64(addr) -> int`, `store_i64(addr, v: int)`
 - `load_f64(addr) -> float`, `store_f64(addr, v: float)`
-- `load_u8(base, off) -> int`, `store_u8(base, off, v: int)` 闂?`base` may be
+- `load_u8(base, off) -> int`, `store_u8(base, off, v: int)` — `base` may be
   an `int` address or a `string` (byte access into the string)
-- `as_string(p: int) -> string`, `as_ptr(s: string) -> int` 闂?pointer
+- `as_string(p: int) -> string`, `as_ptr(s: string) -> int` — pointer
   reinterpretation
+- `sizeof(T) -> int` (unreleased) — the byte size of a TYPE's C representation,
+  folded at compile time. The argument is a type, not an expression:
+  `sizeof(int)` is 8, `sizeof(bool)` is 4 (C `int`), `sizeof(string)` is 8
+  (a pointer), `sizeof([int; 4])` is 32, `sizeof(int | None)` is 16 (the
+  two-word wrapper). `sizeof(void)` and `sizeof(None)` are errors (no value
+  representation); inside a generic body the type parameters are substituted
+  per instantiation, so `sizeof(T)` and `sizeof([T; N])` work there.
+- `addr_of(x) -> int` (unreleased) — the LIVE address of an lvalue: a variable,
+  a struct field, or an array element of type `int`, `float`, `bool`, a
+  struct, or an array. Writes through `store_i64`/`store_f64` are seen by
+  the owner. A struct parameter's address is the callee's own COPY (value
+  semantics are unchanged); the address is only valid while the owner lives.
+  Rejected: temporaries, strings (use `as_ptr`), function pointers (use
+  `to_int`), dicts (already a handle), and anything rooted at a nullable
+  local — even inside a narrowed branch, because the C slot is the `ax_opt`
+  wrapper, not the inner value.
 
-There is deliberately **no `sizeof`** and no way to take the address of a
-struct value (`as_ptr` works on a `string` only). Two consequences run through
-everything below: a container can only move 8-byte slots, never copy a struct
-in wholesale, and nothing can be passed "by reference" implicitly.
+Like the load/store family, `addr_of` performs no lifetime checks: it is the
+escape hatch for systems code, not a reference type. Nothing is passed "by
+reference" implicitly — an explicit address plus `memcpy`/load/store is how a
+container copies a struct in wholesale (the unreleased batch removed the language-level
+blocker; the stdlib `Vec` itself still moves 8-byte slots).
 
 ## Error channel (v0.39.0)
 
@@ -686,11 +705,12 @@ items uses the heap instead, and the stdlib ships what that needs:
   format needs: a JSON array of arrays, a table of variable-length rows.
   Nesting it again gives arbitrary depth with no new machinery.
 
-What this deliberately does **not** give you is a container of structs. Since
-there is no `sizeof` and no address-of-struct, "a list of `Point`" has to be a
-list of slot-tuples (an x slot, a y slot) or a vector of pointers to
-individually allocated records. That is a real cost, which is why it is
-documented here rather than hidden.
+What this deliberately does **not** give you is a container of structs. The
+stdlib `Vec` moves 8-byte slots, so "a list of `Point`" is a list of slot-tuples
+(an x slot, a y slot) or a vector of pointers to individually allocated
+records. Since the unreleased batch, the LANGUAGE no longer blocks a struct container —
+`sizeof(Point)` and `addr_of(p)` give a custom container everything it needs
+to copy records in wholesale — but no such container ships in the stdlib yet.
 
 Indexing into any of these is unchecked, exactly like array indexing in the
 language. `vec_pop` and `vec_truncate` return a new value and leave the

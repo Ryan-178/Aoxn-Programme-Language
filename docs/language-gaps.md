@@ -17,7 +17,7 @@
 | 缺口 | 一句话 | 直接挡住 |
 |---|---|---|
 | **A1** 没有引用类型 | 全值语义，没有 `&T` | 一切「共享可变对象」的模型 |
-| **A2** 没有 `sizeof`、不能取结构体地址 | 容器只能装 8 字节槽 | 所有非槽位类型的容器 |
+| **A2** 没有 `sizeof`、不能取结构体地址 | 容器只能装 8 字节槽 | 所有非槽位类型的容器（**unreleased 已解决**） |
 | **A3** 没有 GC，拼接与 dict 泄漏 | 只增不减 | 长驻进程（web 框架） |
 | **A4** 没有反射 | 无法在运行期问「这是什么」 | pickle、ORM、fixture 注入 |
 | **B1** 没有 `enum` / 可标记联合 / `Any` | 唯一联合是 `T \| None` | pandas、所有 ORM、numpy dtype |
@@ -72,9 +72,24 @@
 引入引用要么做成显式 `ref`（安全但啰嗦），要么做成默认引用（那本质上是
 改语言的性格）。**建议：保持现状，把「共享 = 堆句柄」写成显式约定。**
 
-### A2 没有 `sizeof`，不能取结构体地址
+### A2 没有 `sizeof`，不能取结构体地址 —— **已落地（unreleased）**
 
-**缺什么**　`docs/spec.md:425`：「There is deliberately **no `sizeof`** and
+**unreleased 的实现**：`sizeof(T)`（类型实参，专用 AST 节点，发射
+`((long long)sizeof(<C 类型>))`，clang 编译期折叠）+ `addr_of(x)`
+（lvalue 专用内建，发射 `((long long)(&<lvalue>))`，复用 `emit_lvalue`）。
+没有走原计划的 `ax_sizeof_<Struct>()` 静态函数，也没有给 `as_ptr` 放开
+struct——`as_ptr` 的别名语义（cast 不拷贝）保持不动，取址是独立的内建。
+拒绝病例：`sizeof(void/None)`、临时量、string/dict/fn-ptr 取址、以及
+**任何以 nullable 局部为根的 lvalue**（即使在收窄分支内——C 槽位是
+`ax_opt` 包装，不是内层值；收窄会原地改写 scopes，声明类型在
+`self.narrowed` 里，两处都要查）。泛型体内 `sizeof(T)` / `sizeof([T; N])`
+随实例化代入（`subst_expr` 即使没有长度参数也遍历嵌套表达式并替换 SizeOf）。
+**自举边界**：stage-2 无类型实参调用形式、无 `addr_of` 内建，直接拒绝
+（parse/type 错误，不会静默错编）；不用这两形的程序 C 逐字节不变，
+不动点无需镜像（v0.51.0 先例）。测试：`tests/pipeline.rs` 的
+`sizeof_*` / `addr_of_*` 八条。
+
+**原缺口记录（历史）**　`docs/spec.md`：「There is deliberately **no `sizeof`** and
 no way to take the address of a struct value (`as_ptr` works on a `string`
 only).」
 
@@ -86,10 +101,8 @@ only).」
 - DataFrame 的列存储
 - 任何 `Vec[SomeStruct]`（`Vec[T]` 基座本身就得先解决这个）
 
-**要动哪里**　`src/codegen_c.rs` 发射一个 `ax_sizeof_<Struct>()` 静态函数，
-`selfhost/codegen.ax` 镜像它，再给 `as_ptr` 放开 struct。
-**这是本文档里最便宜的一条**——发射侧几乎是现成的（C 里
-`sizeof(struct X)` 编译器知道），主要成本在自举镜像和文档。
+语言层面的阻塞已解除；stdlib 的 `Vec` 仍是槽位实现，结构体容器是
+下一步的库工作（`sizeof` + `addr_of` + `memcpy` 已足够写出来）。
 
 **代价　小。解锁　大** —— 这是 numpy / Pillow / 通用容器的共同前置。
 
@@ -561,7 +574,7 @@ docs/spec.md  tests/pipeline.rs
 | 优先级 | 特性 | 成本 | 解锁 |
 |---|---|---|---|
 | ~~**1**~~ | ~~命名空间 / 模块限定~~（B4）—— **v0.43.0 已落地** | ~~中～大~~ | 已解锁；手工前缀从此可选 |
-| **2** | **`sizeof` + 结构体取址**（A2） | **小** | 所有非槽位容器 → numpy / Pillow / `Vec[T]` |
+| ~~**2**~~ | ~~**`sizeof` + 结构体取址**（A2）~~ —— **unreleased 已落地** | ~~小~~ | 语言阻塞已解除；结构体容器是下一步的库工作 |
 | **3** | **float 格式说明符 + `%g`**（D5） | 小 | 所有数值输出（现成实现已在 json.ax 里） |
 | **4** | **元组 / 多返回值**（B3） | 中 | 大量库的 API 形态；sret ABI 已存在 |
 | ~~**5**~~ | ~~**argv**（D1）~~ **v0.42.0 已闭合** | 小 | `argc()` / `arg(i)` 落地；sys / argparse 解除阻塞（pytest 还差运行器） |
