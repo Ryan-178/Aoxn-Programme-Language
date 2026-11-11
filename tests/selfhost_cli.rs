@@ -380,6 +380,11 @@ fn selfhost_cli_matches_contract_and_rust_reference() {
         }
         let out = ctx.invoke(
             exe,
+            &["build", "directory with spaces/input.ax", "-o", &opts_exe, "--cpu", "native"],
+        );
+        status(&out, 0, &format!("{name} native cpu"));
+        let out = ctx.invoke(
+            exe,
             &[
                 "build",
                 "directory with spaces/input.ax",

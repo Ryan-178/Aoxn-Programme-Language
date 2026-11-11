@@ -31,6 +31,8 @@ extern def inet_addr(host: string) -> int
 
 extern def close(fd: int) -> int
 extern def __errno_location() -> int
+extern def __error() -> int
+extern def setsockopt(fd: int, level: int, option: int, value: int, size: int) -> int
 
 struct Sock:
     fd: int
@@ -52,10 +54,14 @@ def sk_i32(r: int) -> int:
 def sk_lasterr() -> int:
     if target_os() == "windows":
         return WSAGetLastError()
-    p = __errno_location()
+    p = 0
+    if target_os() == "macos":
+        p = __error()
+    else:
+        p = __errno_location()
     if p == 0:
         return -1
-    return load_i64(p) & 4294967295
+    return load_u8(p, 0) + load_u8(p, 1) * 256 + load_u8(p, 2) * 65536 + load_u8(p, 3) * 16777216
 
 def socket_init() -> int:
     if target_os() == "windows":
@@ -68,8 +74,12 @@ def socket_init() -> int:
 def sk_addr(port: int, ip: int) -> int:
     a = malloc(16)
     fill_zero(a, 16)
-    store_u8(a, 0, 2)
-    store_u8(a, 1, 0)
+    if target_os() == "macos":
+        store_u8(a, 0, 16)
+        store_u8(a, 1, 2)
+    else:
+        store_u8(a, 0, 2)
+        store_u8(a, 1, 0)
     store_u8(a, 2, port / 256)
     store_u8(a, 3, port % 256)
     store_i64(a + 4, ip)
@@ -80,13 +90,26 @@ def sk_valid_port(port: int) -> int:
         return 0
     return 1
 
+def sk_no_sigpipe(fd: int) -> int:
+    if target_os() == "macos":
+        option = malloc(8)
+        store_i64(option, 1)
+        rc = setsockopt(fd, 65535, 4130, option, 4)
+        free(option)
+        return rc
+    return 0
+
 def sk_tcp_socket() -> int:
     fd = socket(2, 1, 0)
     if target_os() == "windows":
         if fd == -1 or fd == 4294967295:
             return -1
         return fd
+    fd = sk_i32(fd)
     if fd < 0:
+        return -1
+    if sk_no_sigpipe(fd) != 0:
+        sk_close_fd(fd)
         return -1
     return fd
 
@@ -151,6 +174,10 @@ def socket_accept(ls: Sock) -> Sock:
     fd = accept(ls.fd, 0, 0)
     if fd == -1 or fd == 4294967295:
         return sk_err("accept failed", sk_lasterr())
+    if sk_no_sigpipe(fd) != 0:
+        code = sk_lasterr()
+        sk_close_fd(fd)
+        return sk_err("setsockopt failed", code)
     return sk_ok(fd)
 
 # Send exactly n bytes from `ptr`; loops over partial writes.

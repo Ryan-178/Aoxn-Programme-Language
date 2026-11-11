@@ -370,6 +370,35 @@ fn cross_platform_modules_never_hardcode_a_path_separator() {
 /// both declare `GetLastError` and `Sleep`). That refusal is correct
 /// behaviour, not a bug — a program picks one.
 #[test]
+fn darwin_stdlib_branches_emit_without_linux_symbols() {
+    std::env::set_var("AOXN_STDLIB", abs("stdlib"));
+    for module in ["os", "time", "socket"] {
+        let source = format!("import * from \"stdlib/{module}\"\ndef main() -> int:\n    return 0\n");
+        let dir = std::env::temp_dir().join(format!("aoxn-darwin-{}-{module}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("input.ax");
+        std::fs::write(&input, source).unwrap();
+        let c = aoxn::compile_paths_to_c(&[input.display().to_string()], true).unwrap();
+        let simulated = c.replace(
+            &format!("__builtin_strcmp(\"{}\", ", aoxn::platform::target_os_name()),
+            "__builtin_strcmp(\"macos\", ",
+        );
+        if let Some(clang) = aoxn::find_clang() {
+            let cpath = dir.join("darwin.c");
+            let object = dir.join("darwin.o");
+            std::fs::write(&cpath, simulated).unwrap();
+            assert!(std::process::Command::new(clang).args(["-O1", "-w", "-c"]).arg(&cpath).arg("-o").arg(&object).status().unwrap().success());
+            let bytes = std::fs::read(object).unwrap();
+            assert!(!bytes.windows("__errno_location".len()).any(|w| w == b"__errno_location"));
+            assert!(!bytes.windows("/proc/self/exe".len()).any(|w| w == b"/proc/self/exe"));
+        } else {
+            assert!(std::env::var_os("AOXN_TEST_REQUIRE_CLANG").is_none(), "clang required for Darwin branch check");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[test]
 fn dual_platform_modules_reference_no_foreign_platform_symbols() {
     let Some(clang) = aoxn::find_clang() else {
         eprintln!("skipping: clang not found (set AOXN_CLANG or add clang to PATH)");
@@ -444,11 +473,10 @@ def main() -> int:
         // a test written on Windows cannot SEE the other, which is the whole
         // trap.) The second argument is the source literal and must NOT move:
         // rewriting it would make every comparison true instead of folding
-        // it. platform::target_os_name() has exactly three answers, so three
-        // prefixes cover every build; the rewrite is idempotent.
+        // it. Enumerate every target_os_name result; the rewrite is idempotent.
         let mut simulated = c.clone();
         let mut folds = 0;
-        for host in ["windows", "linux", "other"] {
+        for host in ["windows", "linux", "macos", "other"] {
             let from = format!(r#"__builtin_strcmp("{host}", "#);
             if simulated.contains(&from) {
                 folds += 1;
