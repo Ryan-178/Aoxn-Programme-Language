@@ -476,8 +476,15 @@ primitives, and the contract tests keep both backends honest. The close
 request travels through shared-block slot 824 on X11 (Windows destroys the
 window and polls `IsWindow`); slot 826 parks the sans font handle for
 `ui_font_sans`. See `docs/platform-support.md` for the platform story.
-macOS remains unreachable: the Cocoa surface needs struct-by-value externs
-the language cannot express.
+macOS now has an unreleased native Cocoa backend: import
+`"stdlib/ui_cocoa"` with the Rust compiler CLI. A single-file Rust bridge
+owns AppKit/CoreGraphics calls and their structure ABI; no external Rust
+crate is needed. rustc and Apple's frameworks are required, but XQuartz is
+not. The shared widgets remain immediate-mode, not native NSControl widgets.
+Run `AOXN_TEST_COCOA_WINDOW=1 cargo test -p aoxn --test ui cocoa_native_window_probe`
+in a macOS desktop session for the 30-frame smoke probe. Cross-target metadata
+and C emission checks do not prove native window behavior. The selfhost CLI
+cannot load this backend because `.rs` imports remain unsupported.
 
 ## Tests
 

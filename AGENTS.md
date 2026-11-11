@@ -1035,13 +1035,13 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   `plat_*` set (the check covers `ui_x11.ax` since v0.46.0); every
   `plat_*` called must exist in both. Adding a widget that reaches for a
   platform symbol fails the test run, not one OS.
-- **No third windowing backend.** `extern def` can only pass
-  int/f64/string/bool, so a backend whose window/draw API takes structs by
-  value (AppKit's `NSRect`/`CGRect`, for one) is not expressible, and there
-  is no C shim escape hatch 鈥?the compiler only emits its own C text
-  (`src/codegen_c.rs`) and shells out to clang. Do NOT add a native backend
-  for another windowing system (Cocoa is the standing example); if a future
-  version gains struct-typed externs, revisit then.
+- **Native Cocoa backend explicitly requested (2026-11-11).** The previous
+  third-backend prohibition is superseded for Cocoa: `ui_cocoa.ax` wraps the
+  single-file `ui_cocoa_native.rs` Rust bridge, which owns AppKit/CoreGraphics
+  structure ABI and Objective-C dispatch. The widget layer remains unchanged;
+  no compiler crate dependency is added. Building Cocoa requires rustc and
+  Apple frameworks; the selfhost loader still rejects `.rs` imports.
+  Cross-compilation is not evidence of real macOS window/input behavior.
 - Qt-flavored **immediate mode** (no callbacks possible: the language has no
   function pointers/closures). Widgets are per-frame functions; app state
   travels via the write-back idiom (struct in / struct out). Reference:
@@ -1930,5 +1930,6 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   (`winhttp`, `ws2_32`) are gated with `#![cfg(windows)]` at the top.
 - **Windows first-class, Linux supported (v0.46.0).** The user requested a
   macOS core compiler/CLI/portable-stdlib port on 2026-11-11. Keep it unreleased
-  and distinguish cross-checks from native Apple evidence. No Cocoa backend
-  or macOS installer is included. `docs/platform-support.md` is authoritative.
+  and distinguish cross-checks from native Apple evidence. Cocoa is an
+  unreleased Rust-bridge backend requested explicitly by the user; no macOS
+  installer is included. `docs/platform-support.md` is authoritative.

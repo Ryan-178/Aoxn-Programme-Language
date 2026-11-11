@@ -5,6 +5,16 @@ minor bumps while pre-1.0: each minor version is a language milestone.
 
 ## [Unreleased]
 
+### Native Cocoa UI backend
+
+Adds `stdlib/ui_cocoa.ax`, reusing the portable immediate-mode widget layer
+through a single-file Rust AppKit/CoreGraphics bridge. Cocoa's structure ABI
+stays inside Rust; Aoxn-facing exports use only the existing scalar ABI.
+Includes a 30-frame native window probe, bridge export checks and third-backend
+primitive-contract coverage. Building requires rustc and Apple's frameworks;
+the selfhost CLI does not load the Rust bridge. Native desktop execution is
+not verified on the Windows development host; no new version is released.
+
 ### macOS core port (under validation)
 
 Adds `target_os() == "macos"`, Darwin executable-path lookup, monotonic clock

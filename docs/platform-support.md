@@ -6,7 +6,10 @@ The source tree adds macOS core compiler/CLI and portable-stdlib adaptations
 for Apple Silicon and Intel. This is a port under validation, not a claim of
 macOS-native test success. Build from source with Rust and Apple's Command
 Line Tools (`xcode-select --install`); clang must resolve an installed SDK.
-No macOS installer, Cocoa backend, IDE packaging or WinHTTP transport is added.
+No macOS installer or IDE packaging is added. An unreleased native Cocoa
+backend is available through `stdlib/ui_cocoa`, using a single-file Rust
+AppKit/CoreGraphics bridge; it requires rustc and native desktop validation.
+WinHTTP transport remains Windows-only.
 
 `target_os()` reports `"macos"`. Native objects are Mach-O `.o`, static
 libraries `.a`, executables have no suffix, and libSystem supplies C math.
@@ -101,8 +104,8 @@ separate from Cocoa UI support; see the validation scope above.
   (Windows CRT `_spawnvp` + CRT argument quoting, POSIX `fork`/`execvp`); it does
   not use a shell. The selfhost CLI was exercised on Windows this round; no
   Linux-native CLI result is claimed here.
-- **macOS UI** — no Cocoa backend is included; core compiler/stdlib porting
-  does not imply GUI or installer support.
+- **macOS UI** — the unreleased `ui_cocoa` backend requires the Rust bridge;
+  native desktop validation remains pending. No installer is included.
 
 ## History
 

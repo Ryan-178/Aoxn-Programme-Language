@@ -68,8 +68,8 @@ analysis; only `build` and `run` need Rust installed.
 
 Windows is first-class and Linux is supported. The unreleased macOS core
 compiler/CLI and portable-stdlib port is under validation; native macOS
-runtime success is not yet claimed. No Cocoa UI, macOS installer or IDE
-package is included. Darwin clock, filesystem, executable-path and socket
+runtime success is not yet claimed. Cocoa UI is implemented as an unreleased
+Rust-bridge backend; no macOS installer or IDE package is included. Darwin clock, filesystem, executable-path and socket
 adaptations have Windows regression and simulated-branch coverage. The
 [platform policy](docs/platform-support.md) is authoritative. Windows ships
 `Aoxn-<version>-Setup.exe` from the [release page](https://github.com/AlonechatWorkspace/Aoxn-language/releases).
@@ -167,6 +167,15 @@ The Rust CLI remains the production entry point. Read
 [language card](AGENTS.md) and [gaps](docs/language-gaps.md).
 
 ### Libraries and tools
+
+Unreleased native Cocoa UI: `import * from "stdlib/ui_cocoa"` reuses the
+portable widget layer through a single-file Rust AppKit/CoreGraphics bridge.
+It requires rustc and Apple's frameworks, not XQuartz. Widgets retain their
+immediate-mode design. The selfhost CLI cannot load this `.rs`-backed module;
+macOS desktop/window behavior still requires native validation. Windows UI
+suite passed 17/17; native bridge metadata checks passed for ARM64 and Intel,
+and Apple Silicon workspace/tests cross-check passed. Full IME composition
+and Retina-native backing resolution are not implemented.
 
 macOS-port local validation (2026-11-11): **385 Windows compiler tests passed**,
 including datetime, filesystem/glob, socket, emitter parity and selfhost fixed
@@ -398,8 +407,8 @@ rustc 是**可选**外部工具链，发现顺序与 clang 相同。`check`、`c
 ### 平台、安装和命令
 
 Windows 为一等平台，支持 Linux；未发布的 macOS 核心编译器/CLI 与可移植标准库
-正在验证，尚不声明 macOS 原生运行通过，不包含 Cocoa UI、macOS 安装器或 IDE
-打包。Darwin 时钟、文件系统、程序路径和 socket 已适配，并有 Windows 回归与
+正在验证，尚不声明 macOS 原生运行通过；Cocoa UI 已作为未发布 Rust 桥后端实现，
+不包含 macOS 安装器或 IDE 打包。Darwin 时钟、文件系统、程序路径和 socket 已适配，并有 Windows 回归与
 模拟分支覆盖。平台策略以
 [平台政策](docs/platform-support.md) 为准。[Windows 发布包](https://github.com/AlonechatWorkspace/Aoxn-language/releases)
 为 `Aoxn-<version>-Setup.exe`，解包至 `%LOCALAPPDATA%\aoxn`、设置 PATH、
@@ -475,6 +484,12 @@ W001、内容键 run 缓存（`AOXN_NO_CACHE`/`AOXN_CACHE_DIR`）与
 [语言卡](AGENTS.md)和[语言缺口](docs/language-gaps.md)。
 
 ### 库与工具
+
+未发布原生 Cocoa UI：`import * from "stdlib/ui_cocoa"` 通过单文件 Rust
+AppKit/CoreGraphics 桥复用可移植控件层，需要 rustc 与 Apple frameworks，
+不需要 XQuartz。控件仍为立即模式；自举 CLI 不支持该模块的 `.rs` 导入。
+本轮 Windows UI 套件 17/17 通过，桥通过 ARM64/Intel 元数据编译检查；
+这些不等于 macOS 原生窗口运行验证。完整 IME 与 Retina 原生分辨率尚未实现。
 
 macOS 移植本地验证（2026-11-11）：**385 项 Windows 编译器测试通过**，含日期时间、
 文件/glob、socket、C 发射 parity 与自举不动点；宿主平台契约、模拟 Darwin
