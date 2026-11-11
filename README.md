@@ -66,7 +66,11 @@ analysis; only `build` and `run` need Rust installed.
 
 ### Installation, platforms and commands
 
-Windows is first-class, Linux is supported, macOS is unsupported. The
+Windows is first-class and Linux is supported. The unreleased macOS core
+compiler/CLI and portable-stdlib port is under validation; native macOS
+runtime success is not yet claimed. No Cocoa UI, macOS installer or IDE
+package is included. Darwin clock, filesystem, executable-path and socket
+adaptations have Windows regression and simulated-branch coverage. The
 [platform policy](docs/platform-support.md) is authoritative. Windows ships
 `Aoxn-<version>-Setup.exe` from the [release page](https://github.com/AlonechatWorkspace/Aoxn-language/releases).
 It unpacks into `%LOCALAPPDATA%\aoxn`, updates PATH and runs `aoxn doctor`.
@@ -163,6 +167,20 @@ The Rust CLI remains the production entry point. Read
 [language card](AGENTS.md) and [gaps](docs/language-gaps.md).
 
 ### Libraries and tools
+
+macOS-port local validation (2026-11-11): **385 Windows compiler tests passed**,
+including datetime, filesystem/glob, socket, emitter parity and selfhost fixed
+point. Host-platform and simulated Darwin symbol tests plus 11 documentation
+checks passed. Linux workspace/tests cross-check also passed. These are not
+macOS-native execution results. Both Apple Silicon and Intel workspace/tests
+cross-checks passed; native Apple linking and execution remain pending. Subsequent
+selfhost CLI/parity and four platform regression tests passed after correcting
+POSIX child exit-status handling. Fixed-timezone and Darwin SDK layout tests
+are included for native runners; they have not executed on this Windows host.
+Selfhost `--cpu` now uses `-mcpu=` on macOS arm64 and `-march=` on Intel;
+both CLI stages' `--cpu native` regression passed locally, and both Apple
+Rust cross-checks passed again. Apple clang native linking/running remains
+unverified because this session has no macOS execution host.
 
 Explicitly imported [stdlib modules](docs/stdlib.md) include math, time,
 datetime, calendar, pathlib, base64, hashlib, hmac, os, glob, JSON, bisect,
@@ -379,7 +397,10 @@ rustc 是**可选**外部工具链，发现顺序与 clang 相同。`check`、`c
 
 ### 平台、安装和命令
 
-Windows 为一等平台，支持 Linux，不支持 macOS，以
+Windows 为一等平台，支持 Linux；未发布的 macOS 核心编译器/CLI 与可移植标准库
+正在验证，尚不声明 macOS 原生运行通过，不包含 Cocoa UI、macOS 安装器或 IDE
+打包。Darwin 时钟、文件系统、程序路径和 socket 已适配，并有 Windows 回归与
+模拟分支覆盖。平台策略以
 [平台政策](docs/platform-support.md) 为准。[Windows 发布包](https://github.com/AlonechatWorkspace/Aoxn-language/releases)
 为 `Aoxn-<version>-Setup.exe`，解包至 `%LOCALAPPDATA%\aoxn`、设置 PATH、
 运行 doctor。**默认不下载**；`-InstallClang` 显式启用下载。
@@ -454,6 +475,16 @@ W001、内容键 run 缓存（`AOXN_NO_CACHE`/`AOXN_CACHE_DIR`）与
 [语言卡](AGENTS.md)和[语言缺口](docs/language-gaps.md)。
 
 ### 库与工具
+
+macOS 移植本地验证（2026-11-11）：**385 项 Windows 编译器测试通过**，含日期时间、
+文件/glob、socket、C 发射 parity 与自举不动点；宿主平台契约、模拟 Darwin
+符号检查及 11 项文档测试通过；Linux workspace/tests 交叉检查通过。不等于 macOS
+原生运行；Apple Silicon 与 Intel workspace/tests 交叉检查均已通过，Apple 原生链接/运行仍待验证。
+POSIX 子进程退出状态修正后，自举 CLI/parity 与 4 项平台回归通过；固定时区
+和 Darwin SDK 布局用例已加入，尚未在此 Windows 主机原生执行。
+自举 `--cpu` 在 macOS arm64 使用 `-mcpu=`、Intel 使用 `-march=`；本地两阶段
+`--cpu native` 回归通过，两种 Apple Rust 交叉检查再次通过。当前会话没有
+macOS 执行主机，Apple clang 原生链接/运行仍未验证。
 
 [标准库](docs/stdlib.md)独立模块提供 math/time/datetime/calendar/pathlib/
 base64/hashlib/hmac/os/glob/json/bisect/heapq/csv/random/socket；核心容器与 I/O

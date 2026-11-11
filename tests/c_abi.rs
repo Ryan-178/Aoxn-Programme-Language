@@ -72,6 +72,37 @@ fn run_native(src: &str, helper: Option<&str>, marker: &str) {
     }
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn darwin_sdk_layout_matches_stdlib_contract() {
+    run_native(
+        "extern def darwin_layout() -> int\ndef main() -> int:\n    assert(darwin_layout() == 1)\n    print(\"darwin-layout\")\n    return 0\n",
+        Some(r#"
+#include <stddef.h>
+#include <sys/stat.h>
+#include <dirent.h>
+#include <time.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <sys/utsname.h>
+_Static_assert(sizeof(struct utsname) == 1280, "Darwin uname buffer size");
+_Static_assert(offsetof(struct utsname, machine) == 1024, "Darwin machine offset");
+_Static_assert(sizeof(struct sockaddr_in) == 16, "Darwin IPv4 address size");
+_Static_assert(offsetof(struct sockaddr_in, sin_len) == 0, "Darwin address length");
+_Static_assert(offsetof(struct sockaddr_in, sin_family) == 1, "Darwin address family");
+_Static_assert(offsetof(struct sockaddr_in, sin_port) == 2, "Darwin address port");
+_Static_assert(sizeof(struct stat) == 144, "Darwin stat size");
+_Static_assert(offsetof(struct stat, st_mode) == 4, "Darwin mode offset");
+_Static_assert(sizeof(((struct stat *)0)->st_mode) == 2, "Darwin mode width");
+_Static_assert(offsetof(struct dirent, d_name) == 21, "Darwin directory name offset");
+_Static_assert(CLOCK_MONOTONIC == 6, "Darwin monotonic clock");
+_Static_assert(SOL_SOCKET == 65535 && SO_NOSIGPIPE == 4130, "Darwin socket options");
+long long darwin_layout(void) { return 1; }
+"#),
+        "darwin-layout",
+    );
+}
+
 const C_HELPER: &str = r#"
 _Static_assert(sizeof(long long) == 8, "Aoxn int needs 64-bit long long");
 _Static_assert(sizeof(double) == 8, "Aoxn float needs 64-bit double");

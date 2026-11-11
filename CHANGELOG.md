@@ -5,6 +5,20 @@ minor bumps while pre-1.0: each minor version is a language milestone.
 
 ## [Unreleased]
 
+### macOS core port (under validation)
+
+Adds `target_os() == "macos"`, Darwin executable-path lookup, monotonic clock
+selection, inode64 filesystem layout/symbol selection in both C emitters,
+and Darwin IPv4/errno/SO_NOSIGPIPE handling. POSIX child exit status is
+zero-initialized, masked to eight bits, and handles fork/wait failures and
+signal termination. The selfhost CLI selects `-mcpu=` for Darwin arm64 and
+`-march=` for Intel; both CLI stages now test explicit `--cpu native` builds.
+libSystem supplies C math without
+Linux's `-lm`. POSIX sleeps now split seconds/nanoseconds, and localtime_r
+success is detected by a non-null return. Windows platform-sensitive tests
+and simulated Darwin symbol checks passed; native macOS tests are not yet
+available locally. No Cocoa UI, installer, IDE package or version release.
+
 **`sizeof(T)` and `addr_of(x)`** — the language-level blocker for every
 non-8-byte-slot container (gap A2 in `docs/language-gaps.md`, ranked #2)
 is gone. This batch is **unreleased**: per the standing no-release rule

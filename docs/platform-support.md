@@ -1,5 +1,33 @@
 # Platform support
 
+## Unreleased macOS core port
+
+The source tree adds macOS core compiler/CLI and portable-stdlib adaptations
+for Apple Silicon and Intel. This is a port under validation, not a claim of
+macOS-native test success. Build from source with Rust and Apple's Command
+Line Tools (`xcode-select --install`); clang must resolve an installed SDK.
+No macOS installer, Cocoa backend, IDE packaging or WinHTTP transport is added.
+
+`target_os()` reports `"macos"`. Native objects are Mach-O `.o`, static
+libraries `.a`, executables have no suffix, and libSystem supplies C math.
+Darwin adaptations cover clock IDs, executable-path discovery, inode64
+filesystem layouts/symbols, errno and IPv4 sockaddr layout. Darwin sockets
+use SO_NOSIGPIPE on created and accepted connections. Both C emitters select
+the Intel inode64 names before extern declarations; arm64 uses native names.
+Local cross-checks are distinct from real Apple clang linking/runtime tests;
+run compiler, package, C ABI/parity, Rust bridge and socket suites on each
+architecture before calling that architecture fully supported. Local Windows
+regressions and Linux/Apple Silicon/Intel macOS Rust workspace/tests cross-checks passed.
+The Darwin SDK layout fixture and fixed-timezone POSIX test require native
+execution; cross-checking their Rust wrappers does not run them.
+
+The selfhost CLI selects `-mcpu=` for macOS arm64 and `-march=` for Intel
+using Darwin uname's machine field. Both CLI stages exercise `--cpu native`
+in the regression suite. Native Apple execution is still required to validate
+this option against Apple clang.
+
+The platform history below describes the established Windows/Linux baseline.
+
 **Aoxn's first-class platform is Windows x86_64. Linux x86_64 is supported
 for the compiler, the standard library and the X11 UI backend as of
 v0.46.0.**
@@ -9,9 +37,8 @@ job, one windowing backend). v0.46.0 brings Linux back as a supported
 target — the compiler, the whole test suite and an X11 UI backend
 rewritten against the v3 `plat_*` contract all run on it — while Windows
 keeps everything that is Windows-specific: the installer, the release
-packaging and the Win32/GDI UI backend. macOS remains unsupported (the
-Cocoa surface needs struct-by-value externs the language cannot express;
-see `docs/ui.md`).
+packaging and the Win32/GDI UI backend. The unreleased macOS core port is
+separate from Cocoa UI support; see the validation scope above.
 
 ## What ships where
 
@@ -28,7 +55,8 @@ see `docs/ui.md`).
 ## The invariants that make both platforms one codebase
 
 - **`target_os()` folds the BUILD host's OS.** `"windows"` on a Windows
-  build, `"linux"` on a Linux build (v0.46.0), `"other"` elsewhere. The
+  build, `"linux"` on a Linux build (v0.46.0), `"macos"` in the unreleased
+  macOS port, and `"other"` elsewhere. The
   self-hosted compiler has no platform check of its own:
   `selfhost/codegen.ax` folds `target_os()` by calling the builtin, whose
   value was burned in by the compiler that built it — so every stage of
@@ -73,8 +101,8 @@ see `docs/ui.md`).
   (Windows CRT `_spawnvp` + CRT argument quoting, POSIX `fork`/`execvp`); it does
   not use a shell. The selfhost CLI was exercised on Windows this round; no
   Linux-native CLI result is claimed here.
-- **macOS** — no Cocoa backend is expressible (struct-by-value externs);
-  nothing changed since the v0.30.0 removal.
+- **macOS UI** — no Cocoa backend is included; core compiler/stdlib porting
+  does not imply GUI or installer support.
 
 ## History
 

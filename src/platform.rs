@@ -25,7 +25,7 @@ pub fn exe_ext() -> &'static str {
 }
 
 /// Object file extension: `.obj` on Windows (MSVC convention), `.o` elsewhere
-/// (ELF convention).
+/// (ELF or Mach-O convention).
 pub fn obj_ext() -> &'static str {
     if cfg!(windows) {
         "obj"
@@ -61,10 +61,10 @@ pub fn stack_link_flag() -> Option<&'static str> {
 /// keeps C math (`fmod`/`sqrt`/...) in a separate `libm`; the Windows CRT
 /// link covers it, so the list is empty there.
 pub fn default_link_libs() -> &'static [&'static str] {
-    if cfg!(windows) {
-        &[]
-    } else {
+    if cfg!(target_os = "linux") {
         &["m"]
+    } else {
+        &[]
     }
 }
 
@@ -82,7 +82,32 @@ pub fn target_os_name() -> &'static str {
         "windows"
     } else if cfg!(target_os = "linux") {
         "linux"
+    } else if cfg!(target_os = "macos") {
+        "macos"
     } else {
         "other"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_platform_contract() {
+        let expected = match std::env::consts::OS {
+            "windows" => "windows",
+            "linux" => "linux",
+            "macos" => "macos",
+            _ => "other",
+        };
+        assert_eq!(target_os_name(), expected);
+        assert_eq!(default_link_libs(), if cfg!(target_os = "linux") { &["m"][..] } else { &[][..] });
+        if cfg!(target_os = "macos") {
+            assert_eq!(exe_ext(), "");
+            assert_eq!(obj_ext(), "o");
+            assert_eq!(staticlib_ext(), ".a");
+            assert_eq!(stack_link_flag(), None);
+        }
     }
 }

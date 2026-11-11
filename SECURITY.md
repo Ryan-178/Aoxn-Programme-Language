@@ -9,7 +9,9 @@ source tree adds **unreleased `sizeof(T)` / `addr_of(x)`** work after
 0.55.0-snapshot-6; this is not a new version or release. The independent
 package-manager crate remains **0.43.0**. Fixes land on main first; earlier
 minor lines are not maintained.
-Windows and Linux are supported, macOS is not. Version history is in
+Windows and Linux are supported. The unreleased macOS core port is under
+validation, without a native-runtime success claim; Cocoa UI and installer
+support are excluded. Version history is in
 [CHANGELOG.md](CHANGELOG.md).
 
 Report vulnerabilities privately to **zmjsjsg3@163.com**, before public issues
@@ -195,6 +197,17 @@ archive content was executed.
 
 ### Deliberate limitations and evidence
 
+The unreleased Darwin port uses the modern inode64 layout, with Intel symbol
+redirection emitted by both compilers. Raw libc calls remain subject to the
+FFI contract; Windows regressions and simulated macOS symbol checks do not
+validate Apple's runtime ABI. Native Intel and Apple Silicon execution remains
+required. Local validation on 2026-11-11 passed 385 Windows compiler tests,
+Linux workspace/tests cross-check and 11 documentation tests. Both Apple
+Silicon and Intel workspace/tests cross-checks passed; these do not link or
+execute Apple binaries. A Darwin SDK
+layout test is present but has not run here. No Cocoa/installer support or
+new version release is implied.
+
 The unreleased `addr_of` is an unchecked raw-memory escape hatch, not a
 reference type: its address is valid only while the owner lives. A struct
 parameter's address belongs to the callee's copy. Nullable-rooted lvalues are
@@ -252,7 +265,8 @@ Xvfb) ran again.
 编译器保持 **0.55.0**，支持系列 **0.55.x**；当前源码在 snapshot-6 后加入
 **未发布的 `sizeof(T)` / `addr_of(x)`**，不代表新版本或发布。
 独立包管理器 crate 保持 **0.43.0**。修复先落 main，旧小版本不维护；
-支持 Windows/Linux，不支持 macOS。见 [CHANGELOG](CHANGELOG.md)。
+支持 Windows/Linux；未发布 macOS 核心移植正在验证，尚无原生运行通过声明，
+不包含 Cocoa UI/安装器。见 [CHANGELOG](CHANGELOG.md)。
 
 漏洞先私报 **zmjsjsg3@163.com**，不要先发公开 issue。提供 commit/版本、系统架构、
 aoxn doctor、最小输入、命令、预期/实际行为与影响。误编译附 aoxn c 与 O0 复现情况。
@@ -376,6 +390,14 @@ runner 会失败而不是跳过桥测试。Windows 冒烟/发布逐条检查原�
 保留决定，不删除或认证归档，没有执行归档内容。
 
 ### 有意限制与证据
+
+未发布 Darwin 移植采用现代 inode64 布局，两套编译器同步发射 Intel 符号重定向。
+原始 libc 调用仍受 FFI 契约限制；Windows 回归和模拟 macOS 符号检查不能证明
+Apple 运行期 ABI 正确，仍需 Intel 与 Apple Silicon 原生执行验证。
+2026-11-11 本地通过 385 项 Windows 编译器测试、Linux workspace/tests
+交叉检查及 11 项文档测试。Apple Silicon 与 Intel workspace/tests 交叉检查均通过，
+不等于 Apple 二进制链接或执行。已加入 Darwin SDK 布局测试，但本机未执行。
+不包含 Cocoa/安装器支持，不代表发布新版本。
 
 未发布的 `addr_of` 是不检查生命周期的原始内存逃生通道，不是引用类型；地址只在
 所有者存活期间有效。结构体参数地址属于被调方副本。nullable 为根的左值即使收窄

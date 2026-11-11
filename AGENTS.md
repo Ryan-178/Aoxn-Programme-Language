@@ -9,7 +9,8 @@ gone**; the C-emitting backend is the only backend (history:
 was made the only supported platform** 鈥?**v0.46.0 brought Linux back**
 (the compiler, the whole suite and a rewritten X11 UI backend run on
 ubuntu-latest; the installer and the WinHTTP transport stay Windows-only 鈥?
-`docs/platform-support.md` is the authority). macOS stays unsupported. This
+`docs/platform-support.md` is the authority). An unreleased macOS core port is
+under validation; do not claim native macOS success without runtime evidence. This
 repo IS the
 compiler (Rust workspace: root `aoxn` crate + `crates/aoxn-pkg`).
 Language sources use the `.ax` extension. Language rules live in
@@ -334,7 +335,7 @@ def main() -> int:            # FIXED shape: no parameters, -> int or -> void
 `len(x)` (array: static length; string: bytes; dict: entries) | `str(x)` |
 `to_int(x)` / `to_float(x)` (the only scalar conversions) |
 `dict_has(d, k)` / `dict_del(d, k)` | `assert` | `exit` | `argc()`/`arg(i)`
-| `target_os()` -> `"windows"` / `"linux"` / `"other"`, folded at COMPILE
+| `target_os()` -> `"windows"` / `"linux"` / `"macos"` / `"other"`, folded at COMPILE
 time (platform branches constant-fold away before codegen) | `range` (a
 `for` form). Raw memory (the stdlib's escape hatch, no checks):
 `load_i64(addr)` / `store_i64(addr, v)`, `load_f64` / `store_f64`,
@@ -1720,7 +1721,7 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   `("linux","windows")` on Linux. I picked the pattern from a Windows build,
   then "fixed" the CI failure by adding the one other spelling I could
   *imagine*. **Never guess the other platform's output: derive it, or make it
-  switchable.** `target_os_name()` takes exactly three values, so the
+  switchable.** `target_os_name()` now takes four values (including macOS), so the
   general fix enumerates them 鈥?and the real capability is a temporary
   `AOXN_FAKE_LINUX` hook in `platform.rs` that makes the compiler fold as
   Linux, which runs the Linux configuration of a test from a Windows machine
@@ -1927,6 +1928,7 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   caught `setup/main.rs` calling `ui::wizard` on Linux exactly because this
   was not done. Windows-only test crates that link Windows libraries
   (`winhttp`, `ws2_32`) are gated with `#![cfg(windows)]` at the top.
-- **Windows first-class, Linux supported (v0.46.0).** Do NOT add macOS
-  claims or a Cocoa backend. The wiki is frozen and still describes older
-  behavior; `docs/platform-support.md` is the current answer.
+- **Windows first-class, Linux supported (v0.46.0).** The user requested a
+  macOS core compiler/CLI/portable-stdlib port on 2026-11-11. Keep it unreleased
+  and distinguish cross-checks from native Apple evidence. No Cocoa backend
+  or macOS installer is included. `docs/platform-support.md` is authoritative.

@@ -149,7 +149,7 @@ def datetime_now() -> DateTime:
     clk = malloc(8)
     tm = malloc(56)
     store_i64(clk, time_unix())
-    if localtime_r(clk, tm) == 0:
+    if localtime_r(clk, tm) != 0:
         dt = DateTime(
             year=tm_field(tm, 5) + 1900,
             month=tm_field(tm, 4) + 1,
