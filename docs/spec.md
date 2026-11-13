@@ -1017,7 +1017,10 @@ Ordered by how much they cost the language's Python parity.
    change would touch, its cost, and a ranked order for closing them.
    **The first 13 modules landed in v0.44.0** (math, time, datetime, calendar,
    pathlib, base64, hashlib, hmac, os, glob, json 闁?promoted from `net/` 闁?
-   bisect, heapq; `docs/stdlib.md` is the reference).
+   bisect, heapq; `docs/stdlib.md` is the reference). **Unreleased since:**
+   `csv`, `random`, `socket` (snapshot 4-5) and `re` (a backtracking Python-`re`
+   subset, differential-tested against CPython) joined them as standalone
+   modules; `docs/stdlib-todo.md` §2 tracks what remains.
 8. Top-level statements as an implicit `main` (module-script mode).
 9. Larger Python features, each of which is a real language design (not just
    syntax): `with`, generators and `yield`, closures and decorators, classes,

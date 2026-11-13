@@ -75,6 +75,31 @@ a stale `AOXN_CLANG=E:/llvm/bin/clang.exe` made all five selfhost driver
 tests fail with `_spawnvp` exit 127 while every Rust-side test passed.
 AGENTS.md's environment facts are updated.
 
+### Standard library: `re` (backtracking regex subset)
+
+`stdlib/re.ax` lands the roadmap's next module (`docs/stdlib-todo.md` §2 #11):
+a **backtracking** matcher over a Python `re` subset, anchored to text
+extraction (HTML/XML tag bodies, log scraping) rather than being a general
+regex engine. Pure Aoxn, no externs, and inside the self-host subset.
+
+- Syntax: literals, `.` (any byte but `\n`), `|`, `(...)`, `(?:...)`,
+  `* + ? {m} {m,} {m,n}` with lazy `?`, anchors `^ $`, `\b \B`, classes
+  `[...]`/`[^...]` with ranges, and `\d \w \s \D \W \S` + control escapes.
+- API: `re_compile / re_exec / re_search / re_match / re_fullmatch /
+  re_group / re_start / re_end / re_groups / re_findall / re_sub / re_split`.
+- Clean compile errors (never silent misparse) for pattern backreferences,
+  lookaround, named groups, inline flags and `\xHH`/`\uHHHH`; POSIX classes
+  parse as literal classes exactly as Python does. No MULTILINE/IGNORECASE/
+  DOTALL. Byte-wise, not character-wise.
+- Implementation: flat 4-slot instruction program + an explicit backtracking
+  stack `(pc, pos, trail-height)` with a capture-undo trail (no recursion, so
+  `.*` cannot overflow the C stack). Replacement follows Python (`\1..\9`,
+  `\g<N>`, `\0` = NUL octal, unknown escapes left alone).
+- Tests: `tests/re.rs` pins canonical vectors and differentially compares
+  match/search/fullmatch/findall/sub/split against CPython's `re` when Python
+  is present, plus a selfhost-compilable check. `examples/re_demo.ax` shows the
+  tag-extraction use case.
+
 ## [0.55.0-snapshot-6] - 2026-11-09
 
 **Package manifest v2 and a pip-style dependency CLI.** The project manifest

@@ -5,10 +5,10 @@
 ### Supported versions and reporting
 
 The compiler remains **0.55.0**, supported on the **0.55.x** line. The current
-source tree adds **unreleased `sizeof(T)` / `addr_of(x)`** work after
-0.55.0-snapshot-6; this is not a new version or release. The independent
-package-manager crate remains **0.43.0**. Fixes land on main first; earlier
-minor lines are not maintained.
+source tree adds **unreleased `sizeof(T)` / `addr_of(x)`** and the
+**`stdlib/re.ax` regular-expression module** after 0.55.0-snapshot-6; this is
+not a new version or release. The independent package-manager crate remains
+**0.43.0**. Fixes land on main first; earlier minor lines are not maintained.
 Windows and Linux are supported, macOS is not. Version history is in
 [CHANGELOG.md](CHANGELOG.md).
 
@@ -45,7 +45,11 @@ a writable cache directory: a hostile cache can substitute an executable, and it
 can also substitute the compiled Rust static libraries cached under
 `<cache>/rust/`. PATH is not authenticated, output creation is not exclusive, and
 `stdlib/socket` performs real network I/O with the caller's permissions;
-`stdlib/random` is explicitly non-cryptographic. Isolate untrusted projects with
+`stdlib/random` is explicitly non-cryptographic; `stdlib/re` is a
+backtracking matcher with **no step budget**, so an adversarial
+pattern/subject pair can take exponential time (ReDoS) — do not match
+untrusted patterns against untrusted input without OS-level time limits.
+Isolate untrusted projects with
 OS/container controls over files, network and credentials. Type checking is not
 permission to execute untrusted output.
 
@@ -144,9 +148,12 @@ verification does not establish sandboxing or constitute a security audit.
   as trusted and do not expose this command to a remotely served UI without an
   authorization layer. The assistant proxy (`ide_ai_chat`) keeps provider keys in
   the Rust process; `ide_read_bytes` caps preview payloads at 16 MiB.
-- JSON/UTF/SSE/URL/headers/glob/base64/UI parsers must advance and respect buffers.
-  Missing slab indices are guarded; realloc helpers return live handles; builder
-  growth cannot shrink below live children. Empty/nonfinite/deep JSON terminates.
+- JSON/UTF/SSE/URL/headers/glob/base64/regex/UI parsers must advance and respect
+  buffers. Missing slab indices are guarded; realloc helpers return live handles;
+  builder growth cannot shrink below live children. Empty/nonfinite/deep JSON
+  terminates. The regex compiler rejects malformed patterns with named errors
+  and the VM runs on an explicit backtrack stack (no host recursion), but
+  matching time is unbounded (see trust boundaries).
   WinHTTP must not silently leak credentials across redirects or accept truncation.
 - String bounds clamps are compiler/library safety properties, not interchangeable
   with unchecked array semantics. SDK keys are unsanitized heap strings: use
@@ -181,7 +188,9 @@ The web-bench workflow's bash steps use forward-slash paths so Git Bash cannot
 consume a separator as an escape; the fixed invocation was rerun locally
 (server build plus 23/23 functional parity checks).
 Local workflow checks are not proof of successful hosted Actions or installer
-execution.
+execution. The GitHub `main` branch is protected: a pull request is required
+(required approvals: 0 since 2026-11-13, because the solo maintainer
+cannot approve their own PR), and direct/force pushes are blocked.
 
 `tools/check_doc_links.py` is read-only and dependency-free. It reads local Git
 history, never fetches URLs or executes documented commands, and defaults to
@@ -203,6 +212,20 @@ this rejection prevents representation confusion, not lifetime errors.
 `sizeof(T)` reports the C representation, including padding. Stage-2 rejects
 both forms; it does not silently implement them differently.
 
+`stdlib/re` matches BYTES, like every Aoxn string: no Unicode semantics, no
+MULTILINE/IGNORECASE/DOTALL, and a NUL byte truncates the subject because
+`len()` is `strlen`. Unsupported syntax (pattern backreferences, lookaround,
+named groups, inline flags, `\xHH`/`\uHHHH`/`\U`/`\N`) is a compile error
+with a named message, not a silent approximation; POSIX classes such as
+`[[:alpha:]]` parse as literal character classes, exactly as CPython treats
+them inside a bracket expression. Replacement expansion follows Python's
+rules (`\1`–`\9`, `\g<N>`, `\n`/`\t`/`\r`, `\\`); a `\0` in a replacement
+produces a NUL that truncates any later string builtin. Catastrophic
+backtracking is possible and unbounded — an availability consideration, not
+a memory-safety one: the VM's explicit stack and capture-undo trail grow on
+the heap, and instruction addresses come from the pattern compiler, never
+from the subject text.
+
 User-program signed overflow, unchecked array indexing, invalid raw-memory/FFI
 use remain undefined behavior. `as_string` aliases memory that must remain live.
 Strings are NUL-terminated bytes; concatenation leaks by design. There is no GC
@@ -215,11 +238,13 @@ permissions, and the bridge checks its declarations, not its behavior.
 The thirteen findings from the 2026-10-17 audit were fixed in 0.51.0/0.51.1;
 that is history, not absence of new defects. Baseline **8f90aca** recorded
 343 root + 104 package tests on Windows with explicit clang 23.1.2. Current-tree
-validation passed **383 root + 116 package tests (499), 0 failed/ignored** on
-Windows (2026-11-10, clang 23.1.0 at `C:\Program Files\LLVM\bin\clang.exe`,
+validation passed **385 root + 116 package tests (501), 0 failed/ignored** on
+Windows (2026-11-13, clang 23.1.2 at `E:\llvm\bin\clang.exe` on this machine,
 rustc from rustup), with `AOXN_TEST_REQUIRE_CLANG=1`. Package tests ran via
-`bash run_pkg_tests.sh`; eight root tests cover sizeof/addr_of, generic
-substitution, live storage, value semantics and rejection diagnostics.
+`bash run_pkg_tests.sh`; the two new root tests are the `re` CPython
+differential (supported subset, pinned vectors, both-invalid and
+must-error pattern lists) and the `re` selfhost-compilability pin; the eight
+sizeof/addr_of pins remain in the suite.
 IDE validation below is historical, not rerun for this batch: IDE
 Rust tests passed 46/46. The IDE frontend ran 62/63: `theme.test.ts` could not
 load `react` because `node_modules` is absent in this checkout, while the
@@ -250,7 +275,8 @@ Xvfb) ran again.
 ### 支持版本与报告
 
 编译器保持 **0.55.0**，支持系列 **0.55.x**；当前源码在 snapshot-6 后加入
-**未发布的 `sizeof(T)` / `addr_of(x)`**，不代表新版本或发布。
+**未发布的 `sizeof(T)` / `addr_of(x)`** 与 **`stdlib/re.ax` 正则模块**，
+不代表新版本或发布。
 独立包管理器 crate 保持 **0.43.0**。修复先落 main，旧小版本不维护；
 支持 Windows/Linux，不支持 macOS。见 [CHANGELOG](CHANGELOG.md)。
 
@@ -276,7 +302,9 @@ CSS/Tailwind 选项明确拒绝而非转发，自举 CLI 也不解析 `.rs` 导�
 清单。内容键构建缓存信任可写缓存目录中已存在的文件：恶意缓存既可替换
 可执行文件，也可替换缓存于 `<cache>/rust/` 下的 Rust 静态库；PATH 未经认证，
 输出不是独占创建；`stdlib/socket` 以调用者权限进行真实网络 I/O；
-`stdlib/random` 明确非密码学安全。对不可信项目使用系统/容器文件、网络和凭据隔离；
+`stdlib/random` 明确非密码学安全；`stdlib/re` 是**没有步数预算**的回溯
+匹配器，对抗性的模式/输入对可能耗时指数级（ReDoS）——不要在无系统级
+时限的情况下用不可信模式匹配不可信输入。对不可信项目使用系统/容器文件、网络和凭据隔离；
 类型检查通过不代表可以安全执行。
 
 `AOXN_RUSTC` 与 `AOXN_CLANG` 一样是调用方配置，而不是对攻击者的安全边界：
@@ -340,8 +368,10 @@ CSS/Tailwind 选项明确拒绝而非转发，自举 CLI 也不解析 `.rs` 导�
   但命令本身可离开该目录。因此本地 webview 必须视为可信；不要把该命令暴露给
   远程提供的 UI，除非另有授权层。助手代理（`ide_ai_chat`）把供应商密钥留在
   Rust 进程；`ide_read_bytes` 将预览载荷限制在 16 MiB。
-- JSON/UTF/SSE/URL/头/glob/base64/UI 解析必须推进且不越界；缺失 slab 索引守卫、
+- JSON/UTF/SSE/URL/头/glob/base64/正则/UI 解析必须推进且不越界；缺失 slab 索引守卫、
   realloc 活句柄写回、builder 不缩到 live count 以下；空/非有限/深 JSON 终止。
+  正则编译器对非法模式报具名错误，VM 用显式回溯栈运行（不占宿主递归），
+  但匹配时间无上限（见信任边界）。
   WinHTTP 不静默跨重定向泄密、不把截断当成功。
 - 字符串 clamp 属安全属性，不得借数组不检查取消。SDK key 不清零，优先环境配置，
   转储脱敏；WinHTTP 为 Windows-only。IDE/Web 公告在范围内，例外需要理由与退出条件，
@@ -368,6 +398,8 @@ runner 会失败而不是跳过桥测试。Windows 冒烟/发布逐条检查原�
 安装器下载仍为显式启用。web-bench 工作流的 bash 步骤使用正斜杠路径，Git Bash
 不会再把分隔符当转义吞掉；修复后的调用已在本地重跑（服务器构建 + 23/23 项
 功能 parity 检查通过）。本地 workflow 检查不证明托管 Actions 或安装器运行成功。
+GitHub `main` 分支受保护：必须经 pull request（2026-11-13 起批准数要求
+为 0，因为单人维护者无法批准自己的 PR），禁止直推与强推。
 
 文档检查器只读、无外部依赖，仅读本地 Git 历史，不访问 URL 或执行文档命令，
 默认仅警告。历史白名单与命令启发式限制其覆盖，不是安全/链接完整性保证。
@@ -382,6 +414,16 @@ runner 会失败而不是跳过桥测试。Windows 冒烟/发布逐条检查原�
 也拒绝取址，因为其 C 存储仍是 `ax_opt` 包装；这是防表示混淆，不是生命周期保证。
 `sizeof(T)` 报告包含填充的 C 表示大小。stage-2 明确拒绝两种形式，不静默采用另一套语义。
 
+`stdlib/re` 与所有 Aoxn 字符串一样按**字节**匹配：没有 Unicode 语义，没有
+MULTILINE/IGNORECASE/DOTALL，NUL 字节会因 `len()` 是 `strlen` 而截断 subject。
+不支持的语法（模式反向引用、环视、命名分组、内联标志、`\xHH`/`\uHHHH`/
+`\U`/`\N`）是带具名消息的编译错误，不是静默近似；`[[:alpha:]]` 这类 POSIX
+类按字面字符类解析，与 CPython 在括号表达式内的处理完全一致。替换展开遵循
+Python 规则（`\1`–`\9`、`\g<N>`、`\n`/`\t`/`\r`、`\\`）；替换中的 `\0`
+产生 NUL，会截断其后任何字符串内建。灾难性回溯可能存在且无上限——这是
+可用性问题而非内存安全问题：VM 的显式栈与捕获撤销 trail 在堆上增长，
+指令地址来自模式编译器，绝不来自 subject 文本。
+
 用户数组越界、带符号溢出、无效原始内存/FFI 是 UB。as_string 别名存储必须存活；
 字符串 NUL 结束、拼接故意泄漏，没有 GC/通用运行时内存安全。库处理外部数据损坏
 与调用方主动不安全操作有别；窗口服务和注册表等级不沙箱或认证程序。通过 `.rs`
@@ -390,10 +432,11 @@ runner 会失败而不是跳过桥测试。Windows 冒烟/发布逐条检查原�
 
 2026-10-17 审计13项已在0.51.0/0.51.1修复，不保证没有新缺陷。
 历史基线 **8f90aca** 在 Windows 显式 clang 23.1.2 记录343根+104包；当前树最终
-**383根+116包=499项通过，0失败/忽略**（2026-11-10，clang 23.1.0 位于
-`C:\Program Files\LLVM\bin\clang.exe`，rustc 来自 rustup），设置了
-`AOXN_TEST_REQUIRE_CLANG=1`。包测试通过 `bash run_pkg_tests.sh` 执行；新增八项
-根测试覆盖 sizeof/addr_of、泛型替换、活存储、值语义与拒绝诊断。
+**385根+116包=501项通过，0失败/忽略**（2026-11-13，本机 clang 23.1.2 位于
+`E:\llvm\bin\clang.exe`，rustc 来自 rustup），设置了
+`AOXN_TEST_REQUIRE_CLANG=1`。包测试通过 `bash run_pkg_tests.sh` 执行；新增两项
+根测试为 `re` 的 CPython 差分（受支持子集、钉住的向量、双方均非法与必须报错
+模式表）与 `re` 自举可编译性钉测试；8 项 sizeof/addr_of 钉测试仍在套件内。
 以下 IDE 证据为历史记录，本批未重跑：IDE Rust 测试 46/46 通过；IDE 前端 62/63，
 `theme.test.ts` 因本检出缺少 `node_modules` 无法加载 `react`，包管理器前端测试
 通过，缺少 `node_modules` 也使 `pnpm typecheck` 无法运行。根套件包含全部4项
