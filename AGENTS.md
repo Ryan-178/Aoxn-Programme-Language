@@ -77,8 +77,15 @@ longer works — do not attempt it.
    allowed. Because force pushes are blocked, do any rebasing BEFORE the
    first push; after pushing, integrate new main commits with a merge, not a
    rebase+force-push.
-3. Open a pull request `<slug> -> main` (GitHub MCP `create_pull_request` or
-   the web UI). **The agent cannot approve its own PR** — a human must give
+3. Open a pull request `<slug> -> main` on the CANONICAL repo
+   `Ryan-178/Aoxn-Programme-Language` (web UI compare link, or GitHub MCP
+   `create_pull_request`). **Known 2026-11-13: the MCP `create_pull_request`
+   write path fails with an output-schema error even on the canonical
+   coordinates (reads work); `gh` is not installed and direct
+   `api.github.com` curl is blocked on this machine — fall back to handing
+   the user the compare URL
+   `https://github.com/Ryan-178/Aoxn-Programme-Language/compare/main...<slug>?expand=1`.**
+   **The agent cannot approve its own PR** — a human must give
    the 1 required approval and then merge (Merge / Squash / Rebase are all
    enabled). Hand the PR to the user for review; never try to bypass the
    ruleset.
@@ -600,11 +607,15 @@ stdin (no `input()`); `inf`/`nan` literals (`math.NaN()` / `math.Inf()`);
   status, or run the command bare.
 - **A `git push` that SUCCEEDS can still print an error and exit 1 under
   PowerShell.** GitHub writes `remote: This repository moved. Please use the
-  new location: ...` to **stderr** (the notice names `Ryan-178/Aoxn-language`
-  even though `origin` is `AlonechatWorkspace/Aoxn-language` 鈥?it is a stale
-  redirect, not a real relocation). PowerShell routes native stderr into the
+  new location: ...` to **stderr**. **2026-11-13: the move is REAL** — the
+  canonical repo is now `github.com/Ryan-178/Aoxn-Programme-Language`
+  (verified: `git ls-remote` on both URLs returns identical refs; the old
+  `AlonechatWorkspace/Aoxn-language` URL redirects there, and `origin` still
+  points at the old URL, which keeps working). The older note calling this
+  notice a "stale redirect" described the pre-2026-11-13 state. PowerShell
+  routes native stderr into the
   error stream, so `git push` exits 1 and looks like a failure. **Do not trust
-  the exit code** 鈥?verify with `git fetch origin` then
+  the exit code** — verify with `git fetch origin` then
   `git rev-list --left-right --count origin/main...main`; `0 0` means the push
   landed.
 - **PowerShell variables are CASE-INSENSITIVE.** `$zh` and `$ZH` are the same
@@ -1927,7 +1938,9 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   `docs/ts-m1-spec.md` / `docs/web-platform-plan.md` 鈥?TS platform decisions
 - `AGENTS.md` 鈥?this file: agent/contributor working agreement (published
   since v0.29.3)
-- Repo: github.com/AlonechatWorkspace/Aoxn-language; Apache-2.0.
+- Repo: github.com/Ryan-178/Aoxn-Programme-Language (canonical since
+  2026-11-13; the old `AlonechatWorkspace/Aoxn-language` URL redirects
+  there); Apache-2.0.
   `ci.yml` has Windows/Linux jobs with explicit `cargo test -p aoxn --locked`
   and `cargo test -p aoxn-pkg --locked`; bare `cargo test` in this non-virtual
   workspace defaults to the root package, not the pkg member's own tests.

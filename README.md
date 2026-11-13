@@ -72,7 +72,7 @@ analysis; only `build` and `run` need Rust installed.
 
 Windows is first-class, Linux is supported, macOS is unsupported. The
 [platform policy](docs/platform-support.md) is authoritative. Windows ships
-`Aoxn-<version>-Setup.exe` from the [release page](https://github.com/AlonechatWorkspace/Aoxn-language/releases).
+`Aoxn-<version>-Setup.exe` from the [release page](https://github.com/Ryan-178/Aoxn-Programme-Language/releases).
 It unpacks into `%LOCALAPPDATA%\aoxn`, updates PATH and runs `aoxn doctor`.
 **Nothing is downloaded by default**; `-InstallClang` explicitly opts in.
 clang is external; Windows linking needs MSVC-compatible build tools. Rust is
@@ -396,7 +396,7 @@ rustc 是**可选**外部工具链，发现顺序与 clang 相同。`check`、`c
 ### 平台、安装和命令
 
 Windows 为一等平台，支持 Linux，不支持 macOS，以
-[平台政策](docs/platform-support.md) 为准。[Windows 发布包](https://github.com/AlonechatWorkspace/Aoxn-language/releases)
+[平台政策](docs/platform-support.md) 为准。[Windows 发布包](https://github.com/Ryan-178/Aoxn-Programme-Language/releases)
 为 `Aoxn-<version>-Setup.exe`，解包至 `%LOCALAPPDATA%\aoxn`、设置 PATH、
 运行 doctor。**默认不下载**；`-InstallClang` 显式启用下载。
 clang 为外部前提，Windows 链接需要 MSVC 兼容工具；Rust 仅在 `.rs` 导入时需要，
