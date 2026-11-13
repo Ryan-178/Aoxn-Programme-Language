@@ -1,4 +1,4 @@
-# The Aoxn standard library (v0.44.0 batch + CSV/random/socket)
+# The Aoxn standard library (v0.44.0 batch + CSV/random/socket/re)
 
 The v0.44.0 batch landed the first thirteen modules of the stdlib roadmap
 (`docs/stdlib-todo.md` §6's items 1–6 plus the bisect/heapq pair): every
@@ -539,3 +539,65 @@ real loopback traffic in both directions (Aoxn server + Rust client, Rust
 server + Aoxn client), a refused connection and a bind conflict. Those runs
 are on Windows in this workspace; the Linux branch is implemented and has
 not been executed natively here.
+
+## re
+
+`import * from "stdlib/re.ax"` — a **backtracking** regular-expression matcher
+covering a Python `re` subset (roadmap `docs/stdlib-todo.md` §2 #11). It is NOT
+a DFA/NFA and makes no performance promise; it is anchored to text-extraction
+use cases (HTML/XML tag bodies, log scraping). Pure Aoxn, no externs, no link
+libraries, and inside the self-host subset (pinned by `tests/re.rs`).
+
+```aoxn
+m = re_search(re_compile("[0-9]+"), "order 42 shipped", 0)
+print(re_group(m, 0))                       # 42
+m = re_match("(\\w+)@(\\w+)", "user@host")   # anchored at start
+print(re_group(m, 1) + " / " + re_group(m, 2))
+print(re_sub("(\\w+) (\\w+)", "\\2 \\1", "hello world"))   # world hello
+v = re_findall("\\d+", "a1 b22 c333")        # Vec of strings
+sp = re_split("[,;]", "a,b;c")              # Vec of strings
+```
+
+Supported syntax: literals, `.` (any byte except `\n`), `|`, groups `(...)` and
+non-capturing `(?:...)`, quantifiers `* + ? {m} {m,} {m,n}` each with a lazy `?`
+suffix, anchors `^ $`, boundaries `\b \B`, classes `[...]` / `[^...]` with
+ranges, and escapes `\d \w \s \D \W \S \n \t \r \f \v \a \0` plus escaped
+punctuation.
+
+Rejected with a clean compile error (`Re.err == 1`, never a silent misparse):
+pattern backreferences `\1..\9`, lookahead/lookbehind, named groups, inline
+flags `(?i)`, and `\xHH`/`\uHHHH`/`\U........`/`\N{..}`. POSIX classes
+`[[:alpha:]]` are not special — they parse as ordinary literal classes, exactly
+as Python does. No MULTILINE/IGNORECASE/DOTALL: `^`/`$` anchor the whole subject
+and `$` also matches just before a single trailing `\n` (Python defaults).
+
+| API | notes |
+|---|---|
+| `re_compile(p) -> Re` | `Re{prog,ncap,nslots,err,msg}`; check `.err` |
+| `re_exec(r, s, start)` | anchored at `start` |
+| `re_search(r, s, start)` | scans forward from `start` |
+| `re_match(p, s)` / `re_fullmatch(p, s)` | compile + anchored / whole-string |
+| `re_group(m, g)` / `re_start` / `re_end` / `re_groups` | group 0 = whole match; unset group = `""` / `-1` |
+| `re_findall(p, s) -> Vec` | whole matches if no group, else group 1 |
+| `re_sub(p, repl, s) -> string` | replaces all; see replacement rules below |
+| `re_split(p, s) -> Vec` | drops separators (Python without groups) |
+
+Semantics / degradations (deliberate, documented):
+- **Bytes, not characters.** `.` and classes operate on bytes (`len` is
+  `strlen`); UTF-8 text matches byte-wise, like the rest of the stdlib.
+- **`re_findall` multi-group tuples are not representable** (no tuple type):
+  with >=1 group it returns group 1. Use a `re_search` loop + `re_group` for
+  the other groups.
+- **Replacement** follows Python: `\1..\9` (single digit) and `\g<N>`
+  (incl. `\g<0>` = whole match) are backreferences; `\0` is a NUL octal escape
+  (NOT group 0) — and a NUL truncates every Aoxn string builtin, so prefer
+  `\g<0>`; `\\ \n \t \r` are escapes; any other backslash escape is left alone.
+- **Empty matches advance by one** in `findall`/`sub`/`split`, so `x*` over
+  `"abc"` yields `-a-b-c-` in `sub`, matching Python.
+
+Implementation: the pattern compiles to a flat 4-slot-per-instruction program
+and runs on an explicit backtracking stack `(pc, pos, trail-height)` with a
+capture-undo trail — no recursion, so `.*` over a long subject cannot overflow
+the C stack. `tests/re.rs` pins canonical vectors and differentially compares
+match/search/fullmatch/findall/sub/split against Python's `re` when Python is
+available, plus a selfhost-compilable check.

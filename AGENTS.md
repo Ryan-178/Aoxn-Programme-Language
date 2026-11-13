@@ -63,18 +63,31 @@ cherry-picking, not `git add .`), then `git commit`, then verify with
   `.ps1`/`.ax`/log files) so they do not land in history; do not delete files
   authored by the user.
 
-Session end (merge back + push, 鍚堝苟鍚庣粺涓€鎺ㄩ€?鈥?main stays current):
+Session end (push branch + open a PR, 推送分支并开 PR — main is protected):
+**GitHub ruleset (changed directly on github.com, 2026-11-13)**: the default
+branch `main` now REQUIRES a pull request with **1 approving review** before
+merging; direct pushes to `main` and force pushes are BLOCKED, and ref
+deletion is restricted. The old "ff-merge into main + `git push`" flow no
+longer works — do not attempt it.
 1. In the MAIN worktree require a clean `git status` (tracked files). If
    another session holds uncommitted work there, STOP and let the user
-   coordinate 鈥?never merge on top of a dirty main.
-2. `git merge --ff-only <slug>` in the main worktree (if it cannot
-   fast-forward: `git rebase main` in the bench, re-run tests there,
-   retry). Then `git push`, keeping
-   `github.com/AlonechatWorkspace/Aoxn-language` in sync (remote moved
-   from `Ryan-178` on 2026-10-01).
-3. Clean up: `git worktree remove D:/ailanguage-bench/<slug>` and
-   `git branch -d <slug>`. A session paused mid-work keeps its bench and
-   branch until the work lands.
+   coordinate — never build on top of a dirty main.
+2. In the bench, bring the branch up to date FIRST (`git rebase main`, re-run
+   tests), then `git push -u origin <slug>`. Pushing a NON-main branch is
+   allowed. Because force pushes are blocked, do any rebasing BEFORE the
+   first push; after pushing, integrate new main commits with a merge, not a
+   rebase+force-push.
+3. Open a pull request `<slug> -> main` (GitHub MCP `create_pull_request` or
+   the web UI). **The agent cannot approve its own PR** — a human must give
+   the 1 required approval and then merge (Merge / Squash / Rebase are all
+   enabled). Hand the PR to the user for review; never try to bypass the
+   ruleset.
+4. After the PR merges: in the main worktree `git pull --ff-only`, then clean
+   up `git worktree remove D:/ailanguage-bench/<slug>` and
+   `git branch -d <slug>` (local cleanup). Remote feature-branch deletion may
+   be restricted by the ruleset — leave it to the user or to GitHub's
+   delete-on-merge. A session paused mid-work keeps its bench and branch
+   until the work lands.
 
 **README/SECURITY 閲嶅啓 / README & SECURITY rewrite (user instruction,
 standing)**: after every conversation that changes the project, REWRITE
@@ -448,6 +461,7 @@ rejects fn-pointer parameters (threads go through
 | `"stdlib/csv"` | RFC 4180 parse/serialize: `csv_parse`/`csv_read_file` -> `CsvTable`, `csv_rows/cols/get/max_cols`, `csv_dumps` (CRLF) / `csv_dumps_lf`, `csv_row_text`, `csv_free`; errors are values (`err`/`msg`/`line`/`col`, no exceptions) |
 | `"stdlib/random"` | deterministic non-crypto MINSTD: `random_seed/next/below/range`, `random_float`, `random_float_next/range` (result in `.fval`); rejection sampling, error leaves state unchanged; no CSPRNG API |
 | `"stdlib/socket"` | minimal blocking IPv4 TCP: `socket_init`, `socket_connect`, `socket_listen`, `socket_accept`, `socket_send_bytes/str`, `socket_recv`, `socket_recv_all/line`, `socket_close`; `Sock{fd,err,msg}` values; Windows `-l ws2_32`, POSIX no extra lib; no DNS/UDP/IPv6/TLS/timeouts, no SO_REUSEADDR |
+| `"stdlib/re"` | backtracking Python-`re` subset: `re_compile/exec/search/match/fullmatch/group/start/end/groups/findall/sub/split`; `* + ? \| () (?:) [] {m,n} .`, classes, lazy, anchors, `\b\d\w\s`; byte-wise; backrefs/lookaround/flags/`\xHH` are clean compile errors; no externs, selfhost-compilable |
 | `"stdlib/ui_win"` (Windows: `-l user32 -l gdi32`) or `"stdlib/ui_x11"` (Linux) -- ONE import pulls the whole toolkit (`ui.ax` core + `ui_draw.ax` widget layer + the backend) | immediate-mode widget toolkit -- `docs/ui.md`, `examples/ui_gallery.ax` |
 | `"stdlib/net/http"` (Windows: `-l winhttp`) / `"stdlib/net/codec"` / `"stdlib/net/sse"` | HTTP transport, UTF-16/base64/url-encode helpers, SSE frames |
 | `"stdlib/openai/client"` / `"stdlib/anthropic/client"` (+ `blocks`, `tools`) | the two API SDKs (`oa_*` / `an_*`) -- `docs/openai-sdk.md`, `docs/anthropic-sdk.md` |
@@ -1589,9 +1603,9 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
 - **None of the new modules may be imported into `stdlib/stdlib.ax`** (the
   self-host critical path). All are plain Aoxn EXCEPT `hmac.ax` (fn-ptr 鈥?
   header-marked `selfhost 灏氫笉鍙紪璇慲, off the fixed-point path).
-- **CSV / random / socket (v0.55.0 snapshots 4-5)** are standalone modules, not on
-  the selfhost critical path, and all three are compiled and run by the
-  selfhost CLI in tests:
+- **CSV / random / socket / re (v0.55.0 snapshots 4-5 + unreleased `re`)** are
+  standalone modules, not on the selfhost critical path, and all four are
+  compiled and run by the selfhost CLI in tests:
   - `stdlib/csv.ax` is RFC 4180 parse/serialize with value errors
     (`err`/`msg`/`line`/`col`). Quoted commas/newlines/`""`, CRLF/LF, blank
     lines (empty row, like Python), empty/trailing fields and a final record
@@ -1611,6 +1625,17 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
     client plus refused connections and bind conflicts. The Linux code path is
     implemented with the same externs but has NOT been executed natively here;
     treat the Windows run as the only runtime evidence until Linux CI runs it.
+  - `stdlib/re.ax` (unreleased) is a BACKTRACKING Python-`re` subset, not a
+    DFA/NFA: flat 4-slot instruction program + explicit backtrack stack
+    `(pc,pos,trail-height)` with a capture-undo trail (no recursion). Supports
+    `* + ? | () (?:) [] {m,n} .`, classes/ranges/negation, lazy, anchors,
+    `\b\B`, `\d\w\s\D\W\S`; byte-wise. Pattern backrefs/lookaround/named
+    groups/inline flags/`\xHH` are CLEAN compile errors; POSIX classes parse as
+    literal classes (same as Python). `re_findall` returns group 1 when there
+    are groups (no tuple type); replacement follows Python (`\g<N>`, `\0`=NUL).
+    `tests/re.rs` differentially compares against CPython `re` and pins a
+    selfhost-compilable check; `examples/re_demo.ax` is the tag-extraction use
+    case. Reference: `docs/stdlib.md` §re.
 - **A stdlib module that NAMES one platform's API and nothing else does not
   link on the other one** (v0.50.1 fixed exactly this in `time.ax` +
   `datetime.ax`: `clang: error: linker command failed` with `undefined
@@ -1882,7 +1907,7 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   `stdlib/ui.ax` + `stdlib/ui_win.ax` 鈥?the Qt-flavored immediate-mode UI
   toolkit v3 (layout engine, text selection/multi-line editing, menus,
   tree/table model+view, signal-slot events);
-  `stdlib/{math,time,datetime,calendar,pathlib,base64,hashlib,hmac,os,glob,json,bisect,heapq,csv,random,socket}.ax`
+  `stdlib/{math,time,datetime,calendar,pathlib,base64,hashlib,hmac,os,glob,json,bisect,heapq,csv,random,socket,re}.ax`
   鈥?the v0.44.0 module batch (`docs/stdlib.md` is its reference;
   `stdlib/net/` holds the SDK-shared transport, `stdlib/openai/` +
   `stdlib/anthropic/` the two SDKs)

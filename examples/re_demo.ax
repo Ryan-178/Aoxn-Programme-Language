@@ -1,0 +1,48 @@
+import * from "stdlib/re.ax"
+
+# Pull the text out of simple HTML-ish tags: the use case stdlib/re.ax is
+# anchored to (docs/stdlib-todo.md §2 #11). Backtracking subset, byte-wise.
+def tag_text(html: string, tag: string):
+    pat = "<" + tag + ">(.*?)</" + tag + ">"
+    r = re_compile(pat)
+    pos = 0
+    n = len(html)
+    while pos <= n:
+        m = re_search(r, html, pos)
+        if m.ok == 0:
+            break
+        print("<" + tag + "> " + re_group(m, 1))
+        pos = re_end(m, 0)
+
+def main() -> int:
+    # match is anchored at the start; search scans.
+    m = re_search(re_compile("[0-9]+"), "order 42 shipped", 0)
+    print("first number: " + re_group(m, 0))
+
+    # groups + lazy vs greedy
+    m = re_match("(\\w+)@(\\w+)", "user@host")
+    print("user=" + re_group(m, 1) + " host=" + re_group(m, 2))
+    print("greedy: " + re_group(re_match("a.*c", "abcabc"), 0))
+    print("lazy:   " + re_group(re_match("a.*?c", "abcabc"), 0))
+
+    # findall / sub / split
+    v = re_findall("\\d+", "a1 b22 c333")
+    i = 0
+    while i < v.len:
+        print("num: " + vec_get_str(v, i))
+        i = i + 1
+    print("masked: " + re_sub("\\d+", "#", "card 1234 pin 56"))
+    print("swapped: " + re_sub("(\\w+) (\\w+)", "\\2 \\1", "hello world"))
+    sp = re_split("[,;]", "a,b;c")
+    i = 0
+    while i < sp.len:
+        print("field: " + vec_get_str(sp, i))
+        i = i + 1
+
+    # the anchor use case: extract tag bodies
+    tag_text("<p>hello</p><p>world</p>", "p")
+
+    # compile errors are values, not crashes
+    bad = re_compile("[unterminated")
+    print("bad err=" + str(bad.err) + " " + bad.msg)
+    return 0

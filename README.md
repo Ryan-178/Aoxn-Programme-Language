@@ -20,7 +20,11 @@ language-level blocker for every non-8-byte-slot container (gap A2): a struct
 container can now be written in Aoxn with `sizeof` + `addr_of` + `memcpy`,
 though the stdlib `Vec` itself still moves 8-byte slots. Temporaries,
 strings, dicts, function pointers and any nullable-rooted lvalue (even
-narrowed) are rejected with named diagnostics. The released 0.55.0 line
+narrowed) are rejected with named diagnostics. The unreleased batch also adds
+**`stdlib/re.ax`**, a backtracking regular-expression matcher covering a
+Python `re` subset (groups, classes, lazy quantifiers, anchors, boundaries;
+`match/search/fullmatch/findall/sub/split`), differential-tested against
+CPython and compilable by the self-hosted compiler. The released 0.55.0 line
 shipped the pyproject-shaped `aoxn.toml` manifest and pip-style dependency
 CLI (snapshot 6) and the **Rust bridge** (snapshot 5): `import "./native.rs"`
 compiles a self-contained Rust file with rustc as a static library and binds
@@ -166,12 +170,18 @@ The Rust CLI remains the production entry point. Read
 
 Explicitly imported [stdlib modules](docs/stdlib.md) include math, time,
 datetime, calendar, pathlib, base64, hashlib, hmac, os, glob, JSON, bisect,
-heapq, CSV, random and socket. Core containers/I/O remain in
+heapq, CSV, random, socket and re. Core containers/I/O remain in
 `stdlib/stdlib.ax`. CSV is RFC 4180 with value errors, not the full Python
 dialect; random is deterministic MINSTD and explicitly NOT cryptographically
 secure; socket is blocking IPv4 TCP (no DNS/UDP/IPv6/TLS) with Windows
 `-l ws2_32`, and its Linux branch is implemented but not natively executed in
-this round. The [Rust bridge](docs/rust-interop.md) is the second foreign-code
+this round. `re` is a backtracking matcher for a Python `re` subset (groups,
+character classes, lazy quantifiers, anchors, word boundaries;
+`match/search/fullmatch/findall/sub/split`), differential-tested against
+CPython; unsupported syntax (backreferences, lookaround, inline flags,
+hex/unicode escapes) is a named compile error, never a silent degradation,
+and the module compiles under the self-hosted compiler. The
+[Rust bridge](docs/rust-interop.md) is the second foreign-code
 path beside clang FFI: a `.rs` import becomes synthesized extern declarations
 and a rustc-built static library, with rustc required only for `build`/`run`.
 The [UI](docs/ui.md) shares widgets across Win32/GDI and Linux X11/Xft. The
@@ -208,7 +218,10 @@ web benchmarks and IDE checks are separate. The web-bench workflow's bash steps
 use forward-slash paths: Git Bash treats a backslash as an escape, which had
 turned `web\server_win.ax` into `webserver_win.ax` and failed the build step.
 Windows smoke commands now check native exit codes immediately. Release notes
-match the installer's opt-in clang download behavior.
+match the installer's opt-in clang download behavior. The GitHub `main`
+branch is protected: changes land through a pull request with one approving
+review; direct pushes and force pushes are blocked, so session work is
+pushed as a branch and merged by a human reviewer.
 
 Current specifications and contributor instructions have been reconciled with
 the C backend; LLVM-era reports retain historical data with explicit boundaries.
@@ -238,22 +251,22 @@ cargo test -p aoxn-pkg --locked
 cargo check --workspace --tests --target x86_64-unknown-linux-gnu
 ```
 
-Final Windows validation for the current tree (2026-11-10, clang 23.1.0 at
-`C:\Program Files\LLVM`, rustc from rustup): **383 root + 116 package = 499
-passed, 0 failed, 0 ignored**. The root suite grew from 375 to 383 with the
-eight `sizeof_*`/`addr_of_*` pipeline pins (representation sizes including a
-sizeof-only struct, live read/write through variable/element/field addresses,
-struct-parameter copy isolation, generic substitution with and without a
-length parameter, and the rejection cases). The full run includes the fixed
-point, both parity targets, the four ABI tests (O0/O3), both CLI stages, the
-Rust bridge (11 tests), real socket loopback, random cross-process vectors and
-the Python `csv` differential. The stage-2 rejection of `sizeof`/`addr_of` was
-verified by running the selfhost CLI on programs using them (parse errors,
-never silent miscompilation). `cargo check --workspace --tests --target
-x86_64-unknown-linux-gnu` passed; Linux native linking/runtime was not
-executed. The package suite ran through `run_pkg_tests.sh` (the Smart App
-Control hash-stamp workaround). Full installer packaging was not run; IDE
-suites were not re-run (no IDE source changed).
+Final Windows validation for the current tree (2026-11-13, clang 23.1.2 at
+`E:\llvm\bin\clang.exe` on this machine, rustc from rustup): **385 root +
+116 package = 501 passed, 0 failed, 0 ignored**. The root suite grew from
+383 to 385 with the two `re` tests: a CPython differential over the
+supported regex subset (match/search/fullmatch/findall/sub/split, pinned
+vectors, both-invalid pattern lists and an unsupported-syntax must-error
+list) and a selfhost-compilability pin that builds `selfhost/cli.ax` and
+runs a regex program through it. The full run includes the fixed point,
+both parity targets, the four ABI tests (O0/O3), both CLI stages, the Rust
+bridge (11 tests), real socket loopback, random cross-process vectors, the
+Python `csv` differential and the eight `sizeof_*`/`addr_of_*` pins.
+`cargo check --workspace --tests --target x86_64-unknown-linux-gnu` passed;
+Linux native linking/runtime was not executed. The package suite ran
+through `run_pkg_tests.sh` (the Smart App Control hash-stamp workaround).
+Full installer packaging was not run; IDE suites were not re-run (no IDE
+source changed).
 
 **Environment change, 2026-11-10**: the dev machine's old `E:\llvm` clang
 install no longer exists; clang 23.1.0 now lives at
@@ -336,6 +349,9 @@ Aoxn 是使用 Python 风格缩进的静态类型原生语言。Rust 编译器�
 结构体容器现在可以用 `sizeof` + `addr_of` + `memcpy` 在 Aoxn 里写出来，
 但 stdlib 的 `Vec` 本身仍是槽位实现。临时量、字符串、dict、函数指针以及
 任何以 nullable 局部为根的左值（即使已收窄）都被拒绝并给出明确诊断。
+未发布批次还新增 **`stdlib/re.ax`**：回溯式正则匹配器，覆盖 Python `re`
+子集（分组、字符类、懒惰量词、锚点、单词边界；match/search/fullmatch/
+findall/sub/split），与 CPython 差分测试一致，并可被自举编译器编译。
 已发布的 0.55.0 线交付了 pyproject 形状的 `aoxn.toml` 清单与 pip 风格依赖
 CLI（snapshot 6），以及 **Rust 桥**（snapshot 5）：`import "./native.rs"`
 把自包含 Rust 文件用 rustc 编译为静态库，并把其中 `#[no_mangle] extern "C"`
@@ -456,11 +472,15 @@ W001、内容键 run 缓存（`AOXN_NO_CACHE`/`AOXN_CACHE_DIR`）与
 ### 库与工具
 
 [标准库](docs/stdlib.md)独立模块提供 math/time/datetime/calendar/pathlib/
-base64/hashlib/hmac/os/glob/json/bisect/heapq/csv/random/socket；核心容器与 I/O
+base64/hashlib/hmac/os/glob/json/bisect/heapq/csv/random/socket/re；核心容器与 I/O
 在 stdlib/stdlib.ax。CSV 是 RFC 4180 + 值错误，不等于 Python 全部 dialect；
 random 是确定性 MINSTD，**明确非密码学安全**；socket 是 blocking IPv4 TCP
 （无 DNS/UDP/IPv6/TLS），Windows 需 `-l ws2_32`，Linux 分支已实现但本轮未原生
-运行。[Rust 桥](docs/rust-interop.md)是 clang FFI 之外的第二条外部代码路径：
+运行。re 是 Python `re` 子集的回溯匹配器（分组、字符类、懒惰量词、锚点、
+单词边界；match/search/fullmatch/findall/sub/split），与 CPython 差分一致；
+不支持的语法（反向引用、环视、内联标志、十六进制/Unicode 转义）报具名编译
+错误而非静默降级，且模块可在自举编译器下编译。
+[Rust 桥](docs/rust-interop.md)是 clang FFI 之外的第二条外部代码路径：
 `.rs` 导入变成合成的 extern 声明加 rustc 构建的静态库，只有 build/run 需要 rustc。
 [UI](docs/ui.md)共享控件层，后端为 Win32/GDI 与 X11/Xft。
 [OpenAI](docs/openai-sdk.md)/[Anthropic](docs/anthropic-sdk.md) SDK 共享传输基础，
@@ -491,7 +511,9 @@ Linux 另跑 Xvfb 下 X11 probe。安装打包与冒烟在 tag/手动触发，�
 Web 基准和 IDE 独立。web-bench 工作流的 bash 步骤改用正斜杠路径：Git Bash 把
 反斜杠当转义吞掉（`web\server_win.ax` 变成 `webserver_win.ax`），曾导致构建步骤
 直接失败。Windows 冒烟逐条检查原生命令退出码，发布文案与安装器
-显式启用 clang 下载的行为一致。
+显式启用 clang 下载的行为一致。GitHub 上 `main` 分支受保护：变更必须经
+pull request 并获得 1 个批准评审才能合入，禁止直推与强推；因此会话工作
+以分支推送，由人工评审合并。
 
 规范/贡献指南对齐当前 C 后端；LLVM 历史报告保留数据并标清边界，wiki 不修改。
 [仓库审计](docs/repository-audit.md)记录产物来源，未盲删历史文件。
@@ -518,18 +540,18 @@ cargo test -p aoxn-pkg --locked
 cargo check --workspace --tests --target x86_64-unknown-linux-gnu
 ```
 
-当前树 Windows 最终验证（2026-11-10，clang 23.1.0 位于
-`C:\Program Files\LLVM`，rustc 来自 rustup）：**383 根 + 116 包 = 499 项
-通过，0 失败，0 忽略**。根套件从 375 增至 383，新增 8 项
-`sizeof_*`/`addr_of_*` 流水线钉测试（表示大小含仅被 sizeof 引用的结构体、
-变量/元素/字段地址的活读写、结构体参数副本隔离、带与不带长度参数的泛型
-代入、以及各拒绝病例）。完整运行包含不动点、两项 parity、4 项 ABI
-（O0/O3）、两阶段 CLI、Rust 桥（11 项）、真实 socket 回环、随机数跨进程
-向量与 Python `csv` 差分。stage-2 对 sizeof/addr_of 的拒绝已用自举 CLI
-实际运行验证（parse 错误，绝不静默错编）。`cargo check --workspace --tests
---target x86_64-unknown-linux-gnu` 通过，未执行 Linux 原生链接/运行。
-包套件经 `run_pkg_tests.sh` 运行（Smart App Control 哈希戳 workaround）。
-完整安装器打包未运行；IDE 套件未重跑（IDE 源码未改动）。
+当前树 Windows 最终验证（2026-11-13，本机 clang 23.1.2 位于
+`E:\llvm\bin\clang.exe`，rustc 来自 rustup）：**385 根 + 116 包 = 501 项
+通过，0 失败，0 忽略**。根套件从 383 增至 385，新增 2 项 `re` 测试：
+对受支持正则子集的 CPython 差分（match/search/fullmatch/findall/sub/split、
+钉住的向量、双方均非法的模式表、不支持语法必须报错表），以及自举可编译性
+钉测试（构建 selfhost/cli.ax 并经其运行一个正则程序）。完整运行包含不动点、
+两项 parity、4 项 ABI（O0/O3）、两阶段 CLI、Rust 桥（11 项）、真实 socket
+回环、随机数跨进程向量、Python `csv` 差分与 8 项 sizeof/addr_of 钉测试。
+`cargo check --workspace --tests --target x86_64-unknown-linux-gnu` 通过，
+未执行 Linux 原生链接/运行。包套件经 `run_pkg_tests.sh` 运行（Smart App
+Control 哈希戳 workaround）。完整安装器打包未运行；IDE 套件未重跑
+（IDE 源码未改动）。
 
 **环境变更 2026-11-10**：开发机旧 `E:\llvm` clang 安装已不存在；clang
 23.1.0 现位于 `C:\Program Files\LLVM\bin\clang.exe`。过期的

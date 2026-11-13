@@ -177,7 +177,7 @@ v0.42.0 补上了 `assert(cond[, message])`：失败时打印
 | 8 | `json` | P1 | ✅ **已提升 v0.44.0** | `stdlib/json.ax`（自 `stdlib/net/json.ax` 提升，SDK 同步改 import）+ 补上 `j_read_file`/`j_write_file`（err 2 = I/O 失败，1 = 解析错误）。 |
 | 9 | `csv` | P1 | ✅ **已落地（unreleased）** | `stdlib/csv.ax`：RFC 4180 引号转义、内嵌换行、CRLF/LF、空行/空字段/尾部无换行；错误是值（err/msg/line/col）。**不含** Python 的全部 dialect 参数与流式 API。Python `csv` 差分测试见 `tests/csv.rs`。CRLF 直接写 `"\r\n"`（v0.42.0 起有 `\r` 转义）。 |
 | 10 | `pickle` | P3 | ⛔ **无反射** | 语言没有「遍历一个值的类型/字段」。可行替代是**显式注册**：程序自己声明要序列化的字段清单，`pickle_dump(recs)`。这样能往返，但和 Python pickle 格式不兼容 —— 若目标是「读 `.pkl` 文件」，**直接不做**。 |
-| 11 | `re` | P1 | ⚠️ 大工程 | 回溯匹配器（支持 `* + ? \| () [] {m,n} .`、字符类、非贪婪、锚点）+ 一个手写 DFA 编译步骤会太大。**先只做回溯版**，用 `Vec` 存回溯栈（两个 int 栈：位置、备选点）。预计 2–4k 行。锚定建议：跟一个「HTML/XML 标记提取」的真实用例，避免做成正则引擎而没人用。 |
+| 11 | `re` | P1 | ✅ **已落地（unreleased）** | `stdlib/re.ax`：回溯匹配器（显式回溯栈 + capture-undo trail，无递归），支持 `* + ? \| () (?:) [] {m,n} .`、字符类/范围/取反、非贪婪、锚点 `^$`、`\b\B`、`\d\w\s\D\W\S`。API：`re_compile/exec/search/match/fullmatch/group/start/end/groups/findall/sub/split`。**不含**：模式内反向引用、lookaround、命名组、内联 flag、`\xHH/\uHHHH`、MULTILINE/IGNORECASE/DOTALL（均干净报错）；POSIX 类按字面类解析（与 Python 同）。字节级而非字符级。`tests/re.rs` 对拍 Python `re` + selfhost 可编译。 |
 
 ### 4. 容器、数据结构
 
@@ -336,7 +336,8 @@ stdlib/re.ax ──────► lxml(10), beautifulsoup4(9)
    `stdlib/net.ax`（HTTP 客户端门面）仍未做，所以这两个第三方库**仍未实现**。
    同一批还落地了 **`csv`**(#9) 与 **`random`**(#29)；CSV/random 不解决 `re`/HTML，
    也不等于 numpy/pandas 的数据能力。
-8. **`stdlib/re.ax`** —— 和 `lxml`(10)、`beautifulsoup4`(9) 共用分词基础。
+8. ✅ **`stdlib/re.ax`**（unreleased，回溯子集，对拍 Python `re`）—— 和 `lxml`(10)、
+   `beautifulsoup4`(9) 共用分词基础；HTML 标记提取用例见 `examples/re_demo.ax`。
 9. **`flask`(13)** —— 第三方清单里 ROI 最高，零件已经齐了大半（还缺 `net.ax` 与 `re`）。
 10. ✅ **`stdlib/math.ax` 补 `fdiv` / `is_nan` / `is_inf`**（v0.44.0 已做）—— §0.6 说这是
     三个数值库的公共前置，**先做它，比做 numpy 更划算**。
