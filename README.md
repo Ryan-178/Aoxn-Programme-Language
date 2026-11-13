@@ -219,9 +219,10 @@ use forward-slash paths: Git Bash treats a backslash as an escape, which had
 turned `web\server_win.ax` into `webserver_win.ax` and failed the build step.
 Windows smoke commands now check native exit codes immediately. Release notes
 match the installer's opt-in clang download behavior. The GitHub `main`
-branch is protected: changes land through a pull request with one approving
-review; direct pushes and force pushes are blocked, so session work is
-pushed as a branch and merged by a human reviewer.
+branch is protected: changes land through a pull request (required
+approvals: 0 — a solo maintainer cannot review their own PR); direct
+pushes and force pushes are blocked, so session work is pushed as a
+branch and merged via the PR.
 
 Current specifications and contributor instructions have been reconciled with
 the C backend; LLVM-era reports retain historical data with explicit boundaries.
@@ -512,8 +513,8 @@ Web 基准和 IDE 独立。web-bench 工作流的 bash 步骤改用正斜杠路�
 反斜杠当转义吞掉（`web\server_win.ax` 变成 `webserver_win.ax`），曾导致构建步骤
 直接失败。Windows 冒烟逐条检查原生命令退出码，发布文案与安装器
 显式启用 clang 下载的行为一致。GitHub 上 `main` 分支受保护：变更必须经
-pull request 并获得 1 个批准评审才能合入，禁止直推与强推；因此会话工作
-以分支推送，由人工评审合并。
+pull request 合入（批准数要求为 0——单人维护者无法评审自己的 PR），
+禁止直推与强推；因此会话工作以分支推送，经 PR 合并。
 
 规范/贡献指南对齐当前 C 后端；LLVM 历史报告保留数据并标清边界，wiki 不修改。
 [仓库审计](docs/repository-audit.md)记录产物来源，未盲删历史文件。

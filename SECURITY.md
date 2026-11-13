@@ -188,9 +188,9 @@ The web-bench workflow's bash steps use forward-slash paths so Git Bash cannot
 consume a separator as an escape; the fixed invocation was rerun locally
 (server build plus 23/23 functional parity checks).
 Local workflow checks are not proof of successful hosted Actions or installer
-execution. The GitHub `main` branch is protected: a pull request with one
-approving review is required, and direct/force pushes are blocked — an agent
-session cannot merge its own work.
+execution. The GitHub `main` branch is protected: a pull request is required
+(required approvals: 0 since 2026-11-13, because the solo maintainer
+cannot approve their own PR), and direct/force pushes are blocked.
 
 `tools/check_doc_links.py` is read-only and dependency-free. It reads local Git
 history, never fetches URLs or executes documented commands, and defaults to
@@ -398,8 +398,8 @@ runner 会失败而不是跳过桥测试。Windows 冒烟/发布逐条检查原�
 安装器下载仍为显式启用。web-bench 工作流的 bash 步骤使用正斜杠路径，Git Bash
 不会再把分隔符当转义吞掉；修复后的调用已在本地重跑（服务器构建 + 23/23 项
 功能 parity 检查通过）。本地 workflow 检查不证明托管 Actions 或安装器运行成功。
-GitHub `main` 分支受保护：必须经 pull request 并获 1 个批准评审，禁止直推与
-强推——agent 会话不能合并自己的工作。
+GitHub `main` 分支受保护：必须经 pull request（2026-11-13 起批准数要求
+为 0，因为单人维护者无法批准自己的 PR），禁止直推与强推。
 
 文档检查器只读、无外部依赖，仅读本地 Git 历史，不访问 URL 或执行文档命令，
 默认仅警告。历史白名单与命令启发式限制其覆盖，不是安全/链接完整性保证。

@@ -65,10 +65,13 @@ cherry-picking, not `git add .`), then `git commit`, then verify with
 
 Session end (push branch + open a PR, 推送分支并开 PR — main is protected):
 **GitHub ruleset (changed directly on github.com, 2026-11-13)**: the default
-branch `main` now REQUIRES a pull request with **1 approving review** before
-merging; direct pushes to `main` and force pushes are BLOCKED, and ref
-deletion is restricted. The old "ff-merge into main + `git push`" flow no
-longer works — do not attempt it.
+branch `main` REQUIRES a pull request before merging; direct pushes to
+`main` and force pushes are BLOCKED, and ref deletion is restricted.
+**Required approvals is 0** (set by the user the same day: with a single
+maintainer account GitHub refuses to let the PR author review or approve
+their own PR — "Review cannot be requested from pull request author" —
+so a 1-approval gate deadlocked every session). The old "ff-merge into
+main + `git push`" flow no longer works — do not attempt it.
 1. In the MAIN worktree require a clean `git status` (tracked files). If
    another session holds uncommitted work there, STOP and let the user
    coordinate — never build on top of a dirty main.
@@ -85,10 +88,11 @@ longer works — do not attempt it.
    `api.github.com` curl is blocked on this machine — fall back to handing
    the user the compare URL
    `https://github.com/Ryan-178/Aoxn-Programme-Language/compare/main...<slug>?expand=1`.**
-   **The agent cannot approve its own PR** — a human must give
-   the 1 required approval and then merge (Merge / Squash / Rebase are all
-   enabled). Hand the PR to the user for review; never try to bypass the
-   ruleset.
+   With required approvals at 0 the PR author merges their own PR
+   (Merge / Squash / Rebase are all enabled); the agent still never
+   pushes to main directly or bypasses the PR requirement. If the
+   ruleset ever raises the approval count again, a human OTHER than
+   the author must approve.
 4. After the PR merges: in the main worktree `git pull --ff-only`, then clean
    up `git worktree remove D:/ailanguage-bench/<slug>` and
    `git branch -d <slug>` (local cleanup). Remote feature-branch deletion may
