@@ -81,18 +81,24 @@ main + `git push`" flow no longer works — do not attempt it.
    first push; after pushing, integrate new main commits with a merge, not a
    rebase+force-push.
 3. Open a pull request `<slug> -> main` on the CANONICAL repo
-   `Ryan-178/Aoxn-Programme-Language` (web UI compare link, or GitHub MCP
-   `create_pull_request`). **Known 2026-11-13: the MCP `create_pull_request`
-   write path fails with an output-schema error even on the canonical
-   coordinates (reads work); `gh` is not installed and direct
-   `api.github.com` curl is blocked on this machine — fall back to handing
-   the user the compare URL
-   `https://github.com/Ryan-178/Aoxn-Programme-Language/compare/main...<slug>?expand=1`.**
+   `Ryan-178/Aoxn-Programme-Language`. **GitHub MCP writes return an
+   output-schema error (`data must have required property 'result'`)
+   even when they SUCCEED — the error is a broken response wrapper,
+   not a reliable failure signal. Verified 2026-11-13:
+   `merge_pull_request` merged PR #8 despite the error, while
+   `create_pull_request` did NOT create a PR across 4 attempts.
+   After ANY write error, VERIFY with a read (`list_pull_requests`)
+   before retrying or falling back; never blind-retry a write.**
+   `gh` is not installed and direct `api.github.com` curl is blocked
+   on this machine; if create really did not land, hand the user the
+   compare URL
+   `https://github.com/Ryan-178/Aoxn-Programme-Language/compare/main...<slug>?expand=1`.
    With required approvals at 0 the PR author merges their own PR
-   (Merge / Squash / Rebase are all enabled); the agent still never
-   pushes to main directly or bypasses the PR requirement. If the
-   ruleset ever raises the approval count again, a human OTHER than
-   the author must approve.
+   (Merge / Squash / Rebase are all enabled; `merge_pull_request`
+   works — verify the merge with a read afterwards); the agent still
+   never pushes to main directly or bypasses the PR requirement. If
+   the ruleset ever raises the approval count again, a human OTHER
+   than the author must approve.
 4. After the PR merges: in the main worktree `git pull --ff-only`, then clean
    up `git worktree remove D:/ailanguage-bench/<slug>` and
    `git branch -d <slug>` (local cleanup). Remote feature-branch deletion may
