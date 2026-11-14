@@ -388,7 +388,7 @@ stdlib/re.ax ──────► lxml(10), beautifulsoup4(9)
 | 17 | socket | ✅ unreleased | `stdlib/socket.ax` / `tests/socket.rs`（双向回环）/ `examples/socket_echo.ax` |
 | 18 | threading | ✅ unreleased | `stdlib/threading.ax` / `tests/threading.rs`（4×1000 计数 + selfhost CLI 钉）/ `examples/threading_demo.ax` |
 | 19 | multiprocessing | ⛔ 不做（§4） | 替代 = `stdlib/socket.ax` 本地回环 / `system()` 子进程 |
-| 20 | concurrent.futures | ✅ unreleased（线程子集） | `stdlib/futures.ax` / `tests/threading.rs` |
+| 20 | concurrent.futures | ✅ unreleased（线程子集） | `stdlib/futures.ax` / `tests/threading.rs`（与 threading 合用）/ `examples/threading_demo.ax`（合用，含 `fut_parallel`/`fut_submit`） |
 | 21 | base64 | ✅ v0.44.0 | `stdlib/base64.ax` / `tests/hashlib.rs` |
 | 22 | hashlib | ✅ v0.44.0 | `stdlib/hashlib.ax` / `tests/hashlib.rs`（已知向量）/ `examples/hashlib_demo.ax` |
 | 23 | hmac | ✅ v0.44.0 | `stdlib/hmac.ax` / `tests/hashlib.rs`（fn-ptr，selfhost 不可编译已注明） |
@@ -408,9 +408,11 @@ stdlib/re.ax ──────► lxml(10), beautifulsoup4(9)
       shutil/collections/itertools/sys/argparse/unittest 零 extern，
       logging 经 datetime/os 间接用 CRT）
 - [x] 均未 import 进 `stdlib/stdlib.ax`（该文件零 import，自举关键路径不受影响）
-- [x] 每个模块一个 `examples/<name>_demo.ax`
-- [x] 每个模块一个 `tests/<name>.rs`（net/threading 用 mock/线程实测，
-      itertools 对拍 CPython）
+- [x] 每个模块都有可跑示例：futures 与 threading 合用
+      `examples/threading_demo.ax`（含 `fut_parallel`/`fut_submit`），
+      其余九个各一个 `examples/<name>_demo.ax`
+- [x] 每个模块都有测试：futures 与 threading 合用 `tests/threading.rs`
+      （net/threading 用 mock/线程实测，itertools 对拍 CPython）
 - [x] 参考文档集中在 `docs/stdlib.md`（十节）；`CHANGELOG.md` 记 `[Unreleased]`
 - [x] selfhost 边界：threading/futures 经 selfhost CLI 实测可编译运行；
       使用 dict/fn-ptr/raise 的模块（argparse/logging/unittest/collections）
