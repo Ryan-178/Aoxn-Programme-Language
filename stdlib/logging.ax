@@ -1,0 +1,102 @@
+# logging — leveled logging with timestamps (roadmap §2 #26).
+#
+# Python's logging is class/handler based; this is the flat equivalent:
+#
+#   lg = log_new("name")          level INFO, stdout on, no file
+#   lg = log_set_level(lg, LOG_DEBUG())
+#   lg = log_add_file(lg, "app.log")   APPENDS (CRT "ab"), never truncates
+#   lg = log_set_stdout(lg, 0)
+#   log_debug/info/warning/error/critical(lg, msg)
+#   log_log(lg, level, msg)       the general form
+#
+# Line shape: "YYYY-MM-DD HH:MM:SS LEVEL name: msg" (local time, via
+# stdlib/datetime). Levels are the Python numbers: DEBUG 10, INFO 20,
+# WARNING 30, ERROR 40, CRITICAL 50; a message below the logger's level is
+# dropped. There is no root/global logger, no propagation, no rotation, no
+# format customization and no thread safety (see stdlib/threading for that).
+#
+# The logger is a VALUE: every setter returns the updated struct (write-back
+# discipline). Logging calls themselves do not mutate it.
+#
+# Dependencies: stdlib core + stdlib/datetime. File append uses the CRT
+# fopen/fwrite/fclose already declared in stdlib.ax — no extra -l flags,
+# both platforms. Selfhost-compilable (plain subset).
+
+import * from "stdlib"
+import * from "stdlib/datetime"
+
+struct Logger:
+    name: string
+    level: int
+    path: string
+    to_stdout: int
+
+def LOG_DEBUG() -> int:
+    return 10
+
+def LOG_INFO() -> int:
+    return 20
+
+def LOG_WARNING() -> int:
+    return 30
+
+def LOG_ERROR() -> int:
+    return 40
+
+def LOG_CRITICAL() -> int:
+    return 50
+
+def log_new(name: string) -> Logger:
+    return Logger(name=name, level=20, path="", to_stdout=1)
+
+def log_set_level(lg: Logger, level: int) -> Logger:
+    lg.level = level
+    return lg
+
+def log_add_file(lg: Logger, path: string) -> Logger:
+    lg.path = path
+    return lg
+
+def log_set_stdout(lg: Logger, on: int) -> Logger:
+    lg.to_stdout = on
+    return lg
+
+def log_level_name(level: int) -> string:
+    if level <= 10:
+        return "DEBUG"
+    if level <= 20:
+        return "INFO"
+    if level <= 30:
+        return "WARNING"
+    if level <= 40:
+        return "ERROR"
+    return "CRITICAL"
+
+def log_log(lg: Logger, level: int, msg: string):
+    if level < lg.level:
+        return
+    line = datetime_format(datetime_now(), "%Y-%m-%d %H:%M:%S") + " " + log_level_name(level) + " " + lg.name + ": " + msg
+    if lg.to_stdout == 1:
+        print(line)
+    if lg.path != "":
+        f = fopen(lg.path, "ab")
+        if f != 0:
+            n = len(line)
+            fwrite(as_ptr(line), 1, n, f)
+            fwrite(as_ptr("\n"), 1, 1, f)
+            fclose(f)
+
+def log_debug(lg: Logger, msg: string):
+    log_log(lg, LOG_DEBUG(), msg)
+
+def log_info(lg: Logger, msg: string):
+    log_log(lg, LOG_INFO(), msg)
+
+def log_warning(lg: Logger, msg: string):
+    log_log(lg, LOG_WARNING(), msg)
+
+def log_error(lg: Logger, msg: string):
+    log_log(lg, LOG_ERROR(), msg)
+
+def log_critical(lg: Logger, msg: string):
+    log_log(lg, LOG_CRITICAL(), msg)

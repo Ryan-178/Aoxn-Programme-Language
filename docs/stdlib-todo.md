@@ -39,11 +39,12 @@ v0.40.0 的 dict / `None` / fn-ptr / `raise`（见 AGENTS.md 与
 
 - `argc()` 返回参数个数（不含程序自身路径），`arg(i)` 取第 i 个（0 起算，
   越界给 `""`）
-- `sys.argv` / `argparse` 现在可以动手：前者是这两个内建的薄包装，
-  后者是「解析一个 `string` 数组」的纯函数
+- **已落地（unreleased）**：`stdlib/sys.ax`（`sys_argv`/`sys_argc`/
+  `sys_platform`/`sys_executable`/`sys_exit`/`sys_maxsize`）与
+  `stdlib/argparse.ax`（声明式选项/标志/位置参数解析，见 §2 #24/#25）
 - `sys.stdin` **仍然阻塞**（没有控制台输入内建），`sys.executable` 由
   `exe_path()` 承担
-- `argparse` 仍需一个语言内测试运行器才能真正替代 `pytest`（见 §0.7）
+- `argparse` 的用例发现仍缺一个语言内测试运行器（见 §0.7）
 
 ### 0.3 没有泛型堆容器 —— `collections` / `itertools` 无处落脚
 
@@ -115,12 +116,13 @@ v0.42.0 补上了 `assert(cond[, message])`：失败时打印
 `assertion failed at line N: message` 并 exit 1。所以**一个库现在可以自带
 自测文件**，只要有人把那些文件跑起来。
 
-仍然缺的是运行器本身：
+**unreleased 更新**：`stdlib/unittest.ax` 已落地（§2 #31）——注册表 +
+fn-ptr 用例 + `ut_run` 汇总报告，语言内自测**可以写了**。仍然缺的是
+编译器侧的发现/驱动：
 
 - 没有 `aoxn test` 子命令，也没有用例发现约定（`test_*.ax`？）
-- 每个测试程序要自己 `def main()` 并把失败汇总成退出码；多文件用例要么
-  每个文件编译一次，要么由一个 runner 编译一次再逐个调用（后者要函数指针
-  表，v0.40.0 已有）
+- 每个测试程序要自己 `def main()` 调 `ut_run` 并把失败汇总成退出码；
+  多文件用例要么每个文件编译一次，要么由一个 runner 编译一次再逐个调用
 - 在此之前，stdlib 模块的验证仍落在 `tests/<name>.rs`（Rust 侧、内嵌
   `.ax` 源码），所以「给 stdlib 加模块 = 必须会 Rust」这条约束还在
 
@@ -159,7 +161,7 @@ v0.42.0 补上了 `assert(cond[, message])`：失败时打印
 |---|---|---|---|---|
 | 1 | `os` | P0/P1 | ✅ **已落地 v0.44.0（核心）** | 底座是 Win32：`CreateDirectoryW`、`RemoveDirectoryW`、`GetEnvironmentVariableW`、`SetEnvironmentVariableW`、`GetFileAttributesW`、`CopyFileW`、`MoveFileW`。遍历（`os_listdir`）已随 v0.44.0 落地；文件时间戳仍待 P1（见 `glob`）。所有路径走 **宽字符**（`W` 版本），非 ASCII 路径必须支持。 |
 | 2 | `pathlib` | P0 | ✅ **已落地 v0.44.0** | 纯字符串运算（`path_*` 函数族，未做 `Path` struct 包装）（`/ \` 分割、`join`、`suffix`、`stem`、`parent`、`with_suffix`…）。**推荐作为日常写法**，`os.path` 只做兼容门面。 |
-| 3 | `shutil` | P1 | ✅ | 递归拷贝/删除用 `FindFirstFileW` 递归 + `CopyFileW`。**必须防目录穿越与符号链接环**（用 `FILE_ATTRIBUTE_REPARSE_POINT` 判环）。 |
+| 3 | `shutil` | P1 | ✅ **已落地（unreleased）** | `stdlib/shutil.ax`：copyfile/copytree/rmtree/move，组合 `os.ax`+`pathlib.ax`，**自身零 extern**（双平台由构造保证）。防环两条都做了：reparse point 绝不跟随（copytree 跳过链接子项、拒绝链接根；rmtree 删链接本身）+ 深度上限 64。错误是值（False）。无 archive/which/disk_usage。`tests/shutil.rs` 真实临时树验证。 |
 | 4 | `glob` | P0 | ✅ **已落地 v0.44.0** | 建立在 `FindFirstFileW` 上，`*`/`?` 匹配自己写（不用 Win32 的 `FindFirstFile` 通配，它自己就是通配）。`[a-z]` 字符类要写。v0.44.0 落地：matcher + `glob()` 遍历（排序输出、dotfile 规则）；`**` 明确不支持。 |
 
 ### 2. 时间、日期
@@ -183,8 +185,8 @@ v0.42.0 补上了 `assert(cond[, message])`：失败时打印
 
 | # | 模块 | 批次 | 可行性 | 备注 |
 |---|---|---|---|---|
-| 12 | `collections` | P2 | ⚠️ 依赖 P0 `Vec[T]` | `deque`（环形缓冲）、`defaultdict`、`Counter`、`OrderedDict`。`dict[V]` 是**堆句柄**（v0.40.0），复制句柄=共享同一个 dict。**插入序底层已经有了**（`for k in d` 按插入序走 key 数组，`codegen_c.rs:1361`），所以 `OrderedDict` 的真正成本是**查找是 O(n) 线性扫描**（`ax_dict_find_T`，codegen_c.rs:789）——不是保序，是规模。超过几百条就要考虑换结构。v0.44.0 起 §0.3 的 slot 视图基座已备。 |
-| 13 | `itertools` | P2 | ⚠️ **没有 `yield`** | 惰性迭代器做不了（`yield` 在 spec roadmap 第 9 条）。**形态改成"批量返回数组"**：`chain(list, list) -> Vec[T]`、`permutations(n) -> Vec[Perm]`、`product(a, b) -> Vec[Tuple]`。无限迭代器（`count`/`cycle`）改为「带 `take(n)` 的生成函数」。**这个降级要在模块头注释里写明**。 |
+| 12 | `collections` | P2 | ✅ **已落地（unreleased）** | `stdlib/collections.ax`：Deque（环形缓冲，pop 返回 `DqPop{dq,value,ok}` 写回）、Counter（dict[int] 上，`counter_most_common` 稳定排序、平局保插入序）、defaultdict 助手（`dd_int_get`/`dd_str_get`）、OrderedDict 的 `od_move_to_end_*`（dict 本就保序，成本仍是 O(n) 查找）。槽位视图基座（§0.3）之上，无 extern。`tests/collections.rs`。 |
+| 13 | `itertools` | P2 | ✅ **已落地（unreleased，降级形态）** | `stdlib/itertools.ax`：**无 `yield`，全部批量返回容器**（模块头已写明）。chain/repeat/range/take/count/cycle/accumulate/zip/product + permutations/combinations（Python 索引序，`VecVec` 行必须 `iv_copy` 拷贝否则全行别名；n>9 置换护栏）。`tests/itertools.rs` 精确输出 + 对拍 CPython 顺序。 |
 | 14 | `bisect` | P1 | ✅ **已落地 v0.44.0** | 便宜。`bisect_left/right` 对有序 `Vec[T]`（**注意：泛型按长度单态化，长度是类型的一部分** → 变长容器要用堆容器）。 |
 | 15 | `heapq` | P1 | ✅ **已落地 v0.44.0** | 标准二叉堆，`heap_push`/`heap_pop`/`heapify`。和 `bisect` 一起做。 |
 
@@ -192,16 +194,16 @@ v0.42.0 补上了 `assert(cond[, message])`：失败时打印
 
 | # | 模块 | 批次 | 可行性 | 备注 |
 |---|---|---|---|---|
-| 16 | `urllib` | P2 | ✅ **部分已有** | `stdlib/net/http.ax` 已经是一套 WinHTTP 传输（open/connect/send/receive/timeouts）。**P2 是把它泛化成 `stdlib/net.ax`** + 加 URL 解析（scheme/host/port/path/query 拆分 + percent-decode）。 |
+| 16 | `urllib` | P2 | ✅ **已落地（unreleased）** | `stdlib/net.ax`：纯 URL 层（`url_parse`/`url_build`/quote/unquote/plus 变体/query 并行 Vec 解析与编码，IPv6 括号主机，默认端口 80/443）+ HTTP 门面（`http_get`/`http_post`/`http_request`/`http_ok`，5s 连接/30s 接收，值错误）。传输仍是 `net/http.ax` 的 WinHTTP（Windows `-l winhttp`，其他平台干净报错）。**不含** urljoin/userinfo/Request 对象；门面不暴露任意响应头（用 `net_header_value`）。`tests/net.rs` 对拍 CPython `urllib.parse` + 本地 mock 服务器。 |
 | 17 | `socket` | P1 | ✅ **已落地（unreleased）** | `stdlib/socket.ax` 提供最小 blocking IPv4 TCP：init/connect/listen/accept/send-all/recv/close，错误是 `Sock{fd,err,msg}`。Windows 需 `-l ws2_32`，Linux 无附加库。**不含** DNS/UDP/IPv6/TLS/超时/非阻塞；默认监听不设 SO_REUSEADDR。Windows 实测双向回环；Linux 分支已实现但本轮未原生执行。`web/sock_win.ax` 暂未改为 import 它。 |
 
 ### 6. 多线程 / 多进程
 
 | # | 模块 | 批次 | 可行性 | 备注 |
 |---|---|---|---|---|
-| 18 | `threading` | P2 | ✅ **可行** | `extern def` 确实拒绝 fn-ptr 参数（typecheck.rs:112），**但错误信息自己给了逃生口：把函数地址当 `int` 传**。`CreateThread(0, 0, to_int(worker), 0, 0, 0)` 在 x86-64 上 ABI 是通的（函数指针与数据指针同宽同寄存器）。真正缺的是上层同步原语：`CreateMutex` / `WaitForSingleObject` / `SRWLock` / `Interlocked*`，都能 extern。**详见 `docs/language-gaps.md` §3。** |
-| 19 | `multiprocessing` | P3 | ⛔ | 线程入口不再是问题，但**共享内存 / 管道 / 句柄继承**要写，语言没有共享可变状态的一切原语（没有类、没有闭包、没有 `with`）。**整体推到最后，甚至考虑不做** —— 替代方案是本地 socket（`web/sock_win.ax`）或子进程 + stdin/stdout。 |
-| 20 | `concurrent.futures` | P2 | ⚠️ 依赖 18 | 线程池建在 18 之上，现在可行了；进程池仍卡在 19。 |
+| 18 | `threading` | P2 | ✅ **已落地（unreleased）** | `stdlib/threading.ax`：`thread_spawn(f: fn(int)->int, arg)` 走文档逃生口 `to_int(f)`（Windows `CreateThread`，POSIX `pthread_create`，每个调用都在自己函数内 `target_os()` 守卫）；`thread_join` 写回（退出码进 `.result`）；`Mutex` = `CreateMutexW`/`pthread_mutex_init`，lock/unlock/free；`thread_sleep_ms` 委托 time.ax。**不含** 条件变量/信号量/线程局部存储/守护线程语义。Windows 实测 4 线程×1000 次加锁计数恰为 4000；`tests/threading.rs` + selfhost CLI 钉。 |
+| 19 | `multiprocessing` | P3 | ⛔ **明确不做（§4 替代）** | 线程入口不再是问题，但**共享内存 / 管道 / 句柄继承**要写，语言没有共享可变状态的一切原语（没有类、没有闭包、没有 `with`）。替代方案是本地 socket（`stdlib/socket.ax`）或子进程 + `system()`。完成审计见 §7。 |
+| 20 | `concurrent.futures` | P2 | ✅ **已落地（unreleased，线程子集）** | `stdlib/futures.ax` 建在 #18 上：`fut_submit`/`fut_wait`/`fut_result`（Future 包 Thread）+ `fut_parallel(f, args)` 批量并行（上限 `FUT_MAX_THREADS()`=64，超出部分**内联执行**而非排队，结果按输入序回填，错误计数进 `FutResults.errors`）。**进程池不做**（#19 ⛔）；无回调/超时/取消。`tests/threading.rs` 同钉。 |
 
 ### 7. 编码、哈希加密
 
@@ -215,9 +217,9 @@ v0.42.0 补上了 `assert(cond[, message])`：失败时打印
 
 | # | 模块 | 批次 | 可行性 | 备注 |
 |---|---|---|---|---|
-| 24 | `sys` | P3 | ⛔ **argv 阻塞** | 见 §0.2。子集可先做 `sys.platform`（= `target_os()`）、`sys.executable`（`exe_path()` 已有）、`sys.exit`（已有 `system_exit_code` 模式）。 |
-| 25 | `argparse` | P3 | ⚠️ 部分 | 能解析传入的 `string` 数组，但拿不到 `sys.argv` → **实际不可用**。等 24。 |
-| 26 | `logging` | P3 | ⚠️ 需先有 `time` | 本身不难（级别、handler、时间戳），但**要求 P0 的 `datetime`**。建议放 P2 尾巴而不是 P3。 |
+| 24 | `sys` | P3 | ✅ **已落地（unreleased，子集）** | `stdlib/sys.ax`：`sys_argv()`（`argc()`/`arg(i)` 的 Vec 包装）、`sys_argc()`、`sys_platform()`（= `target_os()`）、`sys_executable()`（= `exe_path()`）、`sys_exit(code)`、`sys_maxsize()`（i64 上界）。**不含** `sys.stdin/stdout` 对象（无控制台输入内建）、`sys.modules`（无反射）、`sys.path`（导入路径由编译器决定）。`tests/sys.rs` + `examples/sys_demo.ax`。 |
+| 25 | `argparse` | P3 | ✅ **已落地（unreleased，子集）** | `stdlib/argparse.ax`：声明式 `ap_new/ap_opt/ap_flag/ap_pos` + `ap_parse(ap, args: Vec)`，值是 `dict[string]`（`ap_get` 读取），`--help` 置 `help_requested`（`ap_help` 生成文本），错误是值（`ArgResult.err`）。支持 `--name value`/`--name=value`/短选项/位置参数；**不含** 子命令、互斥组、`type=` 回调（`ap_to_int` 助手代替）、nargs。argv 已通（#24），`tests/argparse.rs` + `examples/argparse_demo.ax`。 |
+| 26 | `logging` | P3 | ✅ **已落地（unreleased，子集）** | `stdlib/logging.ax`：级别常量 10–50（Python 数值）、`log_new(name)` + `log_set_level` + `log_add_file`（追加 `"ab"`）+ `log_set_stdout`，两通道独立开关；行格式 `YYYY-MM-DD HH:MM:SS LEVEL name: msg`（建在 datetime 上）。**不含** handler 对象树/过滤器/Formatter 类/日志轮转/多 logger 层级传播。`tests/logging.rs` + `examples/logging_demo.ax`。 |
 | 27 | `traceback` | P3 | ⛔ 需编译器支持 | `raise`/`try` 只给了控制流，**没有运行时调用栈对象**。要真做，需要 codegen 在每个 raise 点发一条位置常量并在 unwind 时收集 —— **这是语言功能，不是库功能**，且要同步 selfhost 镜像。 |
 
 ### 9. 其他
@@ -227,7 +229,7 @@ v0.42.0 补上了 `assert(cond[, message])`：失败时打印
 | 28 | `math` | P0 | ✅ **已落地 v0.44.0** | `stdlib.ax` 已有 `sqrt/floor/ceil/abs/min/max/clamp/gcd/lcm/isqrt/is_prime/hypot`。v0.44.0 已补（FFI + `pi()/e()`，Python 风格名字），并内置 §0.6 工具箱（小写 `nan`/`inf`/`copysign` 定义撞 UCRT 链接符号，故 `NaN()/Inf()/copysign_f`）。 |
 | 29 | `random` | P1 | ✅ **已落地（unreleased）** | `stdlib/random.ax`：Park–Miller MINSTD（16807 / 2^31−1），拒绝采样消除取模偏差，错误不推进状态，跨进程可复现。**非密码学安全**；不提供系统熵 API（不用时间种子冒充）。不是 Python 的 Mersenne Twister 序列。 |
 | 30 | `typing` | P3 | ⚠️ 多数是 no-op | Aoxn **已经是静态类型 + 单态化**，`typing` 的运行时部分（`TypeVar`/`Generic`）在这里没有对应物。真正缺的是**别名与协议**：需要 `type X = Vec[int]` 形式的类型别名（spec roadmap 第 4 条「模块限定」的近邻）。**先别做**，文档里说明等价物即可。 |
-| 31 | `unittest` | P3 | ⚠️ 形态要改 | 需要「类」来组织 fixture、`with` 来管资源 —— 两者都还没有。可行形态：`test_suite` 注册表 + 一个 `run_tests()` 入口 + `assert_eq/assert_true/assert_raises` 自由函数。**当前阶段的真正测试基建是 `cargo test`（`tests/*.rs`）+ `run_pkg_tests.sh`**，这个模块的收益要重新评估。 |
+| 31 | `unittest` | P3 | ✅ **已落地（unreleased，降级形态）** | `stdlib/unittest.ax`：无类/无 `with`，改为**注册表 + fn-ptr**：`ut_suite()` + `ut_add(s, name, f: fn() -> void)` + `ut_run(s) -> TestReport`（通过/失败计数与失败名单）；断言是自由函数 `ut_assert_true/eq_i/eq_s/eq_f/raises`（失败经 `raise` 上报，`ut_run` 逐个捕获）。**不含** fixture 类、setUp/tearDown、参数化、用例发现（仍无 `aoxn test`，见 §0.7）。**仓库级测试基建仍是 `cargo test`**；本模块服务于语言内自测。`tests/unittest.rs` + `examples/unittest_demo.ax`。 |
 
 ---
 
@@ -263,7 +265,7 @@ v0.42.0 补上了 `assert(cond[, message])`：失败时打印
 | 正则引擎的极致性能 | `re` 的 NFA/DFA 优化 | 回溯版够用；真要快就换 `str.find` 手写扫描 |
 | 类型体操 | `typing` | 现有静态类型 + 泛型单态化 |
 | 随机可复现 | `rand()` | 自实现 PCG32（见 #29） |
-| 测试框架 | `unittest`、`pytest` | `cargo test`（`tests/*.rs`） |
+| 测试框架 | `pytest`；`unittest` 的类/fixture 形态 | 仓库级测试仍是 `cargo test`（`tests/*.rs`）；语言内自测用 `stdlib/unittest.ax`（注册表 + fn-ptr 降级形态，#31） |
 | 深度学习 | `pytorch` | numpy + scipy 那一层；要 GPU 就不在 Aoxn 里做 |
 | 计算机视觉 | `opencv-python` 全家桶 | 明确只做子集（灰度/模糊/Sobel/阈值/缩放） |
 | 数据库对象映射 | ORM（sqlalchemy / django 的那一半） | `stdlib/db.ax` 的参数化查询 + 按表生成 struct |
@@ -332,12 +334,91 @@ stdlib/re.ax ──────► lxml(10), beautifulsoup4(9)
 第三方清单接在后面（依赖齐了才动）：
 
 7. ✅ **`stdlib/socket.ax` 上提**（unreleased，最小 blocking IPv4 TCP；Windows 实测，
-   Linux 分支未原生执行）—— `requests`(1) / `flask`(13) 的网络底座已出现，但
-   `stdlib/net.ax`（HTTP 客户端门面）仍未做，所以这两个第三方库**仍未实现**。
+   Linux 分支未原生执行）—— `requests`(1) / `flask`(13) 的网络底座。
    同一批还落地了 **`csv`**(#9) 与 **`random`**(#29)；CSV/random 不解决 `re`/HTML，
    也不等于 numpy/pandas 的数据能力。
 8. ✅ **`stdlib/re.ax`**（unreleased，回溯子集，对拍 Python `re`）—— 和 `lxml`(10)、
    `beautifulsoup4`(9) 共用分词基础；HTML 标记提取用例见 `examples/re_demo.ax`。
-9. **`flask`(13)** —— 第三方清单里 ROI 最高，零件已经齐了大半（还缺 `net.ax` 与 `re`）。
+9. **`flask`(13)** —— 第三方清单里 ROI 最高；`net.ax` 与 `re` 现已落地，
+   零件齐了，但 flask 本体属 §5 第三方范围，**标准库批次不做**。
 10. ✅ **`stdlib/math.ax` 补 `fdiv` / `is_nan` / `is_inf`**（v0.44.0 已做）—— §0.6 说这是
     三个数值库的公共前置，**先做它，比做 numpy 更划算**。
+
+标准库收尾批次（unreleased，§2 剩余全部可行模块）：
+
+11. ✅ **`stdlib/shutil.ax`**（#3）—— 组合 os/pathlib，零 extern，防环两条。
+12. ✅ **`stdlib/collections.ax` + `stdlib/itertools.ax`**（#12/#13）—— 槽位视图
+    基座之上；itertools 全批量形态（无 yield）。
+13. ✅ **`stdlib/net.ax`**（#16 urllib）—— 纯 URL 层对拍 CPython + WinHTTP 门面
+    对本地 mock；传输层补上空 header 块守卫（WinHTTP 对空头块报 87）。
+14. ✅ **`stdlib/threading.ax` + `stdlib/futures.ax`**（#18/#20）—— `to_int(f)`
+    逃生口 + 每函数 `target_os()` 守卫；4×1000 加锁计数钉 + selfhost CLI 钉。
+15. ✅ **`stdlib/sys.ax` + `argparse.ax` + `logging.ax` + `unittest.ax`**
+    （#24/#25/#26/#31）—— P3 里语言已解锁的四项，全部降级形态落地。
+
+**至此 §2 的 31 项全部处置完毕**：27 项落地（含降级形态），4 项按 §4 决定
+不做并有替代（pickle/multiprocessing/traceback/typing）。逐项证据见 §7。
+
+---
+
+## 7. 完成审计（§2 全部 31 项，2026-11-14）
+
+**结论：标准库路线（§2）关闭。** 27 项有模块 + 测试 + 示例 + 文档；
+4 项是 §4 的明确不做决定，替代物已在仓库里。§5 第三方清单**不属于**
+标准库范围，保持原样（依赖底座 socket/net/re/csv 等已齐）。
+
+| # | 模块 | 处置 | 证据（模块 / 测试 / 示例） |
+|---|---|---|---|
+| 1 | os | ✅ v0.44.0 | `stdlib/os.ax` / `tests/osglob.rs` / `examples/os_demo.ax` |
+| 2 | pathlib | ✅ v0.44.0 | `stdlib/pathlib.ax` / `tests/pathlib.rs` / `examples/pathlib_demo.ax` |
+| 3 | shutil | ✅ unreleased | `stdlib/shutil.ax` / `tests/shutil.rs` / `examples/shutil_demo.ax` |
+| 4 | glob | ✅ v0.44.0 | `stdlib/glob.ax` / `tests/osglob.rs` |
+| 5 | time | ✅ v0.44.0 | `stdlib/time.ax` / `tests/datetime.rs` / `examples/time_demo.ax` |
+| 6 | datetime | ✅ v0.44.0 | `stdlib/datetime.ax` / `tests/datetime.rs` |
+| 7 | calendar | ✅ v0.44.0 | `stdlib/calendar.ax` / `tests/datetime.rs` |
+| 8 | json | ✅ v0.44.0 提升 | `stdlib/json.ax` / `tests/json_fileio.rs` / `examples/json_demo.ax` |
+| 9 | csv | ✅ unreleased | `stdlib/csv.ax` / `tests/csv.rs`（对拍 CPython）/ `examples/csv_demo.ax` |
+| 10 | pickle | ⛔ 不做（§4） | 无反射；替代 = `stdlib/json.ax`（显式字段序列化） |
+| 11 | re | ✅ unreleased | `stdlib/re.ax` / `tests/re.rs`（对拍 CPython + selfhost 钉）/ `examples/re_demo.ax` |
+| 12 | collections | ✅ unreleased | `stdlib/collections.ax` / `tests/collections.rs` / `examples/collections_demo.ax` |
+| 13 | itertools | ✅ unreleased（批量形态） | `stdlib/itertools.ax` / `tests/itertools.rs`（对拍 CPython 顺序）/ `examples/itertools_demo.ax` |
+| 14 | bisect | ✅ v0.44.0 | `stdlib/bisect.ax` / `tests/containers.rs` / `examples/bisect_demo.ax` |
+| 15 | heapq | ✅ v0.44.0 | `stdlib/heapq.ax` / `tests/containers.rs` |
+| 16 | urllib | ✅ unreleased | `stdlib/net.ax` / `tests/net.rs`（对拍 CPython `urllib.parse` + 本地 mock HTTP）/ `examples/net_demo.ax` |
+| 17 | socket | ✅ unreleased | `stdlib/socket.ax` / `tests/socket.rs`（双向回环）/ `examples/socket_echo.ax` |
+| 18 | threading | ✅ unreleased | `stdlib/threading.ax` / `tests/threading.rs`（4×1000 计数 + selfhost CLI 钉）/ `examples/threading_demo.ax` |
+| 19 | multiprocessing | ⛔ 不做（§4） | 替代 = `stdlib/socket.ax` 本地回环 / `system()` 子进程 |
+| 20 | concurrent.futures | ✅ unreleased（线程子集） | `stdlib/futures.ax` / `tests/threading.rs`（与 threading 合用）/ `examples/threading_demo.ax`（合用，含 `fut_parallel`/`fut_submit`） |
+| 21 | base64 | ✅ v0.44.0 | `stdlib/base64.ax` / `tests/hashlib.rs` |
+| 22 | hashlib | ✅ v0.44.0 | `stdlib/hashlib.ax` / `tests/hashlib.rs`（已知向量）/ `examples/hashlib_demo.ax` |
+| 23 | hmac | ✅ v0.44.0 | `stdlib/hmac.ax` / `tests/hashlib.rs`（fn-ptr，selfhost 不可编译已注明） |
+| 24 | sys | ✅ unreleased（子集） | `stdlib/sys.ax` / `tests/sys.rs` / `examples/sys_demo.ax` |
+| 25 | argparse | ✅ unreleased（子集） | `stdlib/argparse.ax` / `tests/argparse.rs` / `examples/argparse_demo.ax` |
+| 26 | logging | ✅ unreleased（子集） | `stdlib/logging.ax` / `tests/logging.rs` / `examples/logging_demo.ax` |
+| 27 | traceback | ⛔ 不做（§4） | 无运行时调用栈对象；替代 = 编译器 `Diag` + `raise` 消息 |
+| 28 | math | ✅ v0.44.0 | `stdlib/math.ax` / `tests/math.rs` / `examples/math_demo.ax` |
+| 29 | random | ✅ unreleased | `stdlib/random.ax` / `tests/random.rs` / `examples/random_demo.ax` |
+| 30 | typing | ⛔ 不做（§4） | 语言已是静态类型 + 单态化；等价物即语言本身，文档已说明 |
+| 31 | unittest | ✅ unreleased（降级形态） | `stdlib/unittest.ax` / `tests/unittest.rs` / `examples/unittest_demo.ax` |
+
+**§3 清单核对（unreleased 十模块）**：
+
+- [x] 模块本体独立成文件，头部注明 extern / `-l` 依赖（threading：Windows
+      无附加库、POSIX `-l pthread`；net 门面：Windows `-l winhttp`；
+      shutil/collections/itertools/sys/argparse/unittest 零 extern，
+      logging 经 datetime/os 间接用 CRT）
+- [x] 均未 import 进 `stdlib/stdlib.ax`（该文件零 import，自举关键路径不受影响）
+- [x] 每个模块都有可跑示例：futures 与 threading 合用
+      `examples/threading_demo.ax`（含 `fut_parallel`/`fut_submit`），
+      其余九个各一个 `examples/<name>_demo.ax`
+- [x] 每个模块都有测试：futures 与 threading 合用 `tests/threading.rs`
+      （net/threading 用 mock/线程实测，itertools 对拍 CPython）
+- [x] 参考文档集中在 `docs/stdlib.md`（十节）；`CHANGELOG.md` 记 `[Unreleased]`
+- [x] selfhost 边界：threading/futures 经 selfhost CLI 实测可编译运行；
+      使用 dict/fn-ptr/raise 的模块（argparse/logging/unittest/collections）
+      头部已注明降级形态与自举状态
+- [x] 双平台纪律：`tests/stdlib_defect_pins.rs` 的 Linux 折叠符号扫描覆盖
+      threading/futures/shutil/net；路径分隔符扫描覆盖全部跨平台模块
+
+**遗留（不阻塞关闭，记录在案）**：`aoxn test` 运行器（§0.7）、socket 的
+Linux 原生执行证据（等 CI）、§5 第三方库全部未开工（范围外）。

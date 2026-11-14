@@ -479,6 +479,16 @@ rejects fn-pointer parameters (threads go through
 | `"stdlib/random"` | deterministic non-crypto MINSTD: `random_seed/next/below/range`, `random_float`, `random_float_next/range` (result in `.fval`); rejection sampling, error leaves state unchanged; no CSPRNG API |
 | `"stdlib/socket"` | minimal blocking IPv4 TCP: `socket_init`, `socket_connect`, `socket_listen`, `socket_accept`, `socket_send_bytes/str`, `socket_recv`, `socket_recv_all/line`, `socket_close`; `Sock{fd,err,msg}` values; Windows `-l ws2_32`, POSIX no extra lib; no DNS/UDP/IPv6/TLS/timeouts, no SO_REUSEADDR |
 | `"stdlib/re"` | backtracking Python-`re` subset: `re_compile/exec/search/match/fullmatch/group/start/end/groups/findall/sub/split`; `* + ? \| () (?:) [] {m,n} .`, classes, lazy, anchors, `\b\d\w\s`; byte-wise; backrefs/lookaround/flags/`\xHH` are clean compile errors; no externs, selfhost-compilable |
+| `"stdlib/shutil"` | real filesystem ops: `shutil_copyfile/copytree/move/rmtree` -> bool; copytree/rmtree refuse reparse points (symlinks/junctions) and cap recursion at `SHUTIL_MAX_DEPTH()` (64); move = copy+delete fallback |
+| `"stdlib/collections"` | `Deque` (int slots, `dq_push_back/front`, `dq_pop_*` -> `DqPop{ok,val}`, write-back), `counter_*` over `dict[int]` (`counter_most_common` -> `CountList`), `dd_int_get`/`dd_str_get` defaults, `od_move_to_end_*` |
+| `"stdlib/itertools"` | eager Vec forms: `it_chain/repeat/range/take/count/cycle/accumulate`, `it_zip/product` -> `PairList`, `it_permutations/it_combinations` -> `PermList`; no lazy iterators (no generators in the language) |
+| `"stdlib/net"` | urllib layer: `url_parse` -> `Url{ok,scheme,host,port,path,query,fragment}` (invalid input = clean zero Url), `url_build`, `url_quote/_plus/_safe`, `url_unquote/_plus`, `url_query_parse/encode`; HTTP facade `http_get/http_post/http_request/http_ok` over `net/http` (Windows `-l winhttp`) |
+| `"stdlib/threading"` | real OS threads: `thread_spawn(f: fn(int) -> int, arg)` -> `Thread`, `thread_join` (write-back, result in `.result`), `mutex_new/lock/unlock/free`, `thread_sleep_ms`; no closures -- state rides a heap address |
+| `"stdlib/futures"` | `fut_submit/fut_wait/fut_result`, `fut_parallel(f, args: Vec)` -> `FutResults`; at most `FUT_MAX_THREADS()` (64) workers, overflow runs inline |
+| `"stdlib/sys"` | `sys_argv()` -> Vec, `sys_argc`, `sys_platform`, `sys_executable`, `sys_exit`, `sys_maxsize` (no modules/paths/recursion-limit machinery) |
+| `"stdlib/argparse"` | `ap_new/ap_opt/ap_flag/ap_pos` (write-back), `ap_parse(ap, args: Vec)` -> `ArgResult{err,values: dict[string],help_requested}`, `ap_get/ap_to_int/ap_help`; `--name=v`, `--name v`, `-s`, `--` terminator; no subparsers |
+| `"stdlib/logging"` | `log_new(name)` -> `Logger` (write-back `log_set_level/log_add_file/log_set_stdout`), `log_debug/info/warning/error/critical`; levels `LOG_*()` 10-50; file sink APPENDS; line `YYYY-MM-DD HH:MM:SS LEVEL name: msg`; no handlers/formatters/filters |
+| `"stdlib/unittest"` | function-based: `ut_suite`, `ut_add(s, name, f: fn() -> void)` (write-back), `ut_run` -> `TestReport`, `ut_assert_true/eq_i/eq_s/eq_f/raises` (raise-based, caught per test); no classes/fixtures; `aoxn test` runner still missing |
 | `"stdlib/ui_win"` (Windows: `-l user32 -l gdi32`) or `"stdlib/ui_x11"` (Linux) -- ONE import pulls the whole toolkit (`ui.ax` core + `ui_draw.ax` widget layer + the backend) | immediate-mode widget toolkit -- `docs/ui.md`, `examples/ui_gallery.ax` |
 | `"stdlib/net/http"` (Windows: `-l winhttp`) / `"stdlib/net/codec"` / `"stdlib/net/sse"` | HTTP transport, UTF-16/base64/url-encode helpers, SSE frames |
 | `"stdlib/openai/client"` / `"stdlib/anthropic/client"` (+ `blocks`, `tools`) | the two API SDKs (`oa_*` / `an_*`) -- `docs/openai-sdk.md`, `docs/anthropic-sdk.md` |
@@ -535,23 +545,22 @@ stdin (no `input()`); `inf`/`nan` literals (`math.NaN()` / `math.Inf()`);
   compile the generated C and to link); since v0.55.0 snapshot 5, **rustc is a
   second, OPTIONAL toolchain** for `.rs` imports (see the Rust interoperability
   section). clang Resolution order: `AOXN_CLANG` env 鈫?PATH 鈫?repo-local
-  `LLVM\bin\clang.exe` 鈫?`C:\Program Files\LLVM\bin\clang.exe`. The winget
-  "LLVM 23.1.0" install on this machine survives purely as clang's home 鈥?
+  `LLVM\bin\clang.exe` 鈫?`C:\Program Files\LLVM\bin\clang.exe`. The
+  `E:\llvm` install on this machine survives purely as clang's home 鈥?
   no LLVM library is probed, linked, or shipped since v0.29.0 (`build.rs`,
   `src/llvm.rs`, `src/codegen.rs` are deleted).
-- **On this dev machine clang lives at `C:\Program Files\LLVM\bin\clang.exe`**
-  (LLVM 23.1.0, verified 2026-11-10). The old `E:\llvm` install (23.1.2) is
-  GONE — `E:\llvm\bin\clang.exe` no longer exists. `find_clang` discovers the
-  new location through its `C:\Program Files\LLVM` fallback, so bare
-  invocations work; when setting `AOXN_CLANG` explicitly use
-  `AOXN_CLANG="C:/Program Files/LLVM/bin/clang.exe"` (quote it — the path has
-  a space). **A stale `AOXN_CLANG=E:/llvm/bin/clang.exe` is a split failure**:
-  the Rust resolver falls back and every Rust-side test passes, but the
-  selfhost driver uses the env value VERBATIM (`_spawnvp`), so all five
-  selfhost driver tests fail with "clang failed ... exit 127". That exact
-  signature means "the AOXN_CLANG path is dead", not a codegen bug. rustc is
-  at `~/.cargo/bin/rustc` (rustup shim); Git Bash needs
-  `PATH="$HOME/.cargo/bin:$PATH"`.
+- **On this dev machine clang lives at `E:\llvm\bin\clang.exe`**
+  (LLVM 23.1.2, verified 2026-11-14). `C:\Program Files\LLVM` does NOT
+  exist on this machine — an earlier note claiming the opposite was wrong.
+  When setting `AOXN_CLANG` explicitly use
+  `AOXN_CLANG="E:/llvm/bin/clang.exe"`; bare invocations work when
+  `E:\llvm\bin` is on PATH. **A stale `AOXN_CLANG` pointing at a path that
+  no longer exists is a split failure**: the Rust resolver falls back and
+  every Rust-side test passes, but the selfhost driver uses the env value
+  VERBATIM (`_spawnvp`), so all five selfhost driver tests fail with
+  "clang failed ... exit 127". That exact signature means "the AOXN_CLANG
+  path is dead", not a codegen bug. rustc is at `~/.cargo/bin/rustc`
+  (rustup shim); Git Bash needs `PATH="$HOME/.cargo/bin:$PATH"`.
 - clang auto-detects MSVC Build Tools, which must be installed (Rust host is
   x86_64-pc-windows-msvc) for the final link. User programs needing C
   libraries pass `-l NAME` / `-L DIR` (forwarded to clang).
@@ -1657,6 +1666,33 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
     `tests/re.rs` differentially compares against CPython `re` and pins a
     selfhost-compilable check; `examples/re_demo.ax` is the tag-extraction use
     case. Reference: `docs/stdlib.md` §re.
+- **The unreleased closing batch lands the last 10 roadmap modules** —
+  `shutil` `collections` `itertools` `net` (urllib + HTTP facade) `threading`
+  `futures` `sys` `argparse` `logging` `unittest` — which closes
+  `docs/stdlib-todo.md` §2: **27 of 31 shipped, 4 standing won't-do decisions
+  with substitutes** (pickle→JSON, multiprocessing→socket/subprocess,
+  traceback→compiler Diag, typing→the static type system); the §7 audit maps
+  every row to its module/test/example. All ten are standalone files with
+  ZERO imports into `stdlib/stdlib.ax`; demos `examples/{shutil,collections,
+  itertools,net,threading,sys,argparse,logging,unittest}_demo.ax`; driver
+  tests `tests/{shutil,collections,itertools,net,threading,sys,argparse,
+  logging,unittest}.rs` (futures rides `tests/threading.rs`). Facts worth
+  keeping:
+  - **threading/futures run REAL OS threads with the caller's permissions.**
+    A worker is `fn(int) -> int`; shared state travels as a heap address (no
+    closures). `thread_join` is write-back (`t = thread_join(t)`, result in
+    `.result`); `fut_parallel` caps at `FUT_MAX_THREADS()` (64) and runs
+    overflow INLINE. Both compile under the selfhost CLI (pinned).
+  - **WinHTTP rejects an EMPTY header block** (`WinHttpAddRequestHeaders`
+    with `""` fails, error 87): both `net_http_request_bytes` and
+    `net_http_stream_open_bytes` SKIP the call when `len(headers) == 0`.
+    A plain GET used to fail while POST (which carries Content-Type) worked
+    — that asymmetry is the signature.
+  - **shutil refuses reparse points** (symlinks/junctions) in copytree/rmtree
+    and caps recursion at `SHUTIL_MAX_DEPTH()` (64); `url_parse` answers a
+    CLEAN zero `Url` (`ok = 0`) on every invalid input, never a partial one.
+  - **unittest is function-based** (`fn() -> void` tests, raise-based asserts
+    caught per test); there is still no `aoxn test` runner (§0.7).
 - **A stdlib module that NAMES one platform's API and nothing else does not
   link on the other one** (v0.50.1 fixed exactly this in `time.ax` +
   `datetime.ax`: `clang: error: linker command failed` with `undefined
@@ -1928,7 +1964,7 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   `stdlib/ui.ax` + `stdlib/ui_win.ax` 鈥?the Qt-flavored immediate-mode UI
   toolkit v3 (layout engine, text selection/multi-line editing, menus,
   tree/table model+view, signal-slot events);
-  `stdlib/{math,time,datetime,calendar,pathlib,base64,hashlib,hmac,os,glob,json,bisect,heapq,csv,random,socket,re}.ax`
+  `stdlib/{math,time,datetime,calendar,pathlib,base64,hashlib,hmac,os,glob,json,bisect,heapq,csv,random,socket,re,shutil,collections,itertools,net,threading,futures,sys,argparse,logging,unittest}.ax`
   鈥?the v0.44.0 module batch (`docs/stdlib.md` is its reference;
   `stdlib/net/` holds the SDK-shared transport, `stdlib/openai/` +
   `stdlib/anthropic/` the two SDKs)

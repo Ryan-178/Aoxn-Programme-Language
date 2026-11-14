@@ -1,0 +1,101 @@
+# unittest — minimal in-language test suites (roadmap §2 #31, degraded form).
+#
+# Python organizes tests with classes and `with`; Aoxn has neither, so this
+# is the free-function form the roadmap names:
+#
+#   s = ut_suite()
+#   s = ut_add(s, "adds", my_test)      my_test: fn() -> void
+#   report = ut_run(s)                  prints PASS/FAIL lines + a summary
+#   return report.failed                exit code for `aoxn run`
+#
+# Assertions RAISE a string on failure (caught per test, so one failure does
+# not stop the suite) — unlike the builtin `assert`, which exits the process:
+#
+#   ut_assert_true(cond, msg)
+#   ut_assert_eq_i(a, b, msg)           int equality
+#   ut_assert_eq_s(a, b, msg)           string equality
+#   ut_assert_eq_f(a, b, msg)           exact float equality
+#   ut_assert_raises(f, msg)            f: fn() -> void must raise
+#
+# This is NOT pytest: no discovery, no fixtures, no parametrization. The
+# repository's real test infrastructure stays `cargo test` (tests/*.rs);
+# this module lets an Aoxn program ship its own self-checks.
+#
+# Dependencies: stdlib core (Vec). Uses v0.40.0 function pointers and
+# raise/try/except — all covered by the selfhost front end, so this module
+# stays selfhost-compilable. No externs, no -l flags.
+
+import * from "stdlib"
+
+struct TestSuite:
+    names: Vec
+    fns: Vec
+    n: int
+
+struct TestReport:
+    total: int
+    passed: int
+    failed: int
+
+def ut_suite() -> TestSuite:
+    return TestSuite(names=vec_new(), fns=vec_new(), n=0)
+
+def ut_add(s: TestSuite, name: string, f: fn() -> void) -> TestSuite:
+    s.names = vec_push_str(s.names, name)
+    s.fns = vec_push(s.fns, to_int(f))
+    s.n = s.n + 1
+    return s
+
+# W001 does not count an indirect call inside a try body as a read of the
+# local holding the pointer; routing through a parameter keeps the lint quiet.
+def ut_invoke(f: fn() -> void):
+    f()
+
+def ut_run(s: TestSuite) -> TestReport:
+    passed = 0
+    failed = 0
+    i = 0
+    while i < s.n:
+        name = vec_get_str(s.names, i)
+        f = vec_get(s.fns, i) as fn() -> void
+        ok = 1
+        msg = ""
+        try:
+            ut_invoke(f)
+        except as e:
+            ok = 0
+            msg = e
+        if ok == 1:
+            print("PASS " + name)
+            passed = passed + 1
+        else:
+            print("FAIL " + name + ": " + msg)
+            failed = failed + 1
+        i = i + 1
+    print("TOTAL " + str(s.n) + " PASSED " + str(passed) + " FAILED " + str(failed))
+    return TestReport(total=s.n, passed=passed, failed=failed)
+
+def ut_assert_true(cond: bool, msg: string):
+    if not cond:
+        raise msg
+
+def ut_assert_eq_i(a: int, b: int, msg: string):
+    if a != b:
+        raise msg + ": expected " + str(b) + ", got " + str(a)
+
+def ut_assert_eq_s(a: string, b: string, msg: string):
+    if a != b:
+        raise msg + ": expected '" + b + "', got '" + a + "'"
+
+def ut_assert_eq_f(a: float, b: float, msg: string):
+    if a != b:
+        raise msg + ": floats differ"
+
+def ut_assert_raises(f: fn() -> void, msg: string):
+    raised = 0
+    try:
+        ut_invoke(f)
+    except:
+        raised = 1
+    if raised == 0:
+        raise msg

@@ -1,4 +1,4 @@
-# The Aoxn standard library (v0.44.0 batch + CSV/random/socket/re)
+# The Aoxn standard library (v0.44.0 batch + CSV/random/socket/re + the completion batch)
 
 The v0.44.0 batch landed the first thirteen modules of the stdlib roadmap
 (`docs/stdlib-todo.md` §6's items 1–6 plus the bisect/heapq pair): every
@@ -601,3 +601,253 @@ capture-undo trail — no recursion, so `.*` over a long subject cannot overflow
 the C stack. `tests/re.rs` pins canonical vectors and differentially compares
 match/search/fullmatch/findall/sub/split against Python's `re` when Python is
 available, plus a selfhost-compilable check.
+
+## sys
+
+`import * from "stdlib/sys"` — the feasible subset of Python's `sys`
+(roadmap §2 #24). Thin wrappers over builtins that already exist; no externs,
+no link flags, selfhost-compilable (pinned by `tests/sys.rs`).
+
+| API | notes |
+|---|---|
+| `sys_argv() -> Vec` | string slots (`vec_get_str`); excludes the program path |
+| `sys_argc() -> int` | `argc()` |
+| `sys_platform() -> string` | `target_os()`: `"windows"` / `"linux"` / `"other"` |
+| `sys_executable() -> string` | `exe_path()` |
+| `sys_exit(code)` | `exit(code)` |
+| `sys_maxsize() -> int` | 9223372036854775807 (64-bit slots) |
+
+Not present, deliberately: `sys.stdin` (the language has no console input),
+`sys.version` (use the CLI's `aoxn version`), `sys.path` / `sys.modules`
+(imports are resolved at compile time), `sys.environ` (use `stdlib/os`).
+
+## argparse
+
+`import * from "stdlib/argparse"` — command-line parsing as a flat spec table
+(roadmap §2 #25). Python's class/namespace API is not expressible; the result
+is a `dict[string]` and errors are VALUES (`res.err != ""`), never raises.
+Uses v0.40.0 `dict[V]`, which stage 2 covers; byte scans use `load_u8`, so the
+module stays selfhost-compilable (pinned by `tests/argparse.rs` and the
+combined selfhost pin in `tests/unittest.rs`).
+
+```aoxn
+ap = ap_new("demo", "test parser")
+ap = ap_flag(ap, "verbose", "v", "chatty")
+ap = ap_opt(ap, "output", "o", "out.txt", "output file")
+ap = ap_pos(ap, "input", 1, "input file")
+res = ap_parse(ap, sys_argv())
+if res.help_requested == 1:
+    print(ap_help(ap))
+elif res.err != "":
+    print("ERR " + res.err)
+else:
+    print(ap_get(res, "output", ""), ap_to_int(ap_get(res, "count", "1"), 1))
+```
+
+Supported spellings: `--name value`, `--name=value`, `-n value`, `-nvalue`,
+`--` (end of options), `-h`/`--help` (sets `help_requested` and short-circuits
+the required-argument check). Flags answer `"1"`/`"0"`. Unknown options,
+missing values, missing required arguments and surplus positionals each set a
+distinct `res.err` message.
+
+Not supported: subparsers, `nargs`/append actions, `type=` callbacks, mutually
+exclusive groups, long-name abbreviation. Convert values yourself with
+`ap_to_int(s, dflt)` / `to_float`.
+
+## logging
+
+`import * from "stdlib/logging"` — level-filtered logging to stdout and/or an
+append-mode file (roadmap §2 #26). Depends on `stdlib/datetime` for the
+timestamp; file I/O goes through the CRT `fopen`/`fwrite` externs already
+declared in `stdlib.ax`. Selfhost-compilable.
+
+```aoxn
+lg = log_new("app")                 # level INFO, stdout on
+lg = log_set_level(lg, LOG_DEBUG())
+lg = log_add_file(lg, "app.log")    # write-back; keeps stdout too
+lg = log_set_stdout(lg, 0)          # file only
+log_info(lg, "started")
+log_error(lg, "disk full")
+```
+
+Line format: `YYYY-MM-DD HH:MM:SS LEVEL name: message` (local time). Levels:
+`LOG_DEBUG()` 10, `LOG_INFO()` 20, `LOG_WARNING()` 30, `LOG_ERROR()` 40,
+`LOG_CRITICAL()` 50; `log_level_name(level)` renders the name. The two
+channels are independent — a logger with both keeps writing to the file when
+stdout is re-enabled. No handlers/formatters/propagation hierarchy, no
+rotation, no `logging.config`.
+
+## unittest
+
+`import * from "stdlib/unittest"` — a test-suite registry with raise-based
+assertions (roadmap §2 #31, degraded form). No classes/fixtures/`with`; a test
+is a `fn() -> void` registered by name. Selfhost-compilable (pinned by
+`tests/unittest.rs`, including a combined sys+argparse+logging+unittest driver
+through the selfhost CLI).
+
+```aoxn
+def t_math():
+    ut_assert_eq_i(6 * 7, 42, "mul")
+
+s = ut_suite()
+s = ut_add(s, "math", t_math)
+r = ut_run(s)          # prints PASS/FAIL per test + TOTAL line
+exit(r.failed)
+```
+
+`ut_run` isolates failures: a raising test is caught (`try`/`except`), printed
+as `FAIL name: message`, and the suite continues. Assertions:
+`ut_assert_true(cond, msg)`, `ut_assert_eq_i/_s/_f(a, b, msg)`,
+`ut_assert_raises(f, msg)` (fails when `f` does NOT raise). Report:
+`TestReport{total, passed, failed}`. This does not replace `cargo test`
+(`tests/*.rs`) — it is for language-level self-tests.
+
+## collections
+
+`import * from "stdlib/collections"` — deque, Counter and defaultdict helpers
+(roadmap §2 #12) on the slot-view Vec base (§0.3). No externs, selfhost-
+compilable (pinned by `tests/collections.rs`).
+
+- **Deque** — a ring buffer of 8-byte slots: `dq_new`, `dq_push_back`,
+  `dq_push_front`, `dq_pop_front`, `dq_pop_back`, `dq_get`, `dq_len`,
+  `dq_free`, plus `_str` variants. Pops answer `DqPop{dq, value, ok}` —
+  write-back the deque; `ok == 0` on an empty deque leaves it unchanged.
+  Growth copies through `(head + i) % cap`, so amortized O(1) ends.
+- **Counter** — over `dict[int]`: `counter_new`, `counter_add(c, key)`,
+  `counter_add_n(c, key, n)`, `counter_get(c, key)` (0 when missing),
+  `counter_total`, `counter_most_common(c, n) -> CountList{keys, counts, n}`
+  (stable selection sort; ties keep insertion order; `n < 0` = all).
+- **defaultdict** — `dd_int_get(d, key, dflt)` / `dd_str_get(d, key, dflt)`
+  insert the default on a missing key and answer it.
+- **OrderedDict** — `dict[V]` already iterates in insertion order; the extra
+  operation is `od_move_to_end_i(d, key)` / `od_move_to_end_s(d, key)`
+  (delete + reinsert). Lookup stays the runtime's O(n) scan — see the
+  roadmap's scale note.
+
+## itertools
+
+`import * from "stdlib/itertools"` — batch forms of the iterator recipes
+(roadmap §2 #13). **No `yield` in the language, so every API returns a
+materialized container** — infinite iterators become `take(n)` generators.
+No externs, selfhost-compilable; `tests/itertools.rs` pins exact output and
+differentially compares permutation/combination ORDER against CPython.
+
+| API | shape |
+|---|---|
+| `it_chain(a, b)` / `it_zip(a, b)` | `Vec` / `PairList{left, right, n}` (zip truncates) |
+| `it_repeat(x, n)` / `it_range(start, stop, step)` | `Vec`; step 0 → empty |
+| `it_take(v, n)` / `it_count(start, step, n)` / `it_cycle(v, n)` | `Vec` |
+| `it_accumulate(v)` | `Vec` of running sums |
+| `it_product(a, b)` | `PairList`, a-major order |
+| `it_permutations(v)` | `PermList{rows: VecVec, n}` — Python index order |
+| `it_combinations(v, r)` | `PermList`; `r < 0` or `r > n` → empty |
+
+Guards: `it_permutations` answers empty for `n > 9` (9! = 362880 rows is the
+practical ceiling); `n == 0` yields one empty row, like Python. Rows are
+COPIED into the `VecVec` (`iv_copy`) — sharing a working buffer would alias
+every row.
+
+## shutil
+
+`import * from "stdlib/shutil"` — high-level file operations (roadmap §2 #3).
+Composes `stdlib/os` + `stdlib/pathlib`; declares NO externs of its own, so
+both platforms work by construction and no `-l` flags are needed. Paths are
+built with `path_join`. Selfhost-compilable; `tests/shutil.rs` exercises a
+real temp tree.
+
+| API | behavior |
+|---|---|
+| `shutil_copyfile(src, dst)` | overwrites; refuses directories |
+| `shutil_copytree(src, dst)` | recursive; merges into an existing dst dir |
+| `shutil_rmtree(path)` | recursive delete of a file or directory |
+| `shutil_move(src, dst)` | `os_rename`, falling back to copy+delete |
+
+Safety (the roadmap's two requirements): reparse points (symlinks/junctions)
+are NEVER followed — copytree skips link children and refuses a link root,
+rmtree removes the link itself — and a depth cap (`SHUTIL_MAX_DEPTH()`, 64)
+bounds the recursion regardless. Deletion is path-based (`os.ax` exposes no
+`dirfd`/`openat`/`unlinkat`), so a concurrent symlink swap inside the tree is
+a residual TOCTOU surface the link guard narrows but cannot fully close.
+Errors are values (`False`), not raises.
+No archive support, no `which()`, no `disk_usage()`, no `ignore_errors`
+callback.
+
+## net
+
+`import * from "stdlib/net"` — the urllib-style URL layer plus a thin HTTP
+facade (roadmap §2 #16). Two halves:
+
+**Pure URL tools** (no platform calls, work everywhere, selfhost-compilable):
+`url_parse(s) -> Url{scheme, host, port, path, query, fragment, ok}`,
+`url_build(u)`, `url_quote` / `url_quote_safe` / `url_quote_plus`,
+`url_unquote` / `url_unquote_plus`, `url_query_parse(qs) -> QueryList{keys,
+vals, n}` and `url_query_encode(keys, vals)`. Defaults: http 80, https 443,
+other schemes 0; an empty path normalizes to `/`; bracketed IPv6 hosts are
+supported. `tests/net.rs` differentially compares the codecs and parse fields
+against CPython `urllib.parse`. **Error semantics**: every invalid input
+answers a CLEAN zero `Url` (`ok = 0`, all fields empty) — never a
+half-filled one; a scheme-less input keeps the WHOLE input in `path`
+(`ok = 0`), exactly like `urlsplit`.
+
+**HTTP facade** over the WinHTTP transport (`stdlib/net/http.ax`):
+`http_get(url)`, `http_post(url, body, content_type)`,
+`http_request(method, url, headers, body)` → `HttpResponse{status, body,
+request_id, retry_after, location, err, errmsg}`, and `http_ok(r)`.
+Windows links `-l winhttp`; elsewhere every call answers the transport's
+`err = 1` "no transport on this platform". Timeouts: 5 s connect / 30 s
+receive. Errors are values. The facade does not expose arbitrary response
+headers or redirect policy — drop to `net_http_request` /
+`net_header_value` / `net_http_no_redirects` for those. Transport detail:
+WinHTTP rejects an EMPTY header block with error 87, so both request paths
+skip `WinHttpAddRequestHeaders` when no extra headers are given (a plain
+GET used to fail because of this).
+
+Python deltas: no `urljoin`, no userinfo (`user:pass@host` → `ok = 0`), no
+encoding parameter (bytes in, bytes out), duplicate query keys stay in order
+(no list-of-lists), no Request/opener objects.
+
+## threading
+
+`import * from "stdlib/threading"` — minimal threads and mutexes (roadmap
+§2 #18). A worker is `fn(int) -> int`: one pointer-width argument, one
+return; shared state travels as a heap address (no closures). The fn address
+rides to the OS as an int (`to_int(f)`) — the escape hatch the extern layer's
+own error message documents, ABI-correct on x86-64.
+
+| API | notes |
+|---|---|
+| `thread_spawn(f, arg) -> Thread` | `Thread{handle, err, result, joined}` |
+| `thread_join(t) -> Thread` | write-back; result lands in `.result` |
+| `thread_sleep_ms(ms)` | delegates to `stdlib/time` |
+| `mutex_new() -> Mutex` / `mutex_lock` / `mutex_unlock` / `mutex_free` | 0 = ok |
+
+Windows: CreateThread / WaitForSingleObject / GetExitCodeThread /
+CreateMutexW / ReleaseMutex (kernel32, no `-l`). Linux: pthread_create /
+pthread_join / pthread_mutex_* (the mutex slab is 64 zeroed bytes). Every
+platform call is guarded inside its own function (the os.ax idiom), pinned
+by the Linux-simulation symbol check in `tests/stdlib_defect_pins.rs`.
+Windows worker returns are DWORDs — keep them within 32 bits. No TLS,
+condition variables, RW locks, detach or cancellation. `tests/threading.rs`
+runs a 4-thread × 1000-increment mutex counter (expects exactly 4000) on both
+platforms and through the selfhost CLI.
+
+## futures
+
+`import * from "stdlib/futures"` — a concurrent.futures SUBSET (roadmap
+§2 #20), built on threading. **Not a ThreadPoolExecutor**: no executor
+object, queue, shutdown, timeouts, callbacks or `as_completed`, and no
+process pool (§4 decision). A task is `fn(int) -> int` + one int argument.
+
+```aoxn
+fu = fut_submit(worker, 42)     # spawn now
+fu = fut_wait(fu)               # join later (write-back)
+print(fut_result(fu))           # wait-if-needed + read
+
+r = fut_parallel(worker, args)  # one thread per element, results in order
+print(r.errors, vec_get(r.values, 0))
+```
+
+`fut_parallel` caps concurrency at `FUT_MAX_THREADS()` (64); elements beyond
+the cap run inline on the calling thread. A failed spawn leaves
+`Future.th.err = 1` / result 0 and counts in `FutResults.errors`. Nothing
+raises. Same platforms and link flags as threading; selfhost-compilable.

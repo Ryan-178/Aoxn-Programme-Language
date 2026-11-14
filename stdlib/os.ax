@@ -497,7 +497,13 @@ def os_listdir(path: string) -> Vec:
         if e == 0:
             more = False
         else:
-            name = as_string(e + OS_LINUX_DIRENT_NAME())
+            # readdir's dirent lives in a buffer closedir() frees, and
+            # vec_push_str stores the POINTER (as_ptr), not the bytes — so
+            # as_string(e+19) would leave every name dangling after the loop.
+            # Copy into a fresh buffer, the Linux twin of os_from_wide's malloc
+            # on the Windows arm (a use-after-free that only bites on POSIX).
+            np = e + OS_LINUX_DIRENT_NAME()
+            name = buf_str(np, len(as_string(np)))
             if name != "." and name != "..":
                 out = vec_push_str(out, name)
     closedir(d)

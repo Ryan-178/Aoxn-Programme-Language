@@ -1,0 +1,39 @@
+# argparse demo: parse a fixed argument vector, then the real command line.
+#   aoxn run examples/argparse_demo.ax -- input.txt -v -o out.bin
+
+import * from "stdlib"
+import * from "stdlib/argparse"
+import * from "stdlib/sys"
+
+def main() -> int:
+    ap = ap_new("demo", "copy an input file to an output file")
+    ap = ap_flag(ap, "verbose", "v", "print progress")
+    ap = ap_opt(ap, "output", "o", "out.txt", "output path")
+    ap = ap_opt(ap, "count", "c", "1", "repeat count")
+    ap = ap_pos(ap, "input", 1, "input path")
+
+    args = vec_new()
+    args = vec_push_str(args, "--verbose")
+    args = vec_push_str(args, "-o")
+    args = vec_push_str(args, "result.bin")
+    args = vec_push_str(args, "in.txt")
+    args = vec_push_str(args, "--count=3")
+    res = ap_parse(ap, args)
+    if res.err != "":
+        print("error:", res.err)
+        return 1
+    print("verbose:", ap_get(res, "verbose", "0"))
+    print("output:", ap_get(res, "output", ""))
+    print("input:", ap_get(res, "input", ""))
+    print("count:", ap_to_int(ap_get(res, "count", "1"), 1))
+
+    real = ap_parse(ap, sys_argv())
+    if real.help_requested == 1:
+        print(ap_help(ap))
+        return 0
+    if real.err != "":
+        print("error:", real.err)
+        print(ap_help(ap))
+        return 1
+    print("real input:", ap_get(real, "input", "(none)"))
+    return 0

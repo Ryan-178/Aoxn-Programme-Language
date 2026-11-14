@@ -1,0 +1,24 @@
+# unittest demo: a suite with value assertions and an expected raise.
+# Exit code is the failure count (0 here).
+
+import * from "stdlib/unittest"
+
+def adds():
+    ut_assert_eq_i(2 + 3, 5, "addition")
+
+def strings():
+    ut_assert_eq_s("ao" + "xn", "aoxn", "concat")
+
+def boom():
+    raise "expected failure"
+
+def raises():
+    ut_assert_raises(boom, "boom must raise")
+
+def main() -> int:
+    s = ut_suite()
+    s = ut_add(s, "adds", adds)
+    s = ut_add(s, "strings", strings)
+    s = ut_add(s, "raises", raises)
+    report = ut_run(s)
+    return report.failed

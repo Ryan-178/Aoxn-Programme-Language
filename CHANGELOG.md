@@ -100,6 +100,120 @@ regex engine. Pure Aoxn, no externs, and inside the self-host subset.
   is present, plus a selfhost-compilable check. `examples/re_demo.ax` shows the
   tag-extraction use case.
 
+### Standard library: the roadmap closes (10 modules, all unreleased)
+
+`docs/stdlib-todo.md` §2's remaining feasible modules all land in this
+batch, so **all 31 Python-stdlib roadmap items are now dispositioned**:
+27 shipped (several in documented degraded forms), 4 are standing §4
+won't-do decisions with substitutes (pickle → JSON, multiprocessing →
+socket/subprocess, traceback → compiler diagnostics, typing → the static
+type system itself). The §7 completion audit maps every item to its
+module, test and example. §5 (15 third-party libraries) is explicitly
+out of the stdlib scope and untouched.
+
+- **`shutil`** (`stdlib/shutil.ax`, #3): copyfile/copytree/rmtree/move over
+  `os.ax`+`pathlib.ax`, zero externs of its own. Reparse points are never
+  followed (copytree skips link children and refuses a link root; rmtree
+  removes the link itself) and recursion is capped at depth 64. Errors are
+  values (`False`). `tests/shutil.rs` builds real temp trees. Deletion is
+  path-based (`os.ax` exposes no `dirfd`/`openat`/`unlinkat`), so a
+  concurrent symlink swap inside the tree is a residual TOCTOU surface the
+  link guard narrows but cannot fully close — `rmtree` keeps recursing
+  (refusing directory deletion would break its contract).
+- **Linux runtime fix** (`stdlib/os.ax`, `os_listdir`): the POSIX branch
+  pushed `as_string(readdir_buf + 19)` straight into the result Vec, but
+  `vec_push_str` stores the POINTER (`as_ptr`), not the bytes, and
+  `closedir` frees readdir's buffer — so every listed name dangled after
+  the call (a use-after-free). Windows was unaffected because
+  `os_from_wide` mallocs a fresh buffer per name. The non-deterministic
+  corruption made `shutil_copytree`/`shutil_rmtree` answer `False` on the
+  Linux CI runner while still copying/removing some entries (the
+  `copytree false` / `rmtree-root false` failure). Each name is now copied
+  with `buf_str` into an independently-owned buffer (leaked by design,
+  like the Windows arm). `tests/shutil.rs` is the runtime pin; an audit of
+  every `vec_push_str` caller confirmed this was the only borrowed-alias
+  push (the rest copy via `str_sub`/`sb_text`/`j_*` or push owned strings).
+- **`collections`** (`stdlib/collections.ax`, #12): ring-buffer Deque
+  (pops answer `DqPop{dq,value,ok}`, write-back), Counter over `dict[int]`
+  with stable `counter_most_common`, defaultdict helpers, OrderedDict
+  move-to-end. Slot-view discipline (§0.3), no externs.
+- **`itertools`** (`stdlib/itertools.ax`, #13): no `yield` exists, so every
+  function is BATCH (chain/repeat/range/take/count/cycle/accumulate/zip/
+  product/permutations/combinations). Python index order, `VecVec` rows
+  copied (`iv_copy`) so rows do not alias, n>9 permutation guard.
+  `tests/itertools.rs` differentially checks order against CPython.
+- **`urllib`** (`stdlib/net.ax`, #16): a PURE URL layer (`url_parse`/
+  `url_build`, quote/unquote + plus variants, parallel-Vec query
+  parse/encode, IPv6 bracket hosts, default ports) differentially tested
+  against CPython `urllib.parse`, plus an HTTP facade (`http_get`/
+  `http_post`/`http_request`/`http_ok`, 5 s connect / 30 s receive, value
+  errors) over the existing WinHTTP transport. Invalid URLs answer a CLEAN
+  zero `Url` (never half-filled); a scheme-less input keeps the whole input
+  in `path`, like `urlsplit`. `tests/net.rs` runs the facade against a local
+  mock server with a bounded wait.
+- **Transport fix** (`stdlib/net/http.ax`): `WinHttpAddRequestHeaders`
+  rejects an EMPTY header block with `ERROR_INVALID_PARAMETER` (87), so
+  every plain GET failed while POSTs (which carry Content-Type) worked.
+  Both request paths now skip the call when there are no extra headers.
+  Both SDK suites re-run green after the guard.
+- **`threading`** (`stdlib/threading.ax`, #18): `thread_spawn(f: fn(int)
+  -> int, arg)` through the documented `to_int(f)` escape hatch (Windows
+  `CreateThread`, POSIX `pthread_create`), write-back `thread_join`,
+  Mutex new/lock/unlock/free, `thread_sleep_ms`. Every platform call is
+  guarded INSIDE its own function (`target_os()`), so the Linux link stays
+  clean — pinned by `stdlib_defect_pins`' simulated-Linux symbol scan.
+  No condvars/semaphores/TLS. `tests/threading.rs`: 4 threads × 1000
+  mutex-guarded increments land exactly on 4000, plus a selfhost-CLI pin
+  (the driver's prints are single-argument concatenations, stage-2's
+  `print` arity limit).
+- **`concurrent.futures`** (`stdlib/futures.ax`, #20, thread subset):
+  `fut_submit`/`fut_wait`/`fut_result` and `fut_parallel(f, args)` — one
+  thread per element up to `FUT_MAX_THREADS()` (64), the rest run INLINE,
+  results in input order, error count in `FutResults.errors`. No process
+  pool (§4), no callbacks/timeouts/cancel.
+- **`sys`** (`stdlib/sys.ax`, #24): `sys_argv`/`sys_argc`/`sys_platform`/
+  `sys_executable`/`sys_exit`/`sys_maxsize` over the v0.42.0 builtins.
+  No stdin object (no console-input builtin), no `sys.modules`.
+- **`argparse`** (`stdlib/argparse.ax`, #25): declarative `ap_new/ap_opt/
+  ap_flag/ap_pos` + `ap_parse(ap, args)` into a `dict[string]` result,
+  `--help` support, value errors. No subcommands/mutex groups/nargs.
+- **`logging`** (`stdlib/logging.ax`, #26): Python's 10–50 levels, stdout
+  and append-mode file channels with independent switches, line shape
+  `YYYY-MM-DD HH:MM:SS LEVEL name: msg` via datetime. No handler tree/
+  filters/rotation.
+- **`unittest`** (`stdlib/unittest.ax`, #31, degraded form): registry +
+  fn-ptr cases (`ut_suite`/`ut_add`/`ut_run` → `TestReport`), free-function
+  assertions that RAISE (caught per test, unlike the process-exiting
+  builtin `assert`). No classes/fixtures/discovery — `aoxn test` remains
+  the missing runner (§0.7); repo-level testing stays `cargo test`.
+
+Every module is its own file (none imported into `stdlib/stdlib.ax`, which
+has zero imports — the self-host critical path is untouched), ships an
+`examples/<name>_demo.ax`, a `tests/<name>.rs`, and a section in
+`docs/stdlib.md`. threading/futures are additionally compiled and run by
+the selfhost CLI in tests; dict/fn-ptr/raise users carry the selfhost
+status note in their headers.
+
+Validation (2026-11-14, Windows, clang 23.1.2 at `E:\llvm\bin\clang.exe`,
+rustc from rustup, `AOXN_TEST_REQUIRE_CLANG=1` +
+`AOXN_TEST_REQUIRE_RUSTC=1`): **399 root + 116 package = 515 passed,
+0 failed, 0 ignored** — the root suite grew 385 → 399 with this batch's
+14 tests (sys 1, argparse 1, logging 1, unittest 2, collections 1,
+itertools 2, shutil 1, net 3, threading 2). Package suite via
+`run_pkg_tests.sh`; `cargo check --workspace --tests --target
+x86_64-unknown-linux-gnu` clean; doc audit `missing-path=0`,
+`historical-path=0`, 25 heuristic warnings, auditor tests 11/11.
+README/SECURITY/AGENTS rewritten against this tree.
+
+### Environment note (corrected)
+
+The earlier Unreleased note claimed clang had moved to
+`C:\Program Files\LLVM` and `E:\llvm` was gone. On the current dev machine
+the opposite is true: **clang 23.1.2 lives at `E:\llvm\bin\clang.exe`** and
+`C:\Program Files\LLVM` does not exist (verified 2026-11-14; the whole
+batch was built with it). `AOXN_CLANG` must point at a live path — the
+selfhost driver uses it verbatim.
+
 ## [0.55.0-snapshot-6] - 2026-11-09
 
 **Package manifest v2 and a pip-style dependency CLI.** The project manifest

@@ -1,0 +1,24 @@
+# shutil demo: build a small tree, copy it, move a directory, delete both.
+# Everything happens under shutil_demo_tmp/ in the current directory.
+
+import * from "stdlib"
+import * from "stdlib/os"
+import * from "stdlib/pathlib"
+import * from "stdlib/shutil"
+
+def main() -> int:
+    root = "shutil_demo_tmp"
+    shutil_rmtree(root)
+    os_mkdir(root)
+    os_mkdir(path_join(root, "docs"))
+    write_file(path_join(root, "readme.txt"), "hello")
+    write_file(path_join(path_join(root, "docs"), "guide.txt"), "guide")
+
+    print("copytree:", shutil_copytree(root, root + "_copy"))
+    print("copied:", read_file(path_join(path_join(root + "_copy", "docs"), "guide.txt")))
+    print("move:", shutil_move(root + "_copy", root + "_moved"))
+    print("moved:", read_file(path_join(root + "_moved", "readme.txt")))
+    print("rmtree:", shutil_rmtree(root))
+    print("rmtree moved:", shutil_rmtree(root + "_moved"))
+    print("gone:", os_exists(root))
+    return 0

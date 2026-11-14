@@ -482,9 +482,14 @@ def net_http_request_bytes(method: string, url: string, headers: string, body_pt
         WinHttpCloseHandle(conn)
         WinHttpCloseHandle(session)
         return r
-    whdrs = net_to_wide(headers)
-    ok = WinHttpAddRequestHeaders(req, whdrs, -1, NET_HDR_SET())
-    free(whdrs)
+    # WinHttpAddRequestHeaders rejects an EMPTY header block with
+    # ERROR_INVALID_PARAMETER (87), so a GET with no extra headers must
+    # skip the call entirely instead of feeding it "".
+    ok = 1
+    if len(headers) > 0:
+        whdrs = net_to_wide(headers)
+        ok = WinHttpAddRequestHeaders(req, whdrs, -1, NET_HDR_SET())
+        free(whdrs)
     if ok == 0:
         code = GetLastError()
         r.errmsg = net_winhttp_err(code)
@@ -627,9 +632,12 @@ def net_http_stream_open_bytes(method: string, url: string, headers: string, bod
         WinHttpCloseHandle(conn)
         WinHttpCloseHandle(session)
         return s
-    whdrs = net_to_wide(headers)
-    ok = WinHttpAddRequestHeaders(req, whdrs, -1, NET_HDR_SET())
-    free(whdrs)
+    # same empty-block guard as net_http_request_bytes (WinHTTP error 87)
+    ok = 1
+    if len(headers) > 0:
+        whdrs = net_to_wide(headers)
+        ok = WinHttpAddRequestHeaders(req, whdrs, -1, NET_HDR_SET())
+        free(whdrs)
     if ok == 0:
         s.err = 1
         s.errmsg = net_winhttp_err(GetLastError())
