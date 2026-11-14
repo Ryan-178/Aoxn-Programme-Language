@@ -79,12 +79,24 @@ def sh_rmtree(path: string, depth: int) -> bool:
         if os_isdir(path):
             return os_rmdir(path)
         return os_remove(path)
-    if os_isdir(path):
-        # Unsafe TOCTOU-prone recursive deletion via path re-resolution is refused.
-        # A secure implementation requires handle-based traversal (openat/unlinkat
-        # or platform equivalent) which is not available in this module's API.
-        return False
-    return os_remove(path)
+    if not os_isdir(path):
+        return os_remove(path)
+    # Recursive deletion is path-based: os.ax exposes no dirfd/openat/unlinkat,
+    # so a race-free handle walk is not expressible here. The os_islink guard
+    # above (never follow a reparse point) and the depth cap bound the damage;
+    # a concurrent symlink swap inside the tree is the residual TOCTOU surface.
+    names = os_listdir(path)
+    n = vec_len(names)
+    ok = True
+    i = 0
+    while i < n:
+        s = path_join(path, vec_get_str(names, i))
+        if not sh_rmtree(s, depth + 1):
+            ok = False
+        i = i + 1
+    if not os_rmdir(path):
+        ok = False
+    return ok
 
 def shutil_rmtree(path: string) -> bool:
     return sh_rmtree(path, 0)

@@ -765,7 +765,10 @@ real temp tree.
 Safety (the roadmap's two requirements): reparse points (symlinks/junctions)
 are NEVER followed — copytree skips link children and refuses a link root,
 rmtree removes the link itself — and a depth cap (`SHUTIL_MAX_DEPTH()`, 64)
-bounds the recursion regardless. Errors are values (`False`), not raises.
+bounds the recursion regardless. Deletion is path-based (`os.ax` exposes no
+`dirfd`/`openat`/`unlinkat`), so a concurrent symlink swap inside the tree is
+a residual TOCTOU surface the link guard narrows but cannot fully close.
+Errors are values (`False`), not raises.
 No archive support, no `which()`, no `disk_usage()`, no `ignore_errors`
 callback.
 

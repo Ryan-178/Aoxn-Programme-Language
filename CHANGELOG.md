@@ -115,7 +115,11 @@ out of the stdlib scope and untouched.
   `os.ax`+`pathlib.ax`, zero externs of its own. Reparse points are never
   followed (copytree skips link children and refuses a link root; rmtree
   removes the link itself) and recursion is capped at depth 64. Errors are
-  values (`False`). `tests/shutil.rs` builds real temp trees.
+  values (`False`). `tests/shutil.rs` builds real temp trees. Deletion is
+  path-based (`os.ax` exposes no `dirfd`/`openat`/`unlinkat`), so a
+  concurrent symlink swap inside the tree is a residual TOCTOU surface the
+  link guard narrows but cannot fully close — `rmtree` keeps recursing
+  (refusing directory deletion would break its contract).
 - **Linux runtime fix** (`stdlib/os.ax`, `os_listdir`): the POSIX branch
   pushed `as_string(readdir_buf + 19)` straight into the result Vec, but
   `vec_push_str` stores the POINTER (`as_ptr`), not the bytes, and
