@@ -116,6 +116,19 @@ out of the stdlib scope and untouched.
   followed (copytree skips link children and refuses a link root; rmtree
   removes the link itself) and recursion is capped at depth 64. Errors are
   values (`False`). `tests/shutil.rs` builds real temp trees.
+- **Linux runtime fix** (`stdlib/os.ax`, `os_listdir`): the POSIX branch
+  pushed `as_string(readdir_buf + 19)` straight into the result Vec, but
+  `vec_push_str` stores the POINTER (`as_ptr`), not the bytes, and
+  `closedir` frees readdir's buffer — so every listed name dangled after
+  the call (a use-after-free). Windows was unaffected because
+  `os_from_wide` mallocs a fresh buffer per name. The non-deterministic
+  corruption made `shutil_copytree`/`shutil_rmtree` answer `False` on the
+  Linux CI runner while still copying/removing some entries (the
+  `copytree false` / `rmtree-root false` failure). Each name is now copied
+  with `buf_str` into an independently-owned buffer (leaked by design,
+  like the Windows arm). `tests/shutil.rs` is the runtime pin; an audit of
+  every `vec_push_str` caller confirmed this was the only borrowed-alias
+  push (the rest copy via `str_sub`/`sb_text`/`j_*` or push owned strings).
 - **`collections`** (`stdlib/collections.ax`, #12): ring-buffer Deque
   (pops answer `DqPop{dq,value,ok}`, write-back), Counter over `dict[int]`
   with stable `counter_most_common`, defaultdict helpers, OrderedDict
