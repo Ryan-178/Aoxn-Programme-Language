@@ -1,0 +1,79 @@
+# futures — a concurrent.futures SUBSET (roadmap §2 #20, degraded form).
+#
+#   fut_submit(f: fn(int) -> int, arg: int) -> Future   spawn now
+#   fut_wait(fu: Future) -> Future                      join (write-back)
+#   fut_result(fu: Future) -> int                       wait + read result
+#   fut_parallel(f, args: Vec) -> FutResults{values: Vec, errors: int}
+#       one thread per element, results in INPUT order; elements beyond
+#       FUT_MAX_THREADS() (64) run inline on the calling thread.
+#
+# This is NOT a ThreadPoolExecutor: there is no executor object, no
+# queue, no shutdown(), no timeouts, no callbacks, no as_completed, and
+# NO process pool (the roadmap §4 decision — multiprocessing is out).
+# A task is a plain function plus one int argument because the language
+# has no closures; capture state in a heap block and pass its address.
+# A failed spawn leaves Future.th.err = 1 and result 0; fut_parallel
+# counts those in `errors` (the slot keeps 0). Nothing raises.
+#
+# Dependencies: stdlib core + stdlib/threading (which brings stdlib/time).
+# Platform support and link flags are exactly threading's. Selfhost-
+# compilable (plain subset + fn pointers).
+
+import * from "stdlib"
+import * from "stdlib/threading"
+
+def FUT_MAX_THREADS() -> int:
+    return 64
+
+struct Future:
+    th: Thread
+    done: int
+
+struct FutResults:
+    values: Vec
+    errors: int
+
+def fut_submit(f: fn(int) -> int, arg: int) -> Future:
+    return Future(th=thread_spawn(f, arg), done=0)
+
+def fut_wait(fu: Future) -> Future:
+    if fu.done == 1:
+        return fu
+    fu.th = thread_join(fu.th)
+    fu.done = 1
+    return fu
+
+def fut_result(fu: Future) -> int:
+    fu = fut_wait(fu)
+    return fu.th.result
+
+def fut_parallel(f: fn(int) -> int, args: Vec) -> FutResults:
+    n = vec_len(args)
+    handles = vec_new()
+    errs = vec_new()
+    values = vec_new()
+    errors = 0
+    i = 0
+    while i < n:
+        a = vec_get(args, i)
+        if i < FUT_MAX_THREADS():
+            t = thread_spawn(f, a)
+            handles = vec_push(handles, t.handle)
+            errs = vec_push(errs, t.err)
+            values = vec_push(values, 0)
+            if t.err != 0:
+                errors = errors + 1
+        else:
+            handles = vec_push(handles, 0)
+            errs = vec_push(errs, 0)
+            values = vec_push(values, f(a))
+        i = i + 1
+    i = 0
+    while i < n:
+        if i < FUT_MAX_THREADS():
+            if vec_get(errs, i) == 0:
+                t = Thread(handle=vec_get(handles, i), err=0, result=0, joined=0)
+                t = thread_join(t)
+                vec_set(values, i, t.result)
+        i = i + 1
+    return FutResults(values=values, errors=errors)

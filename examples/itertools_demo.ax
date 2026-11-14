@@ -1,0 +1,38 @@
+# itertools demo: batch-form iterator tools (no yield in the language).
+
+import * from "stdlib"
+import * from "stdlib/itertools"
+
+def show(v: Vec):
+    n = vec_len(v)
+    i = 0
+    while i < n:
+        print(vec_get(v, i))
+        i = i + 1
+
+def main() -> int:
+    a = it_range(0, 3, 1)
+    b = it_range(10, 12, 1)
+    print("chain:")
+    show(it_chain(a, b))
+    print("product:")
+    pr = it_product(a, b)
+    i = 0
+    while i < pr.n:
+        print(vec_get(pr.left, i), vec_get(pr.right, i))
+        i = i + 1
+    print("permutations of [1,2,3]:")
+    pm = it_permutations(a)
+    i = 0
+    while i < pm.n:
+        show(vecvec_get(pm.rows, i))
+        i = i + 1
+    print("combinations of [1,2,3] choose 2:")
+    cm = it_combinations(a, 2)
+    i = 0
+    while i < cm.n:
+        show(vecvec_get(cm.rows, i))
+        i = i + 1
+    print("cycle:")
+    show(it_cycle(b, 5))
+    return 0

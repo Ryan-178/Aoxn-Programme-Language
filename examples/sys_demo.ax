@@ -1,0 +1,16 @@
+# sys module demo: platform, executable, argv.
+# Run with arguments:  aoxn run examples/sys_demo.ax -- alpha beta
+
+import * from "stdlib/sys"
+
+def main() -> int:
+    print("platform:", sys_platform())
+    print("executable:", sys_executable())
+    print("argc:", sys_argc())
+    v = sys_argv()
+    i = 0
+    while i < vec_len(v):
+        print("arg", i, vec_get_str(v, i))
+        i = i + 1
+    print("maxsize:", sys_maxsize())
+    return 0

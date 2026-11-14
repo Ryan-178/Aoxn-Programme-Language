@@ -295,6 +295,7 @@ fn cross_platform_modules_never_hardcode_a_path_separator() {
         "json.ax",
         "ui.ax",
         "ui_draw.ax",
+        "shutil.ax",
     ];
     // a separator glued onto a path: `... + "\"` or `"\" + ...`
     // (the raw-byte form gets its own rule below, below `for`)
@@ -397,6 +398,9 @@ import * from "stdlib/hashlib.ax"
 import * from "stdlib/bisect.ax"
 import * from "stdlib/heapq.ax"
 import * from "stdlib/math.ax"
+import * from "stdlib/shutil.ax"
+import * from "stdlib/threading.ax"
+import * from "stdlib/futures.ax"
 
 def main() -> int:
     return 0
@@ -407,6 +411,7 @@ def main() -> int:
             r#"import * from "stdlib/net/http.ax"
 import * from "stdlib/net/codec.ax"
 import * from "stdlib/net/sse.ax"
+import * from "stdlib/net.ax"
 
 def main() -> int:
     return 0
@@ -423,6 +428,8 @@ def main() -> int:
         "SetEnvironmentVariableW", "GetCurrentDirectoryW",
         "SetCurrentDirectoryW", "FindFirstFileW", "FindNextFileW", "FindClose",
         "GetModuleFileName", "GetModuleHandle",
+        "CreateThread", "WaitForSingleObject", "GetExitCodeThread",
+        "CloseHandle", "CreateMutexW", "ReleaseMutex",
     ];
 
     for (name, src) in probes {

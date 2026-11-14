@@ -1,0 +1,421 @@
+# net — urllib-style URL layer + a thin HTTP facade (roadmap §2 #16).
+#
+# Two halves:
+#
+# 1. PURE URL tools (no platform calls, work everywhere):
+#      url_parse(s) -> Url{scheme,host,port,path,query,fragment,ok}
+#      url_build(u) -> string
+#      url_quote(s) / url_quote_safe(s, safe)      percent-encode ('/' safe)
+#      url_quote_plus(s)                         space becomes '+'
+#      url_unquote(s) / url_unquote_plus(s)      percent-decode
+#      url_query_parse(qs) -> QueryList{keys,vals,n}   (parallel Vecs)
+#      url_query_encode(keys, vals) -> string
+#
+# 2. HTTP facade over the WinHTTP transport in stdlib/net/http.ax:
+#      http_get(url) -> HttpResponse
+#      http_post(url, body, content_type) -> HttpResponse
+#      http_request(method, url, headers, body) -> HttpResponse
+#      http_ok(r) -> bool                        (200 <= status < 300)
+#    Windows links `-l winhttp`; on other platforms every call answers
+#    err=1 "no transport on this platform" (the transport's own guard).
+#    Timeouts: 5 s connect, 30 s receive. Errors are VALUES (err/errmsg),
+#    never raises. The facade does not expose arbitrary response headers
+#    or follow-redirect policy knobs — use stdlib/net/http.ax directly
+#    (net_http_request, net_header_value, net_http_no_redirects) for that.
+#
+# Python deltas (this is NOT urllib): no urljoin, no urlparse result
+# attributes beyond the six fields, no userinfo (user:pass@host is
+# rejected with ok=0), no netloc/params distinction, no encoding
+# parameter (bytes in, bytes out), no Request objects, no opener stack,
+# no robotparser. url_query_parse keeps duplicate keys in order (Python's
+# parse_qs groups them into lists; there is no list-of-lists here).
+# Every invalid input answers a CLEAN zero Url (ok=0, all fields empty) —
+# never a half-filled one; a scheme-less input keeps the whole input in
+# path, exactly like urlsplit.
+#
+# Dependencies: stdlib core + stdlib/net/http (which brings net/codec).
+# No NEW externs are declared here; the transport's WinHTTP surface is
+# guarded inside its own functions. Selfhost-compilable (plain subset,
+# byte scans via load_u8).
+
+import * from "stdlib"
+import * from "stdlib/net/http"
+
+# ---- URL parsing ----
+
+struct Url:
+    scheme: string
+    host: string
+    port: int
+    path: string
+    query: string
+    fragment: string
+    ok: int
+
+def url_default_port(scheme: string) -> int:
+    if scheme == "http":
+        return 80
+    if scheme == "https":
+        return 443
+    return 0
+
+# a clean failure answer. Every error path returns THIS, never the
+# partially-filled u: a half-set scheme/host on an ok=0 result is a lie
+# (Python's urlsplit raises instead, and the differential test maps that
+# to an all-zero line).
+def url_zero() -> Url:
+    return Url(scheme="", host="", port=0, path="", query="", fragment="", ok=0)
+
+def url_parse(s: string) -> Url:
+    u = url_zero()
+    n = len(s)
+    sep = -1
+    i = 0
+    while i + 2 < n:
+        if load_u8(s, i) == 58 and load_u8(s, i + 1) == 47 and load_u8(s, i + 2) == 47:
+            sep = i
+            i = n
+        else:
+            i = i + 1
+    if sep <= 0:
+        # no scheme: Python's urlsplit puts the WHOLE input in path
+        z = url_zero()
+        z.path = s
+        return z
+    u.scheme = str_sub(s, 0, sep)
+    rest = str_sub(s, sep + 3, n)
+    rn = len(rest)
+    # authority ends at the first '/', '?' or '#'
+    ae = rn
+    i = 0
+    while i < rn:
+        c = load_u8(rest, i)
+        if c == 47 or c == 63 or c == 35:
+            ae = i
+            i = rn
+        else:
+            i = i + 1
+    auth = str_sub(rest, 0, ae)
+    an = len(auth)
+    if an == 0:
+        return url_zero()
+    # userinfo is not supported — refuse rather than silently misparse
+    i = 0
+    while i < an:
+        if load_u8(auth, i) == 64:
+            return url_zero()
+        i = i + 1
+    host = auth
+    port = url_default_port(u.scheme)
+    if load_u8(auth, 0) == 91:
+        # bracketed IPv6 literal: [::1] or [::1]:8080
+        close = -1
+        i = 0
+        while i < an:
+            if load_u8(auth, i) == 93:
+                close = i
+                i = an
+            else:
+                i = i + 1
+        if close < 0:
+            return url_zero()
+        host = str_sub(auth, 1, close)
+        if close + 1 < an:
+            if load_u8(auth, close + 1) != 58:
+                return url_zero()
+            ptxt = str_sub(auth, close + 2, an)
+            port = url_port_digits(ptxt)
+            if port < 0:
+                return url_zero()
+    else:
+        colon = -1
+        i = 0
+        while i < an:
+            if load_u8(auth, i) == 58:
+                colon = i
+                i = an
+            else:
+                i = i + 1
+        if colon >= 0:
+            host = str_sub(auth, 0, colon)
+            ptxt = str_sub(auth, colon + 1, an)
+            if len(ptxt) > 0:
+                port = url_port_digits(ptxt)
+                if port < 0:
+                    return url_zero()
+    if len(host) == 0:
+        return url_zero()
+    u.host = host
+    u.port = port
+    # path / query / fragment out of the tail
+    tail = str_sub(rest, ae, rn)
+    tn = len(tail)
+    qi = -1
+    fi = -1
+    i = 0
+    while i < tn:
+        c = load_u8(tail, i)
+        if c == 63 and qi == -1:
+            qi = i
+        if c == 35 and fi == -1:
+            fi = i
+        i = i + 1
+    pe = tn
+    if qi >= 0:
+        pe = qi
+    if fi >= 0 and fi < pe:
+        pe = fi
+    u.path = str_sub(tail, 0, pe)
+    if len(u.path) == 0:
+        u.path = "/"
+    if qi >= 0:
+        qe = tn
+        if fi >= 0 and fi > qi:
+            qe = fi
+        u.query = str_sub(tail, qi + 1, qe)
+    if fi >= 0:
+        u.fragment = str_sub(tail, fi + 1, tn)
+    u.ok = 1
+    return u
+
+# whole-string decimal port; -1 when empty-safe caller passed a non-digit
+# or the value overflows the 16-bit port range
+def url_port_digits(s: string) -> int:
+    n = len(s)
+    if n == 0:
+        return -1
+    v = 0
+    i = 0
+    while i < n:
+        c = load_u8(s, i)
+        if c < 48 or c > 57:
+            return -1
+        v = v * 10 + (c - 48)
+        if v > 65535:
+            return -1
+        i = i + 1
+    return v
+
+def url_build(u: Url) -> string:
+    if u.ok == 0:
+        return ""
+    w = sb_new(64)
+    w = sb_str(w, u.scheme)
+    w = sb_str(w, "://")
+    bracket = 0
+    hn = len(u.host)
+    i = 0
+    while i < hn:
+        if load_u8(u.host, i) == 58:
+            bracket = 1
+            i = hn
+        else:
+            i = i + 1
+    if bracket == 1:
+        w = sb_byte(w, 91)
+    w = sb_str(w, u.host)
+    if bracket == 1:
+        w = sb_byte(w, 93)
+    if u.port > 0 and u.port != url_default_port(u.scheme):
+        w = sb_byte(w, 58)
+        w = sb_str(w, str(u.port))
+    if len(u.path) == 0:
+        w = sb_byte(w, 47)
+    else:
+        w = sb_str(w, u.path)
+    if len(u.query) > 0:
+        w = sb_byte(w, 63)
+        w = sb_str(w, u.query)
+    if len(u.fragment) > 0:
+        w = sb_byte(w, 35)
+        w = sb_str(w, u.fragment)
+    return sb_text(w)
+
+# ---- percent encoding ----
+
+def url_unreserved(c: int) -> bool:
+    if c >= 48 and c <= 57:
+        return True
+    if c >= 65 and c <= 90:
+        return True
+    if c >= 97 and c <= 122:
+        return True
+    if c == 45 or c == 95 or c == 46 or c == 126:
+        return True
+    return False
+
+def url_in_safe(c: int, safe: string) -> bool:
+    n = len(safe)
+    i = 0
+    while i < n:
+        if load_u8(safe, i) == c:
+            return True
+        i = i + 1
+    return False
+
+def url_hex_digit(n: int) -> int:
+    if n < 10:
+        return 48 + n
+    return 65 + (n - 10)
+
+def url_quote_core(s: string, safe: string, plus: int) -> string:
+    sn = len(s)
+    out = malloc(sn * 3 + 1)
+    oi = 0
+    i = 0
+    while i < sn:
+        c = load_u8(s, i)
+        if plus == 1 and c == 32:
+            store_u8(out, oi, 43)
+            oi = oi + 1
+        elif url_unreserved(c) or url_in_safe(c, safe):
+            store_u8(out, oi, c)
+            oi = oi + 1
+        else:
+            store_u8(out, oi, 37)
+            store_u8(out, oi + 1, url_hex_digit(c / 16))
+            store_u8(out, oi + 2, url_hex_digit(c % 16))
+            oi = oi + 3
+        i = i + 1
+    store_u8(out, oi, 0)
+    return as_string(out)
+
+def url_quote(s: string) -> string:
+    return url_quote_core(s, "/", 0)
+
+def url_quote_safe(s: string, safe: string) -> string:
+    return url_quote_core(s, safe, 0)
+
+def url_quote_plus(s: string) -> string:
+    return url_quote_core(s, "", 1)
+
+def url_hexval(c: int) -> int:
+    if c >= 48 and c <= 57:
+        return c - 48
+    if c >= 65 and c <= 70:
+        return c - 55
+    if c >= 97 and c <= 102:
+        return c - 87
+    return -1
+
+def url_unquote(s: string) -> string:
+    sn = len(s)
+    out = malloc(sn + 1)
+    oi = 0
+    i = 0
+    while i < sn:
+        c = load_u8(s, i)
+        if c == 37 and i + 2 < sn:
+            h = url_hexval(load_u8(s, i + 1))
+            l = url_hexval(load_u8(s, i + 2))
+            if h >= 0 and l >= 0:
+                store_u8(out, oi, h * 16 + l)
+                oi = oi + 1
+                i = i + 3
+            else:
+                store_u8(out, oi, c)
+                oi = oi + 1
+                i = i + 1
+        else:
+            store_u8(out, oi, c)
+            oi = oi + 1
+            i = i + 1
+    store_u8(out, oi, 0)
+    return as_string(out)
+
+def url_unquote_plus(s: string) -> string:
+    sn = len(s)
+    tmp = malloc(sn + 1)
+    i = 0
+    while i < sn:
+        c = load_u8(s, i)
+        if c == 43:
+            store_u8(tmp, i, 32)
+        else:
+            store_u8(tmp, i, c)
+        i = i + 1
+    store_u8(tmp, sn, 0)
+    r = url_unquote(as_string(tmp))
+    free(tmp)
+    return r
+
+# ---- query strings ----
+
+struct QueryList:
+    keys: Vec
+    vals: Vec
+    n: int
+
+def url_query_parse(qs: string) -> QueryList:
+    q = QueryList(keys=vec_new(), vals=vec_new(), n=0)
+    sn = len(qs)
+    i = 0
+    while i < sn:
+        # one segment: up to the next '&'
+        j = i
+        while j < sn and load_u8(qs, j) != 38:
+            j = j + 1
+        if j > i:
+            seg = str_sub(qs, i, j)
+            sl = len(seg)
+            eq = -1
+            k = 0
+            while k < sl:
+                if load_u8(seg, k) == 61:
+                    eq = k
+                    k = sl
+                else:
+                    k = k + 1
+            key = seg
+            val = ""
+            if eq >= 0:
+                key = str_sub(seg, 0, eq)
+                val = str_sub(seg, eq + 1, sl)
+            q.keys = vec_push_str(q.keys, url_unquote_plus(key))
+            q.vals = vec_push_str(q.vals, url_unquote_plus(val))
+            q.n = q.n + 1
+        i = j + 1
+    return q
+
+def url_query_encode(keys: Vec, vals: Vec) -> string:
+    w = sb_new(64)
+    i = 0
+    while i < keys.len:
+        if i > 0:
+            w = sb_byte(w, 38)
+        w = sb_str(w, url_quote_plus(vec_get_str(keys, i)))
+        w = sb_byte(w, 61)
+        w = sb_str(w, url_quote_plus(vec_get_str(vals, i)))
+        i = i + 1
+    return sb_text(w)
+
+# ---- HTTP facade (Windows transport; value errors elsewhere) ----
+
+struct HttpResponse:
+    status: int
+    body: string
+    request_id: string
+    retry_after: int
+    location: string
+    err: int
+    errmsg: string
+
+def http_request(method: string, url: string, headers: string, body: string) -> HttpResponse:
+    r = net_http_request(method, url, headers, body, "aoxn-net/1.0", 5000, 30000)
+    return HttpResponse(status=r.status, body=r.body, request_id=r.request_id, retry_after=r.retry_after, location=r.location, err=r.err, errmsg=r.errmsg)
+
+def http_get(url: string) -> HttpResponse:
+    return http_request("GET", url, "", "")
+
+def http_post(url: string, body: string, content_type: string) -> HttpResponse:
+    h = ""
+    if len(content_type) > 0:
+        h = "Content-Type: " + content_type + "\r\n"
+    return http_request("POST", url, h, body)
+
+def http_ok(r: HttpResponse) -> bool:
+    if r.err != 0:
+        return False
+    if r.status >= 200 and r.status < 300:
+        return True
+    return False

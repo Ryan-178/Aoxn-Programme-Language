@@ -1,0 +1,39 @@
+# collections demo: deque ring buffer, Counter, defaultdict helper.
+
+import * from "stdlib"
+import * from "stdlib/collections"
+
+def main() -> int:
+    dq = dq_new()
+    dq = dq_push_back(dq, 2)
+    dq = dq_push_back(dq, 3)
+    dq = dq_push_front(dq, 1)
+    print("deque len:", dq_len(dq))
+    p = dq_pop_front(dq)
+    dq = p.dq
+    print("pop front:", p.value)
+    p = dq_pop_back(dq)
+    dq = p.dq
+    print("pop back:", p.value)
+    print("remaining:", dq_get(dq, 0))
+    dq_free(dq)
+
+    c = counter_new()
+    c = counter_add(c, "apple")
+    c = counter_add(c, "banana")
+    c = counter_add(c, "apple")
+    c = counter_add_n(c, "cherry", 5)
+    print("apple:", counter_get(c, "apple"))
+    print("missing:", counter_get(c, "durian"))
+    print("total:", counter_total(c))
+    mc = counter_most_common(c, 2)
+    i = 0
+    while i < mc.n:
+        print("top", vec_get_str(mc.keys, i), vec_get(mc.counts, i))
+        i = i + 1
+
+    d: dict[int] = {}
+    print("dd:", dd_int_get(d, "hits", 0))
+    d["hits"] = d["hits"] + 1
+    print("dd after:", dd_int_get(d, "hits", 0))
+    return 0
