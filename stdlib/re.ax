@@ -1,0 +1,853 @@
+# stdlib/re.ax -- a backtracking regular-expression matcher (Python `re` subset)
+#
+# Roadmap: docs/stdlib-todo.md §2 #11 (P1). This is the BACKTRACKING engine the
+# roadmap calls for -- NOT a DFA/NFA. It is deliberately small and anchored to
+# real text-extraction use cases (HTML/XML tag pulling, log scraping), not to
+# being a general regex engine.
+#
+# Supported syntax:
+#   literals, '.' (any byte except '\n'), alternation '|', groups '(...)' and
+#   non-capturing '(?:...)', quantifiers '* + ? {m} {m,} {m,n}' each with a
+#   lazy '?' suffix, anchors '^' '$', word boundaries '\b' '\B', character
+#   classes '[...]' with ranges and negation '[^...]', and the escapes
+#   \d \w \s \D \W \S \n \t \r \f \v \a \0 plus '\\' and escaped punctuation.
+#
+# NOT supported (clear compile error, never a silent misparse):
+#   backreferences \1..\9 in the PATTERN, lookahead/lookbehind '(?=..)' '(?!..)',
+#   named groups, inline flags '(?i)', '\xHH' / '\uHHHH' / '\U........' / '\N{..}',
+#   and the MULTILINE / IGNORECASE / DOTALL flags. '^'/'$' anchor the whole
+#   subject (Python default, no re.M); '$' also matches just before a single
+#   trailing '\n' (Python default). POSIX classes '[[:alpha:]]' are NOT special:
+#   they parse as ordinary literal classes, exactly as Python does.
+#
+# Semantics notes (documented degradations, see docs/stdlib.md):
+#   * Bytes, not characters: '.' and classes operate on BYTES ('len' is strlen),
+#     matching the rest of the stdlib. UTF-8 text matches byte-wise.
+#   * re_findall returns whole matches when the pattern has no group, and
+#     group 1 when it has >=1 group. Python's multi-group tuples are not
+#     representable (no tuple type); use a re_search loop + re_group for those.
+#   * re_sub replacement follows Python: \1..\9 (single digit) and \g<N>
+#     (including \g<0> for the whole match) are backreferences; \0 is a NUL
+#     octal escape (NOT group 0) -- and a NUL truncates every Aoxn string
+#     builtin, so prefer \g<0>; \\ \n \t \r are escapes; any other backslash
+#     escape is left alone (backslash + character), as Python does.
+#   * re_split drops separators (Python without capturing groups).
+#
+# Implementation: the pattern compiles to a flat instruction program (4 i64
+# slots per instruction) and runs on an EXPLICIT backtracking stack (pc, pos,
+# trail-height) with a capture-undo trail -- no recursion, so a '.*' over a long
+# subject cannot overflow the C stack. This is the two-int-stack shape the
+# roadmap prescribes.
+#
+# Plain Aoxn only (Vec / structs / int / string / bool): no dict, None, fn-ptr
+# or raise, so the self-hosted compiler can compile this module (pinned by
+# tests/re.rs). No externs, no link libraries.
+#
+# Instruction opcodes (slot 0 of each 4-slot instruction):
+#   1 CHAR  a=byte            match one exact byte
+#   2 ANY                     match any byte except '\n'
+#   3 CLASS a=bitmap b=neg    match byte in 256-byte bitmap (xor neg)
+#   4 SPLIT a=prefer b=alt    push (alt,pos,trail) then run prefer
+#   5 JMP   a=target
+#   6 SAVE  a=slot            caps[slot]=pos (undo-tracked)
+#   7 MATCH                   success
+#   8 BOL                     assert pos==0
+#   9 EOL                     assert pos==n or before trailing '\n'
+#  10 WORDB                   assert \b
+#  11 NWORDB                  assert \B
+
+import * from "stdlib"
+
+# ---- public types ----
+
+struct Re:
+    prog: Vec
+    ncap: int      # capture groups, excluding group 0
+    nslots: int    # 2*(ncap+1) capture slots
+    err: int       # 0 ok, 1 compile error
+    msg: string
+
+struct ReMatch:
+    ok: int        # 1 matched, 0 no match
+    src: string    # subject the match was found in
+    caps: Vec      # capture slots; -1 = unset
+
+# ---- compiler state (threaded by value; extra results in .res/.err/.msg) ----
+
+struct ReComp:
+    prog: Vec
+    ncap: int
+    err: int
+    msg: string
+    pat: string
+    pi: int
+    plen: int
+    res: int
+
+# ---- instruction helpers ----
+
+def re__here(c: ReComp) -> int:
+    return c.prog.len / 4
+
+def re__emit(c: ReComp, op: int, a: int, b: int) -> ReComp:
+    c.prog = vec_push(c.prog, op)
+    c.prog = vec_push(c.prog, a)
+    c.prog = vec_push(c.prog, b)
+    c.prog = vec_push(c.prog, 0)
+    return c
+
+def re__op(prog: Vec, pc: int) -> int:
+    return vec_get(prog, pc * 4)
+
+def re__a(prog: Vec, pc: int) -> int:
+    return vec_get(prog, pc * 4 + 1)
+
+def re__b(prog: Vec, pc: int) -> int:
+    return vec_get(prog, pc * 4 + 2)
+
+def re__set_a(prog: Vec, pc: int, v: int):
+    vec_set(prog, pc * 4 + 1, v)
+
+def re__set_b(prog: Vec, pc: int, v: int):
+    vec_set(prog, pc * 4 + 2, v)
+
+# Append a 0-based fragment at the current end, rebasing its internal jumps.
+def re__append(c: ReComp, frag: Vec) -> ReComp:
+    base = re__here(c)
+    n = frag.len / 4
+    i = 0
+    while i < n:
+        op = re__op(frag, i)
+        a = re__a(frag, i)
+        b = re__b(frag, i)
+        if op == 4:
+            a = a + base
+            b = b + base
+        elif op == 5:
+            a = a + base
+        c = re__emit(c, op, a, b)
+        i = i + 1
+    return c
+
+def re__fail(c: ReComp, msg: string) -> ReComp:
+    if c.err == 0:
+        c.err = 1
+        c.msg = msg
+    return c
+
+def re__peek(c: ReComp) -> int:
+    if c.pi >= c.plen:
+        return -1
+    return str_get(c.pat, c.pi)
+
+def re__peek2(c: ReComp) -> int:
+    if c.pi + 1 >= c.plen:
+        return -1
+    return str_get(c.pat, c.pi + 1)
+
+def re__adv(c: ReComp) -> ReComp:
+    c.pi = c.pi + 1
+    return c
+
+# ---- escape / class byte sets ----
+
+def re__escape_byte(e: int) -> int:
+    if e == 110:
+        return 10
+    if e == 116:
+        return 9
+    if e == 114:
+        return 13
+    if e == 102:
+        return 12
+    if e == 118:
+        return 11
+    if e == 97:
+        return 7
+    if e == 98:
+        return 8
+    if e == 48:
+        return 0
+    return e
+
+def re__in_set(ch: int, kind: int) -> int:
+    # kind: 100=\d 119=\w 115=\s
+    if kind == 100:
+        if ch >= 48 and ch <= 57:
+            return 1
+        return 0
+    if kind == 119:
+        if ch >= 48 and ch <= 57:
+            return 1
+        if ch >= 65 and ch <= 90:
+            return 1
+        if ch >= 97 and ch <= 122:
+            return 1
+        if ch == 95:
+            return 1
+        return 0
+    if ch == 32 or ch == 9 or ch == 10 or ch == 11 or ch == 12 or ch == 13:
+        return 1
+    return 0
+
+def re__class_set(bm: int, e: int):
+    base = e
+    neg = 0
+    if e == 68:
+        base = 100
+        neg = 1
+    elif e == 87:
+        base = 119
+        neg = 1
+    elif e == 83:
+        base = 115
+        neg = 1
+    i = 0
+    while i < 256:
+        inset = re__in_set(i, base)
+        if neg == 1:
+            inset = 1 - inset
+        if inset == 1:
+            store_u8(bm, i, 1)
+        i = i + 1
+
+def re__class_range(bm: int, lo: int, hi: int):
+    i = lo
+    while i <= hi:
+        store_u8(bm, i, 1)
+        i = i + 1
+
+def re__isword(b: int) -> int:
+    if b >= 48 and b <= 57:
+        return 1
+    if b >= 65 and b <= 90:
+        return 1
+    if b >= 97 and b <= 122:
+        return 1
+    if b == 95:
+        return 1
+    return 0
+
+# ---- parser: alt -> concat -> repeat -> atom ----
+
+def re__alt(c: ReComp) -> ReComp:
+    base = re__here(c)
+    saved = c.prog
+    c.prog = vec_new()
+    c = re__concat(c)
+    left = c.prog
+    c.prog = saved
+    if c.err != 0:
+        c.res = base
+        return c
+    if re__peek(c) != 124:
+        c = re__append(c, left)
+        c.res = base
+        return c
+    split_pc = base
+    c = re__emit(c, 4, 0, 0)
+    left_start = re__here(c)
+    c = re__append(c, left)
+    jmp_pc = re__here(c)
+    c = re__emit(c, 5, 0, 0)
+    right_start = re__here(c)
+    c = re__adv(c)
+    c = re__alt(c)
+    end = re__here(c)
+    re__set_a(c.prog, split_pc, left_start)
+    re__set_b(c.prog, split_pc, right_start)
+    re__set_a(c.prog, jmp_pc, end)
+    c.res = base
+    return c
+
+def re__concat(c: ReComp) -> ReComp:
+    start = re__here(c)
+    while c.err == 0:
+        ch = re__peek(c)
+        if ch == -1 or ch == 124 or ch == 41:
+            break
+        c = re__repeat(c)
+    c.res = start
+    return c
+
+def re__wrap_star(c: ReComp, frag: Vec, lazy: int) -> ReComp:
+    l1 = re__here(c)
+    c = re__emit(c, 4, 0, 0)
+    body = re__here(c)
+    c = re__append(c, frag)
+    c = re__emit(c, 5, l1, 0)
+    exit = re__here(c)
+    if lazy == 1:
+        re__set_a(c.prog, l1, exit)
+        re__set_b(c.prog, l1, body)
+    else:
+        re__set_a(c.prog, l1, body)
+        re__set_b(c.prog, l1, exit)
+    return c
+
+def re__wrap_plus(c: ReComp, frag: Vec, lazy: int) -> ReComp:
+    body = re__here(c)
+    c = re__append(c, frag)
+    sp = re__here(c)
+    c = re__emit(c, 4, 0, 0)
+    exit = re__here(c)
+    if lazy == 1:
+        re__set_a(c.prog, sp, exit)
+        re__set_b(c.prog, sp, body)
+    else:
+        re__set_a(c.prog, sp, body)
+        re__set_b(c.prog, sp, exit)
+    return c
+
+def re__wrap_opt(c: ReComp, frag: Vec, lazy: int) -> ReComp:
+    l1 = re__here(c)
+    c = re__emit(c, 4, 0, 0)
+    body = re__here(c)
+    c = re__append(c, frag)
+    exit = re__here(c)
+    if lazy == 1:
+        re__set_a(c.prog, l1, exit)
+        re__set_b(c.prog, l1, body)
+    else:
+        re__set_a(c.prog, l1, body)
+        re__set_b(c.prog, l1, exit)
+    return c
+
+def re__repeat(c: ReComp) -> ReComp:
+    base = re__here(c)
+    saved = c.prog
+    c.prog = vec_new()
+    c = re__atom(c)
+    frag = c.prog
+    c.prog = saved
+    if c.err != 0:
+        c.res = base
+        return c
+    ch = re__peek(c)
+    if ch == 42 or ch == 43 or ch == 63:
+        c = re__adv(c)
+        lazy = 0
+        if re__peek(c) == 63:
+            lazy = 1
+            c = re__adv(c)
+        if ch == 42:
+            c = re__wrap_star(c, frag, lazy)
+        elif ch == 43:
+            c = re__wrap_plus(c, frag, lazy)
+        else:
+            c = re__wrap_opt(c, frag, lazy)
+        c.res = base
+        return c
+    if ch == 123:
+        m = 0
+        n = -1
+        ok = 1
+        j = c.pi + 1
+        sawdigit = 0
+        while j < c.plen:
+            d = str_get(c.pat, j)
+            if d >= 48 and d <= 57:
+                m = m * 10 + (d - 48)
+                sawdigit = 1
+                j = j + 1
+            else:
+                break
+        if sawdigit == 0:
+            ok = 0
+        if ok == 1 and j < c.plen and str_get(c.pat, j) == 44:
+            j = j + 1
+            n = 0
+            sawd2 = 0
+            while j < c.plen:
+                d = str_get(c.pat, j)
+                if d >= 48 and d <= 57:
+                    n = n * 10 + (d - 48)
+                    sawd2 = 1
+                    j = j + 1
+                else:
+                    break
+            if sawd2 == 0:
+                n = -1
+        if ok == 1 and j < c.plen and str_get(c.pat, j) == 125:
+            j = j + 1
+        else:
+            ok = 0
+        if ok == 0:
+            # not a valid {m,n}: treat '{' as a literal
+            c = re__append(c, frag)
+            c.res = base
+            return c
+        if n != -1 and n < m:
+            return re__fail(c, "repeat min > max")
+        if m > 1000 or n > 1000:
+            return re__fail(c, "repeat count too large")
+        c.pi = j
+        lazy = 0
+        if re__peek(c) == 63:
+            lazy = 1
+            c = re__adv(c)
+        i = 0
+        while i < m:
+            c = re__append(c, frag)
+            i = i + 1
+        if n == -1:
+            c = re__wrap_star(c, frag, lazy)
+        else:
+            extra = n - m
+            i = 0
+            while i < extra:
+                c = re__wrap_opt(c, frag, lazy)
+                i = i + 1
+        c.res = base
+        return c
+    c = re__append(c, frag)
+    c.res = base
+    return c
+
+def re__class(c: ReComp) -> ReComp:
+    c = re__adv(c)
+    neg = 0
+    if re__peek(c) == 94:
+        neg = 1
+        c = re__adv(c)
+    bm = buf_new(256)
+    first = 1
+    while c.err == 0:
+        ch = re__peek(c)
+        if ch == -1:
+            return re__fail(c, "unterminated character class")
+        if ch == 93 and first == 0:
+            c = re__adv(c)
+            break
+        first = 0
+        if ch == 92:
+            c = re__adv(c)
+            e = re__peek(c)
+            if e == -1:
+                return re__fail(c, "trailing backslash in class")
+            c = re__adv(c)
+            if e == 100 or e == 119 or e == 115 or e == 68 or e == 87 or e == 83:
+                re__class_set(bm, e)
+                continue
+            if e == 120 or e == 117 or e == 85 or e == 78:
+                return re__fail(c, "hex/unicode escapes are not supported")
+            lo = re__escape_byte(e)
+        else:
+            lo = ch
+            c = re__adv(c)
+        if re__peek(c) == 45 and re__peek2(c) != 93 and re__peek2(c) != -1:
+            c = re__adv(c)
+            hc = re__peek(c)
+            if hc == 92:
+                c = re__adv(c)
+                e2 = re__peek(c)
+                if e2 == -1:
+                    return re__fail(c, "trailing backslash in class")
+                c = re__adv(c)
+                hi = re__escape_byte(e2)
+            else:
+                hi = hc
+                c = re__adv(c)
+            if hi < lo:
+                return re__fail(c, "bad character range")
+            re__class_range(bm, lo, hi)
+        else:
+            store_u8(bm, lo, 1)
+    c = re__emit(c, 3, bm, neg)
+    return c
+
+def re__atom(c: ReComp) -> ReComp:
+    start = re__here(c)
+    ch = re__peek(c)
+    if ch == 40:
+        c = re__adv(c)
+        if re__peek(c) == 63:
+            c = re__adv(c)
+            if re__peek(c) == 58:
+                c = re__adv(c)
+                c = re__alt(c)
+                if c.err != 0:
+                    return c
+                if re__peek(c) != 41:
+                    return re__fail(c, "missing )")
+                c = re__adv(c)
+                c.res = start
+                return c
+            return re__fail(c, "unsupported group flags (only (?:...) supported)")
+        c.ncap = c.ncap + 1
+        g = c.ncap
+        c = re__emit(c, 6, 2 * g, 0)
+        c = re__alt(c)
+        if c.err != 0:
+            return c
+        if re__peek(c) != 41:
+            return re__fail(c, "missing )")
+        c = re__adv(c)
+        c = re__emit(c, 6, 2 * g + 1, 0)
+        c.res = start
+        return c
+    if ch == 91:
+        c = re__class(c)
+        c.res = start
+        return c
+    if ch == 46:
+        c = re__adv(c)
+        c = re__emit(c, 2, 0, 0)
+        c.res = start
+        return c
+    if ch == 94:
+        c = re__adv(c)
+        c = re__emit(c, 8, 0, 0)
+        c.res = start
+        return c
+    if ch == 36:
+        c = re__adv(c)
+        c = re__emit(c, 9, 0, 0)
+        c.res = start
+        return c
+    if ch == 92:
+        c = re__adv(c)
+        e = re__peek(c)
+        if e == -1:
+            return re__fail(c, "trailing backslash")
+        c = re__adv(c)
+        if e == 98:
+            c = re__emit(c, 10, 0, 0)
+            c.res = start
+            return c
+        if e == 66:
+            c = re__emit(c, 11, 0, 0)
+            c.res = start
+            return c
+        if e == 100 or e == 119 or e == 115 or e == 68 or e == 87 or e == 83:
+            bm = buf_new(256)
+            re__class_set(bm, e)
+            c = re__emit(c, 3, bm, 0)
+            c.res = start
+            return c
+        if e >= 49 and e <= 57:
+            return re__fail(c, "backreferences are not supported")
+        if e == 120 or e == 117 or e == 85 or e == 78:
+            return re__fail(c, "hex/unicode escapes are not supported")
+        c = re__emit(c, 1, re__escape_byte(e), 0)
+        c.res = start
+        return c
+    if ch == 42 or ch == 43 or ch == 63:
+        return re__fail(c, "nothing to repeat")
+    if ch == -1 or ch == 124 or ch == 41:
+        return re__fail(c, "unexpected end of pattern")
+    c = re__adv(c)
+    c = re__emit(c, 1, ch, 0)
+    c.res = start
+    return c
+
+# ---- public compile ----
+
+def re_compile(pattern: string) -> Re:
+    c = ReComp(prog=vec_new(), ncap=0, err=0, msg="", pat=pattern, pi=0,
+               plen=len(pattern), res=0)
+    c = re__emit(c, 6, 0, 0)
+    c = re__alt(c)
+    if c.err != 0:
+        return Re(prog=vec_new(), ncap=0, nslots=0, err=1, msg=c.msg)
+    if c.pi != c.plen:
+        return Re(prog=vec_new(), ncap=0, nslots=0, err=1,
+                  msg="unexpected character in pattern")
+    c = re__emit(c, 6, 1, 0)
+    c = re__emit(c, 7, 0, 0)
+    return Re(prog=c.prog, ncap=c.ncap, nslots=2 * (c.ncap + 1), err=0, msg="")
+
+# ---- the backtracking VM ----
+
+def re__run(r: Re, s: string, start: int) -> ReMatch:
+    n = len(s)
+    caps = vec_new()
+    i = 0
+    while i < r.nslots:
+        caps = vec_push(caps, -1)
+        i = i + 1
+    bt = vec_new()
+    trail = vec_new()
+    pc = 0
+    pos = start
+    ok = 0
+    while ok == 0:
+        op = re__op(r.prog, pc)
+        step = 1
+        if op == 7:
+            ok = 1
+        elif op == 1:
+            if pos < n and str_get(s, pos) == re__a(r.prog, pc):
+                pos = pos + 1
+                pc = pc + 1
+            else:
+                step = 0
+        elif op == 2:
+            if pos < n and str_get(s, pos) != 10:
+                pos = pos + 1
+                pc = pc + 1
+            else:
+                step = 0
+        elif op == 3:
+            if pos < n:
+                b = str_get(s, pos)
+                inset = load_u8(re__a(r.prog, pc), b)
+                if re__b(r.prog, pc) == 1:
+                    inset = 1 - inset
+                if inset == 1:
+                    pos = pos + 1
+                    pc = pc + 1
+                else:
+                    step = 0
+            else:
+                step = 0
+        elif op == 4:
+            bt = vec_push(bt, re__b(r.prog, pc))
+            bt = vec_push(bt, pos)
+            bt = vec_push(bt, trail.len)
+            pc = re__a(r.prog, pc)
+        elif op == 5:
+            pc = re__a(r.prog, pc)
+        elif op == 6:
+            slot = re__a(r.prog, pc)
+            trail = vec_push(trail, slot)
+            trail = vec_push(trail, vec_get(caps, slot))
+            vec_set(caps, slot, pos)
+            pc = pc + 1
+        elif op == 8:
+            if pos == 0:
+                pc = pc + 1
+            else:
+                step = 0
+        elif op == 9:
+            if pos == n or (pos == n - 1 and str_get(s, pos) == 10):
+                pc = pc + 1
+            else:
+                step = 0
+        elif op == 10 or op == 11:
+            prev = 0
+            if pos > 0:
+                prev = re__isword(str_get(s, pos - 1))
+            cur = 0
+            if pos < n:
+                cur = re__isword(str_get(s, pos))
+            boundary = 0
+            if prev != cur:
+                boundary = 1
+            want = boundary
+            if op == 11:
+                want = 1 - boundary
+            if want == 1:
+                pc = pc + 1
+            else:
+                step = 0
+        else:
+            step = 0
+        if step == 0:
+            if bt.len == 0:
+                break
+            th = vec_get(bt, bt.len - 1)
+            pos = vec_get(bt, bt.len - 2)
+            pc = vec_get(bt, bt.len - 3)
+            bt = vec_pop(bt)
+            bt = vec_pop(bt)
+            bt = vec_pop(bt)
+            while trail.len > th:
+                old = vec_get(trail, trail.len - 1)
+                slot = vec_get(trail, trail.len - 2)
+                vec_set(caps, slot, old)
+                trail = vec_pop(trail)
+                trail = vec_pop(trail)
+    return ReMatch(ok=ok, src=s, caps=caps)
+
+# ---- public matching API ----
+
+def re_exec(r: Re, s: string, start: int) -> ReMatch:
+    if r.err != 0:
+        return ReMatch(ok=0, src=s, caps=vec_new())
+    return re__run(r, s, start)
+
+def re_search(r: Re, s: string, start: int) -> ReMatch:
+    if r.err != 0:
+        return ReMatch(ok=0, src=s, caps=vec_new())
+    n = len(s)
+    pos = start
+    while pos <= n:
+        m = re__run(r, s, pos)
+        if m.ok == 1:
+            return m
+        pos = pos + 1
+    return ReMatch(ok=0, src=s, caps=vec_new())
+
+def re_match(pattern: string, s: string) -> ReMatch:
+    r = re_compile(pattern)
+    return re_exec(r, s, 0)
+
+def re_fullmatch(pattern: string, s: string) -> ReMatch:
+    r = re_compile(pattern)
+    m = re_exec(r, s, 0)
+    if m.ok == 1 and re_end(m, 0) == len(s):
+        return m
+    return ReMatch(ok=0, src=s, caps=vec_new())
+
+def re_group(m: ReMatch, g: int) -> string:
+    if m.ok == 0:
+        return ""
+    if g < 0 or 2 * g + 1 >= m.caps.len:
+        return ""
+    a = vec_get(m.caps, 2 * g)
+    b = vec_get(m.caps, 2 * g + 1)
+    if a < 0 or b < 0:
+        return ""
+    return str_sub(m.src, a, b)
+
+def re_start(m: ReMatch, g: int) -> int:
+    if m.ok == 0:
+        return -1
+    if g < 0 or 2 * g >= m.caps.len:
+        return -1
+    return vec_get(m.caps, 2 * g)
+
+def re_end(m: ReMatch, g: int) -> int:
+    if m.ok == 0:
+        return -1
+    if g < 0 or 2 * g + 1 >= m.caps.len:
+        return -1
+    return vec_get(m.caps, 2 * g + 1)
+
+def re_groups(m: ReMatch) -> int:
+    if m.ok == 0:
+        return 0
+    return m.caps.len / 2 - 1
+
+def re_findall(pattern: string, s: string) -> Vec:
+    r = re_compile(pattern)
+    out = vec_new()
+    if r.err != 0:
+        return out
+    n = len(s)
+    pos = 0
+    while pos <= n:
+        m = re_search(r, s, pos)
+        if m.ok == 0:
+            break
+        a = re_start(m, 0)
+        b = re_end(m, 0)
+        if r.ncap == 0:
+            out = vec_push_str(out, str_sub(s, a, b))
+        else:
+            out = vec_push_str(out, re_group(m, 1))
+        if b == a:
+            pos = a + 1
+        else:
+            pos = b
+    return out
+
+def re__expand(w: StrBuf, repl: string, m: ReMatch) -> StrBuf:
+    n = len(repl)
+    i = 0
+    while i < n:
+        ch = str_get(repl, i)
+        if ch == 92 and i + 1 < n:
+            e = str_get(repl, i + 1)
+            if e >= 49 and e <= 57:
+                w = sb_str(w, re_group(m, e - 48))
+                i = i + 2
+                continue
+            if e == 48:
+                # Python: \0 is an octal NUL escape, NOT group 0.
+                w = sb_byte(w, 0)
+                i = i + 2
+                continue
+            if e == 103 and i + 2 < n and str_get(repl, i + 2) == 60:
+                # \g<N> backreference (including \g<0> = whole match)
+                j = i + 3
+                num = 0
+                saw = 0
+                while j < n:
+                    d = str_get(repl, j)
+                    if d >= 48 and d <= 57:
+                        num = num * 10 + (d - 48)
+                        saw = 1
+                        j = j + 1
+                    else:
+                        break
+                if saw == 1 and j < n and str_get(repl, j) == 62:
+                    w = sb_str(w, re_group(m, num))
+                    i = j + 1
+                    continue
+            if e == 110:
+                w = sb_byte(w, 10)
+                i = i + 2
+                continue
+            if e == 116:
+                w = sb_byte(w, 9)
+                i = i + 2
+                continue
+            if e == 114:
+                w = sb_byte(w, 13)
+                i = i + 2
+                continue
+            if e == 92:
+                w = sb_byte(w, 92)
+                i = i + 2
+                continue
+            # Unknown escapes are left alone (backslash + char), as Python does.
+            w = sb_byte(w, 92)
+            w = sb_byte(w, e)
+            i = i + 2
+            continue
+        w = sb_byte(w, ch)
+        i = i + 1
+    return w
+
+def re_sub(pattern: string, repl: string, s: string) -> string:
+    r = re_compile(pattern)
+    if r.err != 0:
+        return s
+    n = len(s)
+    w = sb_new(n + 16)
+    pos = 0
+    last = 0
+    while pos <= n:
+        m = re_search(r, s, pos)
+        if m.ok == 0:
+            break
+        a = re_start(m, 0)
+        b = re_end(m, 0)
+        w = sb_str(w, str_sub(s, last, a))
+        w = re__expand(w, repl, m)
+        last = b
+        if b == a:
+            if a < n:
+                w = sb_byte(w, str_get(s, a))
+                last = a + 1
+            pos = a + 1
+        else:
+            pos = b
+    w = sb_str(w, str_sub(s, last, n))
+    return sb_text(w)
+
+def re_split(pattern: string, s: string) -> Vec:
+    r = re_compile(pattern)
+    out = vec_new()
+    if r.err != 0:
+        out = vec_push_str(out, s)
+        return out
+    n = len(s)
+    pos = 0
+    last = 0
+    while pos <= n:
+        m = re_search(r, s, pos)
+        if m.ok == 0:
+            break
+        a = re_start(m, 0)
+        b = re_end(m, 0)
+        out = vec_push_str(out, str_sub(s, last, a))
+        last = b
+        if b == a:
+            pos = a + 1
+        else:
+            pos = b
+    out = vec_push_str(out, str_sub(s, last, n))
+    return out

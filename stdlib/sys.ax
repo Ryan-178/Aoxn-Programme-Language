@@ -1,0 +1,47 @@
+# sys — system-specific parameters (roadmap §2 #24, subset).
+#
+# argv is CLOSED since v0.42.0 (`argc()` / `arg(i)`), so this module is a thin
+# wrapper over the builtins, not a blocked item:
+#   sys_argv()       -> Vec of the command-line arguments (string slots)
+#   sys_argc()       -> argument count (excludes the program path)
+#   sys_platform()   -> "windows" / "linux" / "other" (compile-time fold)
+#   sys_executable() -> absolute path of the running executable
+#   sys_exit(code)   -> terminate now
+#   sys_maxsize()    -> largest signed 64-bit int
+#
+# Deliberately NOT here:
+#   sys.stdin / stdout / stderr objects — there is no console-input builtin
+#     and the runtime writes to stdout; `print` is the output channel.
+#   sys.version — the compiler answers `aoxn version`; a library constant
+#     would drift a release behind.
+#   sys.path / modules / environ — imports are compile-time; environment
+#     variables live in `stdlib/os` (os_getenv / os_setenv).
+#
+# Dependencies: stdlib core only (Vec, exe_path). No externs, no -l flags.
+# Selfhost-compilable (plain subset).
+
+import * from "stdlib"
+
+def sys_argv() -> Vec:
+    v = vec_new()
+    n = argc()
+    i = 0
+    while i < n:
+        v = vec_push_str(v, arg(i))
+        i = i + 1
+    return v
+
+def sys_argc() -> int:
+    return argc()
+
+def sys_platform() -> string:
+    return target_os()
+
+def sys_executable() -> string:
+    return exe_path()
+
+def sys_exit(code: int):
+    exit(code)
+
+def sys_maxsize() -> int:
+    return 9223372036854775807

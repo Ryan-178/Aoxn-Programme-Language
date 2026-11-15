@@ -1,0 +1,192 @@
+# collections — container tools (roadmap §2 #12, degraded form).
+#
+# Python's collections is class based; Aoxn's flat equivalents:
+#
+#   deque   — ring buffer over raw 8-byte slots (int, or string via as_ptr
+#             views): dq_new / dq_push_back / dq_push_front / dq_pop_front /
+#             dq_pop_back / dq_get / dq_len / dq_free (+ _str pair).
+#             Pops answer DqPop{dq, value, ok}; ok=0 on empty, state unchanged.
+#             EVERY mutator returns the live Deque (write-back discipline).
+#   Counter — over dict[int] (heap handle, shared by copies):
+#             counter_new / counter_add / counter_add_n / counter_get /
+#             counter_total / counter_most_common(d, n) -> CountList.
+#             most_common sorts by count descending, ties keep insertion
+#             order; n < 0 means all.
+#   defaultdict — no closures/factories exist, so the default is passed per
+#             call: dd_int_get(d, key, default) / dd_str_get(d, key, default)
+#             insert-and-return on a missing key.
+#   OrderedDict — dict[V] ALREADY preserves insertion order (the language
+#             guarantees it), so no wrapper type is needed; the one extra
+#             operation, move-to-end, is od_move_to_end_i / od_move_to_end_s
+#             (delete + reinsert).
+#
+# NOT here: namedtuple (no reflection), ChainMap (no namespace objects).
+# deque indexing is unchecked C-style, like Vec.
+#
+# Dependencies: stdlib core (Vec, dict, raw memory). Uses v0.40.0 dict[V]
+# (covered by the selfhost front end). No externs, no -l flags.
+# Selfhost-compilable (plain subset).
+
+import * from "stdlib"
+
+struct Deque:
+    data: int
+    cap: int
+    head: int
+    count: int
+
+struct DqPop:
+    dq: Deque
+    value: int
+    ok: int
+
+struct CountList:
+    keys: Vec
+    counts: Vec
+    n: int
+
+def dq_new() -> Deque:
+    return Deque(data=0, cap=0, head=0, count=0)
+
+def dq_grow(dq: Deque) -> Deque:
+    newcap = dq.cap * 2
+    if newcap == 0:
+        newcap = 8
+    nd = malloc(newcap * 8)
+    i = 0
+    while i < dq.count:
+        store_i64(nd + i * 8, load_i64(dq.data + ((dq.head + i) % dq.cap) * 8))
+        i = i + 1
+    free(dq.data)
+    dq.data = nd
+    dq.cap = newcap
+    dq.head = 0
+    return dq
+
+def dq_push_back(dq: Deque, v: int) -> Deque:
+    if dq.count == dq.cap:
+        dq = dq_grow(dq)
+    idx = (dq.head + dq.count) % dq.cap
+    store_i64(dq.data + idx * 8, v)
+    dq.count = dq.count + 1
+    return dq
+
+def dq_push_front(dq: Deque, v: int) -> Deque:
+    if dq.count == dq.cap:
+        dq = dq_grow(dq)
+    dq.head = (dq.head + dq.cap - 1) % dq.cap
+    store_i64(dq.data + dq.head * 8, v)
+    dq.count = dq.count + 1
+    return dq
+
+def dq_pop_front(dq: Deque) -> DqPop:
+    if dq.count == 0:
+        return DqPop(dq=dq, value=0, ok=0)
+    v = load_i64(dq.data + dq.head * 8)
+    dq.head = (dq.head + 1) % dq.cap
+    dq.count = dq.count - 1
+    return DqPop(dq=dq, value=v, ok=1)
+
+def dq_pop_back(dq: Deque) -> DqPop:
+    if dq.count == 0:
+        return DqPop(dq=dq, value=0, ok=0)
+    idx = (dq.head + dq.count - 1) % dq.cap
+    v = load_i64(dq.data + idx * 8)
+    dq.count = dq.count - 1
+    return DqPop(dq=dq, value=v, ok=1)
+
+def dq_get(dq: Deque, i: int) -> int:
+    return load_i64(dq.data + ((dq.head + i) % dq.cap) * 8)
+
+def dq_len(dq: Deque) -> int:
+    return dq.count
+
+def dq_free(dq: Deque):
+    free(dq.data)
+
+def dq_push_back_str(dq: Deque, s: string) -> Deque:
+    return dq_push_back(dq, as_ptr(s))
+
+def dq_push_front_str(dq: Deque, s: string) -> Deque:
+    return dq_push_front(dq, as_ptr(s))
+
+def dq_get_str(dq: Deque, i: int) -> string:
+    return as_string(dq_get(dq, i))
+
+def counter_new() -> dict[int]:
+    d: dict[int] = {}
+    return d
+
+def counter_add(d: dict[int], key: string) -> dict[int]:
+    if dict_has(d, key):
+        d[key] = d[key] + 1
+    else:
+        d[key] = 1
+    return d
+
+def counter_add_n(d: dict[int], key: string, n: int) -> dict[int]:
+    if dict_has(d, key):
+        d[key] = d[key] + n
+    else:
+        d[key] = n
+    return d
+
+def counter_get(d: dict[int], key: string) -> int:
+    if dict_has(d, key):
+        return d[key]
+    return 0
+
+def counter_total(d: dict[int]) -> int:
+    t = 0
+    for k in d:
+        t = t + d[k]
+    return t
+
+def counter_most_common(d: dict[int], n: int) -> CountList:
+    keys = vec_new()
+    counts = vec_new()
+    for k in d:
+        keys = vec_push_str(keys, k)
+        counts = vec_push(counts, d[k])
+    m = vec_len(keys)
+    i = 0
+    while i < m:
+        best = i
+        j = i + 1
+        while j < m:
+            if vec_get(counts, j) > vec_get(counts, best):
+                best = j
+            j = j + 1
+        if best != i:
+            tk = vec_get_str(keys, i)
+            vec_set_str(keys, i, vec_get_str(keys, best))
+            vec_set_str(keys, best, tk)
+            tc = vec_get(counts, i)
+            vec_set(counts, i, vec_get(counts, best))
+            vec_set(counts, best, tc)
+        i = i + 1
+    if n >= 0 and n < m:
+        m = n
+    return CountList(keys=keys, counts=counts, n=m)
+
+def dd_int_get(d: dict[int], key: string, default: int) -> int:
+    if not dict_has(d, key):
+        d[key] = default
+    return d[key]
+
+def dd_str_get(d: dict[string], key: string, default: string) -> string:
+    if not dict_has(d, key):
+        d[key] = default
+    return d[key]
+
+def od_move_to_end_i(d: dict[int], key: string):
+    if dict_has(d, key):
+        v = d[key]
+        dict_del(d, key)
+        d[key] = v
+
+def od_move_to_end_s(d: dict[string], key: string):
+    if dict_has(d, key):
+        v = d[key]
+        dict_del(d, key)
+        d[key] = v

@@ -64,18 +64,48 @@ cherry-picking, not `git add .`), then `git commit`, then verify with
   `.ps1`/`.ax`/log files) so they do not land in history; do not delete files
   authored by the user.
 
-Session end (merge back + push, 鍚堝苟鍚庣粺涓€鎺ㄩ€?鈥?main stays current):
+Session end (push branch + open a PR, 推送分支并开 PR — main is protected):
+**GitHub ruleset (changed directly on github.com, 2026-11-13)**: the default
+branch `main` REQUIRES a pull request before merging; direct pushes to
+`main` and force pushes are BLOCKED, and ref deletion is restricted.
+**Required approvals is 0** (set by the user the same day: with a single
+maintainer account GitHub refuses to let the PR author review or approve
+their own PR — "Review cannot be requested from pull request author" —
+so a 1-approval gate deadlocked every session). The old "ff-merge into
+main + `git push`" flow no longer works — do not attempt it.
 1. In the MAIN worktree require a clean `git status` (tracked files). If
    another session holds uncommitted work there, STOP and let the user
-   coordinate 鈥?never merge on top of a dirty main.
-2. `git merge --ff-only <slug>` in the main worktree (if it cannot
-   fast-forward: `git rebase main` in the bench, re-run tests there,
-   retry). Then `git push`, keeping
-   `github.com/AlonechatWorkspace/Aoxn-language` in sync (remote moved
-   from `Ryan-178` on 2026-10-01).
-3. Clean up: `git worktree remove D:/ailanguage-bench/<slug>` and
-   `git branch -d <slug>`. A session paused mid-work keeps its bench and
-   branch until the work lands.
+   coordinate — never build on top of a dirty main.
+2. In the bench, bring the branch up to date FIRST (`git rebase main`, re-run
+   tests), then `git push -u origin <slug>`. Pushing a NON-main branch is
+   allowed. Because force pushes are blocked, do any rebasing BEFORE the
+   first push; after pushing, integrate new main commits with a merge, not a
+   rebase+force-push.
+3. Open a pull request `<slug> -> main` on the CANONICAL repo
+   `Ryan-178/Aoxn-Programme-Language`. **GitHub MCP writes return an
+   output-schema error (`data must have required property 'result'`)
+   even when they SUCCEED — the error is a broken response wrapper,
+   not a reliable failure signal. Verified 2026-11-13:
+   `merge_pull_request` merged PR #8 despite the error, while
+   `create_pull_request` did NOT create a PR across 4 attempts.
+   After ANY write error, VERIFY with a read (`list_pull_requests`)
+   before retrying or falling back; never blind-retry a write.**
+   `gh` is not installed and direct `api.github.com` curl is blocked
+   on this machine; if create really did not land, hand the user the
+   compare URL
+   `https://github.com/Ryan-178/Aoxn-Programme-Language/compare/main...<slug>?expand=1`.
+   With required approvals at 0 the PR author merges their own PR
+   (Merge / Squash / Rebase are all enabled; `merge_pull_request`
+   works — verify the merge with a read afterwards); the agent still
+   never pushes to main directly or bypasses the PR requirement. If
+   the ruleset ever raises the approval count again, a human OTHER
+   than the author must approve.
+4. After the PR merges: in the main worktree `git pull --ff-only`, then clean
+   up `git worktree remove D:/ailanguage-bench/<slug>` and
+   `git branch -d <slug>` (local cleanup). Remote feature-branch deletion may
+   be restricted by the ruleset — leave it to the user or to GitHub's
+   delete-on-merge. A session paused mid-work keeps its bench and branch
+   until the work lands.
 
 **README/SECURITY 閲嶅啓 / README & SECURITY rewrite (user instruction,
 standing)**: after every conversation that changes the project, REWRITE
@@ -449,6 +479,17 @@ rejects fn-pointer parameters (threads go through
 | `"stdlib/csv"` | RFC 4180 parse/serialize: `csv_parse`/`csv_read_file` -> `CsvTable`, `csv_rows/cols/get/max_cols`, `csv_dumps` (CRLF) / `csv_dumps_lf`, `csv_row_text`, `csv_free`; errors are values (`err`/`msg`/`line`/`col`, no exceptions) |
 | `"stdlib/random"` | deterministic non-crypto MINSTD: `random_seed/next/below/range`, `random_float`, `random_float_next/range` (result in `.fval`); rejection sampling, error leaves state unchanged; no CSPRNG API |
 | `"stdlib/socket"` | minimal blocking IPv4 TCP: `socket_init`, `socket_connect`, `socket_listen`, `socket_accept`, `socket_send_bytes/str`, `socket_recv`, `socket_recv_all/line`, `socket_close`; `Sock{fd,err,msg}` values; Windows `-l ws2_32`, POSIX no extra lib; no DNS/UDP/IPv6/TLS/timeouts, no SO_REUSEADDR |
+| `"stdlib/re"` | backtracking Python-`re` subset: `re_compile/exec/search/match/fullmatch/group/start/end/groups/findall/sub/split`; `* + ? \| () (?:) [] {m,n} .`, classes, lazy, anchors, `\b\d\w\s`; byte-wise; backrefs/lookaround/flags/`\xHH` are clean compile errors; no externs, selfhost-compilable |
+| `"stdlib/shutil"` | real filesystem ops: `shutil_copyfile/copytree/move/rmtree` -> bool; copytree/rmtree refuse reparse points (symlinks/junctions) and cap recursion at `SHUTIL_MAX_DEPTH()` (64); move = copy+delete fallback |
+| `"stdlib/collections"` | `Deque` (int slots, `dq_push_back/front`, `dq_pop_*` -> `DqPop{ok,val}`, write-back), `counter_*` over `dict[int]` (`counter_most_common` -> `CountList`), `dd_int_get`/`dd_str_get` defaults, `od_move_to_end_*` |
+| `"stdlib/itertools"` | eager Vec forms: `it_chain/repeat/range/take/count/cycle/accumulate`, `it_zip/product` -> `PairList`, `it_permutations/it_combinations` -> `PermList`; no lazy iterators (no generators in the language) |
+| `"stdlib/net"` | urllib layer: `url_parse` -> `Url{ok,scheme,host,port,path,query,fragment}` (invalid input = clean zero Url), `url_build`, `url_quote/_plus/_safe`, `url_unquote/_plus`, `url_query_parse/encode`; HTTP facade `http_get/http_post/http_request/http_ok` over `net/http` (Windows `-l winhttp`) |
+| `"stdlib/threading"` | real OS threads: `thread_spawn(f: fn(int) -> int, arg)` -> `Thread`, `thread_join` (write-back, result in `.result`), `mutex_new/lock/unlock/free`, `thread_sleep_ms`; no closures -- state rides a heap address |
+| `"stdlib/futures"` | `fut_submit/fut_wait/fut_result`, `fut_parallel(f, args: Vec)` -> `FutResults`; at most `FUT_MAX_THREADS()` (64) workers, overflow runs inline |
+| `"stdlib/sys"` | `sys_argv()` -> Vec, `sys_argc`, `sys_platform`, `sys_executable`, `sys_exit`, `sys_maxsize` (no modules/paths/recursion-limit machinery) |
+| `"stdlib/argparse"` | `ap_new/ap_opt/ap_flag/ap_pos` (write-back), `ap_parse(ap, args: Vec)` -> `ArgResult{err,values: dict[string],help_requested}`, `ap_get/ap_to_int/ap_help`; `--name=v`, `--name v`, `-s`, `--` terminator; no subparsers |
+| `"stdlib/logging"` | `log_new(name)` -> `Logger` (write-back `log_set_level/log_add_file/log_set_stdout`), `log_debug/info/warning/error/critical`; levels `LOG_*()` 10-50; file sink APPENDS; line `YYYY-MM-DD HH:MM:SS LEVEL name: msg`; no handlers/formatters/filters |
+| `"stdlib/unittest"` | function-based: `ut_suite`, `ut_add(s, name, f: fn() -> void)` (write-back), `ut_run` -> `TestReport`, `ut_assert_true/eq_i/eq_s/eq_f/raises` (raise-based, caught per test); no classes/fixtures; `aoxn test` runner still missing |
 | `"stdlib/ui_win"` (Windows: `-l user32 -l gdi32`) or `"stdlib/ui_x11"` (Linux) -- ONE import pulls the whole toolkit (`ui.ax` core + `ui_draw.ax` widget layer + the backend) | immediate-mode widget toolkit -- `docs/ui.md`, `examples/ui_gallery.ax` |
 | `"stdlib/net/http"` (Windows: `-l winhttp`) / `"stdlib/net/codec"` / `"stdlib/net/sse"` | HTTP transport, UTF-16/base64/url-encode helpers, SSE frames |
 | `"stdlib/openai/client"` / `"stdlib/anthropic/client"` (+ `blocks`, `tools`) | the two API SDKs (`oa_*` / `an_*`) -- `docs/openai-sdk.md`, `docs/anthropic-sdk.md` |
@@ -505,23 +546,22 @@ stdin (no `input()`); `inf`/`nan` literals (`math.NaN()` / `math.Inf()`);
   compile the generated C and to link); since v0.55.0 snapshot 5, **rustc is a
   second, OPTIONAL toolchain** for `.rs` imports (see the Rust interoperability
   section). clang Resolution order: `AOXN_CLANG` env 鈫?PATH 鈫?repo-local
-  `LLVM\bin\clang.exe` 鈫?`C:\Program Files\LLVM\bin\clang.exe`. The winget
-  "LLVM 23.1.0" install on this machine survives purely as clang's home 鈥?
+  `LLVM\bin\clang.exe` 鈫?`C:\Program Files\LLVM\bin\clang.exe`. The
+  `E:\llvm` install on this machine survives purely as clang's home 鈥?
   no LLVM library is probed, linked, or shipped since v0.29.0 (`build.rs`,
   `src/llvm.rs`, `src/codegen.rs` are deleted).
-- **On this dev machine clang lives at `C:\Program Files\LLVM\bin\clang.exe`**
-  (LLVM 23.1.0, verified 2026-11-10). The old `E:\llvm` install (23.1.2) is
-  GONE — `E:\llvm\bin\clang.exe` no longer exists. `find_clang` discovers the
-  new location through its `C:\Program Files\LLVM` fallback, so bare
-  invocations work; when setting `AOXN_CLANG` explicitly use
-  `AOXN_CLANG="C:/Program Files/LLVM/bin/clang.exe"` (quote it — the path has
-  a space). **A stale `AOXN_CLANG=E:/llvm/bin/clang.exe` is a split failure**:
-  the Rust resolver falls back and every Rust-side test passes, but the
-  selfhost driver uses the env value VERBATIM (`_spawnvp`), so all five
-  selfhost driver tests fail with "clang failed ... exit 127". That exact
-  signature means "the AOXN_CLANG path is dead", not a codegen bug. rustc is
-  at `~/.cargo/bin/rustc` (rustup shim); Git Bash needs
-  `PATH="$HOME/.cargo/bin:$PATH"`.
+- **On this dev machine clang lives at `E:\llvm\bin\clang.exe`**
+  (LLVM 23.1.2, verified 2026-11-14). `C:\Program Files\LLVM` does NOT
+  exist on this machine — an earlier note claiming the opposite was wrong.
+  When setting `AOXN_CLANG` explicitly use
+  `AOXN_CLANG="E:/llvm/bin/clang.exe"`; bare invocations work when
+  `E:\llvm\bin` is on PATH. **A stale `AOXN_CLANG` pointing at a path that
+  no longer exists is a split failure**: the Rust resolver falls back and
+  every Rust-side test passes, but the selfhost driver uses the env value
+  VERBATIM (`_spawnvp`), so all five selfhost driver tests fail with
+  "clang failed ... exit 127". That exact signature means "the AOXN_CLANG
+  path is dead", not a codegen bug. rustc is at `~/.cargo/bin/rustc`
+  (rustup shim); Git Bash needs `PATH="$HOME/.cargo/bin:$PATH"`.
 - clang auto-detects MSVC Build Tools, which must be installed (Rust host is
   x86_64-pc-windows-msvc) for the final link. User programs needing C
   libraries pass `-l NAME` / `-L DIR` (forwarded to clang).
@@ -587,11 +627,15 @@ stdin (no `input()`); `inf`/`nan` literals (`math.NaN()` / `math.Inf()`);
   status, or run the command bare.
 - **A `git push` that SUCCEEDS can still print an error and exit 1 under
   PowerShell.** GitHub writes `remote: This repository moved. Please use the
-  new location: ...` to **stderr** (the notice names `Ryan-178/Aoxn-language`
-  even though `origin` is `AlonechatWorkspace/Aoxn-language` 鈥?it is a stale
-  redirect, not a real relocation). PowerShell routes native stderr into the
+  new location: ...` to **stderr**. **2026-11-13: the move is REAL** — the
+  canonical repo is now `github.com/Ryan-178/Aoxn-Programme-Language`
+  (verified: `git ls-remote` on both URLs returns identical refs; the old
+  `AlonechatWorkspace/Aoxn-language` URL redirects there, and `origin` still
+  points at the old URL, which keeps working). The older note calling this
+  notice a "stale redirect" described the pre-2026-11-13 state. PowerShell
+  routes native stderr into the
   error stream, so `git push` exits 1 and looks like a failure. **Do not trust
-  the exit code** 鈥?verify with `git fetch origin` then
+  the exit code** — verify with `git fetch origin` then
   `git rev-list --left-right --count origin/main...main`; `0 0` means the push
   landed.
 - **PowerShell variables are CASE-INSENSITIVE.** `$zh` and `$ZH` are the same
@@ -1590,9 +1634,9 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
 - **None of the new modules may be imported into `stdlib/stdlib.ax`** (the
   self-host critical path). All are plain Aoxn EXCEPT `hmac.ax` (fn-ptr 鈥?
   header-marked `selfhost 灏氫笉鍙紪璇慲, off the fixed-point path).
-- **CSV / random / socket (v0.55.0 snapshots 4-5)** are standalone modules, not on
-  the selfhost critical path, and all three are compiled and run by the
-  selfhost CLI in tests:
+- **CSV / random / socket / re (v0.55.0 snapshots 4-5 + unreleased `re`)** are
+  standalone modules, not on the selfhost critical path, and all four are
+  compiled and run by the selfhost CLI in tests:
   - `stdlib/csv.ax` is RFC 4180 parse/serialize with value errors
     (`err`/`msg`/`line`/`col`). Quoted commas/newlines/`""`, CRLF/LF, blank
     lines (empty row, like Python), empty/trailing fields and a final record
@@ -1612,6 +1656,44 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
     client plus refused connections and bind conflicts. The Linux code path is
     implemented with the same externs but has NOT been executed natively here;
     treat the Windows run as the only runtime evidence until Linux CI runs it.
+  - `stdlib/re.ax` (unreleased) is a BACKTRACKING Python-`re` subset, not a
+    DFA/NFA: flat 4-slot instruction program + explicit backtrack stack
+    `(pc,pos,trail-height)` with a capture-undo trail (no recursion). Supports
+    `* + ? | () (?:) [] {m,n} .`, classes/ranges/negation, lazy, anchors,
+    `\b\B`, `\d\w\s\D\W\S`; byte-wise. Pattern backrefs/lookaround/named
+    groups/inline flags/`\xHH` are CLEAN compile errors; POSIX classes parse as
+    literal classes (same as Python). `re_findall` returns group 1 when there
+    are groups (no tuple type); replacement follows Python (`\g<N>`, `\0`=NUL).
+    `tests/re.rs` differentially compares against CPython `re` and pins a
+    selfhost-compilable check; `examples/re_demo.ax` is the tag-extraction use
+    case. Reference: `docs/stdlib.md` §re.
+- **The unreleased closing batch lands the last 10 roadmap modules** —
+  `shutil` `collections` `itertools` `net` (urllib + HTTP facade) `threading`
+  `futures` `sys` `argparse` `logging` `unittest` — which closes
+  `docs/stdlib-todo.md` §2: **27 of 31 shipped, 4 standing won't-do decisions
+  with substitutes** (pickle→JSON, multiprocessing→socket/subprocess,
+  traceback→compiler Diag, typing→the static type system); the §7 audit maps
+  every row to its module/test/example. All ten are standalone files with
+  ZERO imports into `stdlib/stdlib.ax`; demos `examples/{shutil,collections,
+  itertools,net,threading,sys,argparse,logging,unittest}_demo.ax`; driver
+  tests `tests/{shutil,collections,itertools,net,threading,sys,argparse,
+  logging,unittest}.rs` (futures rides `tests/threading.rs`). Facts worth
+  keeping:
+  - **threading/futures run REAL OS threads with the caller's permissions.**
+    A worker is `fn(int) -> int`; shared state travels as a heap address (no
+    closures). `thread_join` is write-back (`t = thread_join(t)`, result in
+    `.result`); `fut_parallel` caps at `FUT_MAX_THREADS()` (64) and runs
+    overflow INLINE. Both compile under the selfhost CLI (pinned).
+  - **WinHTTP rejects an EMPTY header block** (`WinHttpAddRequestHeaders`
+    with `""` fails, error 87): both `net_http_request_bytes` and
+    `net_http_stream_open_bytes` SKIP the call when `len(headers) == 0`.
+    A plain GET used to fail while POST (which carries Content-Type) worked
+    — that asymmetry is the signature.
+  - **shutil refuses reparse points** (symlinks/junctions) in copytree/rmtree
+    and caps recursion at `SHUTIL_MAX_DEPTH()` (64); `url_parse` answers a
+    CLEAN zero `Url` (`ok = 0`) on every invalid input, never a partial one.
+  - **unittest is function-based** (`fn() -> void` tests, raise-based asserts
+    caught per test); there is still no `aoxn test` runner (§0.7).
 - **A stdlib module that NAMES one platform's API and nothing else does not
   link on the other one** (v0.50.1 fixed exactly this in `time.ax` +
   `datetime.ax`: `clang: error: linker command failed` with `undefined
@@ -1883,7 +1965,7 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   `stdlib/ui.ax` + `stdlib/ui_win.ax` 鈥?the Qt-flavored immediate-mode UI
   toolkit v3 (layout engine, text selection/multi-line editing, menus,
   tree/table model+view, signal-slot events);
-  `stdlib/{math,time,datetime,calendar,pathlib,base64,hashlib,hmac,os,glob,json,bisect,heapq,csv,random,socket}.ax`
+  `stdlib/{math,time,datetime,calendar,pathlib,base64,hashlib,hmac,os,glob,json,bisect,heapq,csv,random,socket,re,shutil,collections,itertools,net,threading,futures,sys,argparse,logging,unittest}.ax`
   鈥?the v0.44.0 module batch (`docs/stdlib.md` is its reference;
   `stdlib/net/` holds the SDK-shared transport, `stdlib/openai/` +
   `stdlib/anthropic/` the two SDKs)
@@ -1903,7 +1985,9 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   `docs/ts-m1-spec.md` / `docs/web-platform-plan.md` 鈥?TS platform decisions
 - `AGENTS.md` 鈥?this file: agent/contributor working agreement (published
   since v0.29.3)
-- Repo: github.com/AlonechatWorkspace/Aoxn-language; Apache-2.0.
+- Repo: github.com/Ryan-178/Aoxn-Programme-Language (canonical since
+  2026-11-13; the old `AlonechatWorkspace/Aoxn-language` URL redirects
+  there); Apache-2.0.
   `ci.yml` has Windows/Linux jobs with explicit `cargo test -p aoxn --locked`
   and `cargo test -p aoxn-pkg --locked`; bare `cargo test` in this non-virtual
   workspace defaults to the root package, not the pkg member's own tests.

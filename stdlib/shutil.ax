@@ -1,0 +1,115 @@
+# shutil — high-level file operations (roadmap §2 #3).
+#
+#   shutil_copyfile(src, dst) -> bool   file copy (overwrites); refuses dirs
+#   shutil_copytree(src, dst) -> bool   recursive copy; merges into an
+#                                       existing destination directory
+#   shutil_rmtree(path) -> bool         recursive delete (file or directory)
+#   shutil_move(src, dst) -> bool       rename, with copy+delete fallback
+#                                       when rename fails (e.g. cross-device)
+#
+# Safety rules (the roadmap's two requirements):
+#   - Symlinks / junctions / any reparse point are NEVER followed: copytree
+#     skips them, rmtree removes the link itself, and a link root is refused
+#     by copytree. That is the cycle guard — a junction pointing at an
+#     ancestor cannot make the walk recurse forever.
+#   - A depth cap (SHUTIL_MAX_DEPTH(), 64) bounds the recursion even if a
+#     platform reports a link as an ordinary directory.
+#
+# Errors are VALUES (false), not raises: a missing source, a refused link
+# root or a failed syscall answers false; nothing is thrown. There is no
+# ignore_errors callback, no archive support, no which(), no disk_usage().
+#
+# Dependencies: stdlib core + stdlib/os + stdlib/pathlib. EVERY platform
+# call goes through os.ax, whose functions guard themselves with
+# target_os() — this module declares no externs and needs no -l flags.
+# Paths are built with path_join (path_sep), never a hardcoded separator.
+# Selfhost-compilable (plain subset).
+
+import * from "stdlib"
+import * from "stdlib/os"
+import * from "stdlib/pathlib"
+
+def SHUTIL_MAX_DEPTH() -> int:
+    return 64
+
+def shutil_copyfile(src: string, dst: string) -> bool:
+    if os_isdir(src):
+        return False
+    return os_copy(src, dst, False)
+
+def sh_copytree(src: string, dst: string, depth: int) -> bool:
+    if depth >= SHUTIL_MAX_DEPTH():
+        return False
+    if os_islink(src):
+        return False
+    if not os_isdir(src):
+        return False
+    if os_exists(dst):
+        if not os_isdir(dst):
+            return False
+    else:
+        if not os_mkdir(dst):
+            return False
+    names = os_listdir(src)
+    n = vec_len(names)
+    ok = True
+    i = 0
+    while i < n:
+        name = vec_get_str(names, i)
+        s = path_join(src, name)
+        d = path_join(dst, name)
+        if os_islink(s):
+            pass
+        elif os_isdir(s):
+            if not sh_copytree(s, d, depth + 1):
+                ok = False
+        else:
+            if not os_copy(s, d, False):
+                ok = False
+        i = i + 1
+    return ok
+
+def shutil_copytree(src: string, dst: string) -> bool:
+    return sh_copytree(src, dst, 0)
+
+def sh_rmtree(path: string, depth: int) -> bool:
+    if depth >= SHUTIL_MAX_DEPTH():
+        return False
+    if os_islink(path):
+        if os_isdir(path):
+            return os_rmdir(path)
+        return os_remove(path)
+    if not os_isdir(path):
+        return os_remove(path)
+    # Recursive deletion is path-based: os.ax exposes no dirfd/openat/unlinkat,
+    # so a race-free handle walk is not expressible here. The os_islink guard
+    # above (never follow a reparse point) and the depth cap bound the damage;
+    # a concurrent symlink swap inside the tree is the residual TOCTOU surface.
+    names = os_listdir(path)
+    n = vec_len(names)
+    ok = True
+    i = 0
+    while i < n:
+        s = path_join(path, vec_get_str(names, i))
+        if not sh_rmtree(s, depth + 1):
+            ok = False
+        i = i + 1
+    if not os_rmdir(path):
+        ok = False
+    return ok
+
+def shutil_rmtree(path: string) -> bool:
+    return sh_rmtree(path, 0)
+
+def shutil_move(src: string, dst: string) -> bool:
+    if not os_exists(src):
+        return False
+    if os_rename(src, dst):
+        return True
+    if os_isdir(src):
+        if not sh_copytree(src, dst, 0):
+            return False
+        return sh_rmtree(src, 0)
+    if not os_copy(src, dst, False):
+        return False
+    return os_remove(src)

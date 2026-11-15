@@ -1,0 +1,31 @@
+# net demo: URL parsing, percent encoding and query strings (all offline).
+# The HTTP facade (http_get/http_post) needs Windows + `-l winhttp` and a
+# reachable server, so it is not exercised here.
+
+import * from "stdlib"
+import * from "stdlib/net"
+
+def main() -> int:
+    u = url_parse("https://example.com:8443/a/b?x=1&y=two%20words#frag")
+    print("ok:", u.ok)
+    print("scheme:", u.scheme)
+    print("host:", u.host)
+    print("port:", u.port)
+    print("path:", u.path)
+    print("query:", u.query)
+    print("fragment:", u.fragment)
+    print(" rebuilt:", url_build(u))
+    d = url_parse("http://localhost/path")
+    print("default port:", d.port)
+    q = url_query_parse("name=aoxn+lang&tags=a%2Cb&empty=&flag")
+    print("pairs:", q.n)
+    i = 0
+    while i < q.n:
+        print(" ", vec_get_str(q.keys, i), "=", vec_get_str(q.vals, i))
+        i = i + 1
+    print("quote:", url_quote("a b/c?d"))
+    print("plus:", url_quote_plus("a b/c"))
+    print("unquote:", url_unquote("a%20b%2Fc%zz"))
+    print("unquote_plus:", url_unquote_plus("a+b%2Bc"))
+    print("DONE")
+    return 0

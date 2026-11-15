@@ -1,0 +1,212 @@
+# itertools — iterator tools in BATCH form (roadmap §2 #13, degraded form).
+#
+# Aoxn has no `yield`, so lazy iterators are impossible; every function here
+# materializes its result eagerly (the degradation the roadmap prescribes):
+#
+#   it_chain(a, b) -> Vec            concatenation (slot copy)
+#   it_repeat(x, n) -> Vec           n copies of x
+#   it_range(start, stop, step) -> Vec   step 0 answers empty; negative works
+#   it_take(v, n) -> Vec             first min(n, len(v)) slots
+#   it_count(start, step, n) -> Vec  bounded count (infinite count is impossible)
+#   it_cycle(v, n) -> Vec            v repeated up to n slots total
+#   it_accumulate(v) -> Vec          running sums
+#   it_zip(a, b) -> PairList         parallel arrays, truncated to the shorter
+#   it_product(a, b) -> PairList     Cartesian product, a-major order
+#   it_permutations(v) -> PermList   all orderings, Python's index order
+#   it_combinations(v, r) -> PermList  r-subsets, Python's index order
+#
+# PermList.rows is a VecVec of FRESH Vec copies (emit copies the working
+# buffer — aliasing it would make every row the last row). Permutations are
+# factorial: n > 9 answers an empty PermList (documented guard, not a crash).
+# Combinations with r < 0 or r > len answer empty.
+#
+# Elements are 8-byte slots: int natively, strings via as_ptr views (the
+# Vec discipline), so chain/take/cycle/repeat work on string Vecs too.
+# PairList/PermList carry parallel arrays because the language has no tuples.
+#
+# Dependencies: stdlib core (Vec, VecVec). No dict/None/fn-ptr/raise.
+# No externs, no -l flags. Selfhost-compilable (plain subset).
+
+import * from "stdlib"
+
+struct PairList:
+    left: Vec
+    right: Vec
+    n: int
+
+struct PermList:
+    rows: VecVec
+    n: int
+
+struct PermGen:
+    rows: VecVec
+    cur: Vec
+    used: Vec
+    src: Vec
+    n: int
+
+struct CombGen:
+    rows: VecVec
+    cur: Vec
+    src: Vec
+    n: int
+    r: int
+
+def iv_copy(v: Vec) -> Vec:
+    out = vec_new()
+    n = vec_len(v)
+    i = 0
+    while i < n:
+        out = vec_push(out, vec_get(v, i))
+        i = i + 1
+    return out
+
+def it_chain(a: Vec, b: Vec) -> Vec:
+    out = iv_copy(a)
+    n = vec_len(b)
+    i = 0
+    while i < n:
+        out = vec_push(out, vec_get(b, i))
+        i = i + 1
+    return out
+
+def it_repeat(x: int, n: int) -> Vec:
+    out = vec_new()
+    i = 0
+    while i < n:
+        out = vec_push(out, x)
+        i = i + 1
+    return out
+
+def it_range(start: int, stop: int, step: int) -> Vec:
+    out = vec_new()
+    if step == 0:
+        return out
+    v = start
+    if step > 0:
+        while v < stop:
+            out = vec_push(out, v)
+            v = v + step
+    else:
+        while v > stop:
+            out = vec_push(out, v)
+            v = v + step
+    return out
+
+def it_take(v: Vec, n: int) -> Vec:
+    out = vec_new()
+    m = vec_len(v)
+    if n < m:
+        m = n
+    i = 0
+    while i < m:
+        out = vec_push(out, vec_get(v, i))
+        i = i + 1
+    return out
+
+def it_count(start: int, step: int, n: int) -> Vec:
+    out = vec_new()
+    i = 0
+    while i < n:
+        out = vec_push(out, start + i * step)
+        i = i + 1
+    return out
+
+def it_cycle(v: Vec, n: int) -> Vec:
+    out = vec_new()
+    m = vec_len(v)
+    if m == 0:
+        return out
+    i = 0
+    while i < n:
+        out = vec_push(out, vec_get(v, i % m))
+        i = i + 1
+    return out
+
+def it_accumulate(v: Vec) -> Vec:
+    out = vec_new()
+    t = 0
+    n = vec_len(v)
+    i = 0
+    while i < n:
+        t = t + vec_get(v, i)
+        out = vec_push(out, t)
+        i = i + 1
+    return out
+
+def it_zip(a: Vec, b: Vec) -> PairList:
+    left = vec_new()
+    right = vec_new()
+    n = vec_len(a)
+    if vec_len(b) < n:
+        n = vec_len(b)
+    i = 0
+    while i < n:
+        left = vec_push(left, vec_get(a, i))
+        right = vec_push(right, vec_get(b, i))
+        i = i + 1
+    return PairList(left=left, right=right, n=n)
+
+def it_product(a: Vec, b: Vec) -> PairList:
+    left = vec_new()
+    right = vec_new()
+    na = vec_len(a)
+    nb = vec_len(b)
+    i = 0
+    while i < na:
+        j = 0
+        while j < nb:
+            left = vec_push(left, vec_get(a, i))
+            right = vec_push(right, vec_get(b, j))
+            j = j + 1
+        i = i + 1
+    return PairList(left=left, right=right, n=na * nb)
+
+def pg_emit(g: PermGen) -> PermGen:
+    g.rows = vecvec_push(g.rows, iv_copy(g.cur))
+    return g
+
+def pg_rec(g: PermGen, depth: int) -> PermGen:
+    if depth == g.n:
+        return pg_emit(g)
+    i = 0
+    while i < g.n:
+        if vec_get(g.used, i) == 0:
+            vec_set(g.used, i, 1)
+            g.cur = vec_push(g.cur, vec_get(g.src, i))
+            g = pg_rec(g, depth + 1)
+            g.cur = vec_pop(g.cur)
+            vec_set(g.used, i, 0)
+        i = i + 1
+    return g
+
+def it_permutations(v: Vec) -> PermList:
+    n = vec_len(v)
+    if n > 9:
+        return PermList(rows=vecvec_new(), n=0)
+    g = PermGen(rows=vecvec_new(), cur=vec_new(), used=it_repeat(0, n), src=iv_copy(v), n=n)
+    g = pg_rec(g, 0)
+    return PermList(rows=g.rows, n=vecvec_len(g.rows))
+
+def cg_emit(g: CombGen) -> CombGen:
+    g.rows = vecvec_push(g.rows, iv_copy(g.cur))
+    return g
+
+def cg_rec(g: CombGen, start: int, depth: int) -> CombGen:
+    if depth == g.r:
+        return cg_emit(g)
+    i = start
+    while i < g.n:
+        g.cur = vec_push(g.cur, vec_get(g.src, i))
+        g = cg_rec(g, i + 1, depth + 1)
+        g.cur = vec_pop(g.cur)
+        i = i + 1
+    return g
+
+def it_combinations(v: Vec, r: int) -> PermList:
+    n = vec_len(v)
+    if r < 0 or r > n:
+        return PermList(rows=vecvec_new(), n=0)
+    g = CombGen(rows=vecvec_new(), cur=vec_new(), src=iv_copy(v), n=n, r=r)
+    g = cg_rec(g, 0, 0)
+    return PermList(rows=g.rows, n=vecvec_len(g.rows))

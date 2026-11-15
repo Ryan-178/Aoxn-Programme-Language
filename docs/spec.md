@@ -1018,7 +1018,15 @@ Ordered by how much they cost the language's Python parity.
    change would touch, its cost, and a ranked order for closing them.
    **The first 13 modules landed in v0.44.0** (math, time, datetime, calendar,
    pathlib, base64, hashlib, hmac, os, glob, json 闁?promoted from `net/` 闁?
-   bisect, heapq; `docs/stdlib.md` is the reference).
+   bisect, heapq; `docs/stdlib.md` is the reference). **Unreleased since:**
+   `csv`, `random`, `socket` (snapshot 4-5) and `re` (a backtracking Python-`re`
+   subset, differential-tested against CPython) joined them as standalone
+   modules. **The unreleased stdlib batch closes the roadmap**: shutil,
+   collections, itertools, urllib (`net.ax`), threading, concurrent.futures
+   (thread subset), sys, argparse, logging and unittest (degraded forms) all
+   landed, so all 31 items are dispositioned — 27 shipped, 4 standing
+   won't-do decisions with substitutes (`docs/stdlib-todo.md` §7 audit).
+   The 15 third-party libraries (§5) remain out of the stdlib scope.
 8. Top-level statements as an implicit `main` (module-script mode).
 9. Larger Python features, each of which is a real language design (not just
    syntax): `with`, generators and `yield`, closures and decorators, classes,

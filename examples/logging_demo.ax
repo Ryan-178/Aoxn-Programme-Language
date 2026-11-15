@@ -1,0 +1,21 @@
+# logging demo: levels, filtering, stdout + append-to-file.
+# Writes logging_demo.log into the current directory.
+
+import * from "stdlib"
+import * from "stdlib/logging"
+
+def main() -> int:
+    lg = log_new("demo")
+    log_debug(lg, "suppressed at the default INFO level")
+    log_info(lg, "hello from the demo")
+    log_warning(lg, "disk almost full")
+    log_error(lg, "write failed")
+
+    lg = log_set_level(lg, LOG_DEBUG())
+    lg = log_add_file(lg, "logging_demo.log")
+    log_debug(lg, "now visible, also appended to the file")
+    log_critical(lg, "shutting down")
+
+    text = read_file("logging_demo.log")
+    print("file bytes:", len(text))
+    return 0

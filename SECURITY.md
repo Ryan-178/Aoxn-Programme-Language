@@ -5,8 +5,13 @@
 ### Supported versions and reporting
 
 The compiler remains **0.55.0**, supported on the **0.55.x** line. The current
-source tree adds **unreleased `sizeof(T)` / `addr_of(x)`** work after
-0.55.0-snapshot-6; this is not a new version or release. The independent
+source tree adds **unreleased `sizeof(T)` / `addr_of(x)`**, the
+**`stdlib/re.ax` regular-expression module** and the **closing standard-library
+batch** (`shutil`, `collections`, `itertools`, `net`/urllib, `threading`,
+`futures`, `sys`, `argparse`, `logging`, `unittest`) after 0.55.0-snapshot-6;
+this is not a new version or release. With that batch every item of the
+31-module stdlib roadmap is dispositioned (27 shipped, 4 standing won't-do
+decisions with substitutes; `docs/stdlib-todo.md` §7). The independent
 package-manager crate remains **0.43.0**. Fixes land on main first; earlier
 minor lines are not maintained.
 Windows and Linux are supported. The unreleased macOS core port is under
@@ -48,7 +53,25 @@ a writable cache directory: a hostile cache can substitute an executable, and it
 can also substitute the compiled Rust static libraries cached under
 `<cache>/rust/`. PATH is not authenticated, output creation is not exclusive, and
 `stdlib/socket` performs real network I/O with the caller's permissions;
-`stdlib/random` is explicitly non-cryptographic. Isolate untrusted projects with
+`stdlib/random` is explicitly non-cryptographic; `stdlib/re` is a
+backtracking matcher with **no step budget**, so an adversarial
+pattern/subject pair can take exponential time (ReDoS) — do not match
+untrusted patterns against untrusted input without OS-level time limits.
+
+The closing stdlib batch adds more caller-permission surfaces, none of them
+sandboxes: **`stdlib/threading` and `stdlib/futures` create real OS threads**
+that run with the caller's full permissions (a worker is `fn(int) -> int`;
+shared state travels as a heap address, so a data race is the caller's
+responsibility — the mutex API is the only synchronization provided).
+**`stdlib/shutil` performs real filesystem copy/move/remove**; it refuses to
+follow reparse points (symlinks/junctions) and caps recursion at depth 64,
+which are traversal/resource guards, not permission checks — it can still
+delete anything the caller may delete. **`stdlib/logging` appends to files**
+with the caller's permissions; log paths are caller-controlled configuration.
+**`stdlib/net`'s HTTP facade performs real HTTP requests** through the WinHTTP
+transport (Windows-only; elsewhere the transport answers an error value), with
+the same redirect/credential rules as the SDK transport; its URL layer is pure
+computation. Isolate untrusted projects with
 OS/container controls over files, network and credentials. Type checking is not
 permission to execute untrusted output.
 
@@ -117,6 +140,12 @@ verification does not establish sandboxing or constitute a security audit.
   adversarial boundary.
 - CSS emitted filenames are generated and checked against traversal/separators.
   URLs influence content, not output roots. Tailwind does not silently fetch Node.
+- **Dual-platform stdlib modules guard every platform call INSIDE the function
+  that makes it** (`target_os()` folds before codegen), so a dead branch's
+  symbols never reach the object file. `tests/stdlib_defect_pins.rs` simulates
+  the Linux fold on Windows and scans symbol tables; the closing batch's
+  threading/futures/shutil/net modules are covered. A guard in a caller never
+  protects a callee.
 
 ### Package, installer and application boundaries
 
@@ -147,9 +176,16 @@ verification does not establish sandboxing or constitute a security audit.
   as trusted and do not expose this command to a remotely served UI without an
   authorization layer. The assistant proxy (`ide_ai_chat`) keeps provider keys in
   the Rust process; `ide_read_bytes` caps preview payloads at 16 MiB.
-- JSON/UTF/SSE/URL/headers/glob/base64/UI parsers must advance and respect buffers.
-  Missing slab indices are guarded; realloc helpers return live handles; builder
-  growth cannot shrink below live children. Empty/nonfinite/deep JSON terminates.
+- JSON/UTF/SSE/URL/headers/glob/base64/regex/UI parsers must advance and respect
+  buffers. Missing slab indices are guarded; realloc helpers return live handles;
+  builder growth cannot shrink below live children. Empty/nonfinite/deep JSON
+  terminates. The regex compiler rejects malformed patterns with named errors
+  and the VM runs on an explicit backtrack stack (no host recursion), but
+  matching time is unbounded (see trust boundaries). The URL parser answers a
+  CLEAN zero `Url` (`ok = 0`, every field empty) on any invalid input — never a
+  half-filled structure. WinHTTP rejects an EMPTY header block with error 87,
+  so both request paths skip `WinHttpAddRequestHeaders` when no extra headers
+  are given; that guard is correctness, not sanitization.
   WinHTTP must not silently leak credentials across redirects or accept truncation.
 - String bounds clamps are compiler/library safety properties, not interchangeable
   with unchecked array semantics. SDK keys are unsanitized heap strings: use
@@ -184,12 +220,14 @@ The web-bench workflow's bash steps use forward-slash paths so Git Bash cannot
 consume a separator as an escape; the fixed invocation was rerun locally
 (server build plus 23/23 functional parity checks).
 Local workflow checks are not proof of successful hosted Actions or installer
-execution.
+execution. The GitHub `main` branch is protected: a pull request is required
+(required approvals: 0 since 2026-11-13, because the solo maintainer
+cannot approve their own PR), and direct/force pushes are blocked.
 
 `tools/check_doc_links.py` is read-only and dependency-free. It reads local Git
 history, never fetches URLs or executes documented commands, and defaults to
 warning-only. Its explicit historical allowlist and command heuristics limit
-coverage; it is not a security/link-completeness guarantee. On 2026-11-09 it
+coverage; it is not a security/link-completeness guarantee. On 2026-11-14 it
 reported `missing-path=0`, `historical-path=0` and 25 heuristic command-drift
 warnings; its own test suite passed 11/11. The
 [artifact audit](docs/repository-audit.md) documents
@@ -224,6 +262,35 @@ this rejection prevents representation confusion, not lifetime errors.
 `sizeof(T)` reports the C representation, including padding. Stage-2 rejects
 both forms; it does not silently implement them differently.
 
+`stdlib/re` matches BYTES, like every Aoxn string: no Unicode semantics, no
+MULTILINE/IGNORECASE/DOTALL, and a NUL byte truncates the subject because
+`len()` is `strlen`. Unsupported syntax (pattern backreferences, lookaround,
+named groups, inline flags, `\xHH`/`\uHHHH`/`\U`/`\N`) is a compile error
+with a named message, not a silent approximation; POSIX classes such as
+`[[:alpha:]]` parse as literal character classes, exactly as CPython treats
+them inside a bracket expression. Replacement expansion follows Python's
+rules (`\1`–`\9`, `\g<N>`, `\n`/`\t`/`\r`, `\\`); a `\0` in a replacement
+produces a NUL that truncates any later string builtin. Catastrophic
+backtracking is possible and unbounded — an availability consideration, not
+a memory-safety one: the VM's explicit stack and capture-undo trail grow on
+the heap, and instruction addresses come from the pattern compiler, never
+from the subject text.
+
+The closing stdlib batch ships documented degraded forms, not full Python
+equivalents: `threading` has no TLS/condvars/semaphores/cancellation, and on
+Windows a worker's return value is a DWORD (keep it within 32 bits; Linux
+preserves 64); `futures` has no process pool, callbacks, timeouts or cancel,
+and elements beyond 64 run inline; `itertools` is eager batch materialization
+(no lazy iterators, permutation guard at n>9); `collections` containers move
+8-byte slots (strings via pointer views); `argparse` has no subcommands/mutex
+groups/nargs; `logging` has no handler tree/filters/rotation; `unittest` has
+no classes/fixtures/discovery and there is still no `aoxn test` runner;
+`sys` has no stdin object or module registry; `shutil` errors are boolean
+values, not exception objects. None of these modules is imported into
+`stdlib/stdlib.ax` (the self-host critical path, which has zero imports);
+threading/futures are additionally compiled and run by the selfhost CLI in
+tests.
+
 User-program signed overflow, unchecked array indexing, invalid raw-memory/FFI
 use remain undefined behavior. `as_string` aliases memory that must remain live.
 Strings are NUL-terminated bytes; concatenation leaks by design. There is no GC
@@ -236,11 +303,17 @@ permissions, and the bridge checks its declarations, not its behavior.
 The thirteen findings from the 2026-10-17 audit were fixed in 0.51.0/0.51.1;
 that is history, not absence of new defects. Baseline **8f90aca** recorded
 343 root + 104 package tests on Windows with explicit clang 23.1.2. Current-tree
-validation passed **383 root + 116 package tests (499), 0 failed/ignored** on
-Windows (2026-11-10, clang 23.1.0 at `C:\Program Files\LLVM\bin\clang.exe`,
-rustc from rustup), with `AOXN_TEST_REQUIRE_CLANG=1`. Package tests ran via
-`bash run_pkg_tests.sh`; eight root tests cover sizeof/addr_of, generic
-substitution, live storage, value semantics and rejection diagnostics.
+validation passed **399 root + 116 package tests (515), 0 failed/ignored** on
+Windows (2026-11-14, clang 23.1.2 at `E:\llvm\bin\clang.exe` on this machine —
+`C:\Program Files\LLVM` does not exist here, an earlier note claiming the
+opposite was corrected — rustc from rustup), with `AOXN_TEST_REQUIRE_CLANG=1`
+and `AOXN_TEST_REQUIRE_RUSTC=1`. Package tests ran via
+`bash run_pkg_tests.sh`; the 14 new root tests are the closing batch's driver
+suites (sys, argparse, logging, unittest ×2, collections, itertools ×2 incl.
+the CPython order differential, shutil over real temp trees, net ×3 incl. the
+`urllib.parse` differential and the HTTP facade against a local mock server,
+threading ×2 incl. the selfhost-CLI pin); the `re` differential/selfhost pins
+and the eight sizeof/addr_of pins remain in the suite.
 IDE validation below is historical, not rerun for this batch: IDE
 Rust tests passed 46/46. The IDE frontend ran 62/63: `theme.test.ts` could not
 load `react` because `node_modules` is absent in this checkout, while the
@@ -271,7 +344,11 @@ Xvfb) ran again.
 ### 支持版本与报告
 
 编译器保持 **0.55.0**，支持系列 **0.55.x**；当前源码在 snapshot-6 后加入
-**未发布的 `sizeof(T)` / `addr_of(x)`**，不代表新版本或发布。
+**未发布的 `sizeof(T)` / `addr_of(x)`**、**`stdlib/re.ax` 正则模块**以及
+**标准库收官批次**（`shutil`、`collections`、`itertools`、`net`/urllib、
+`threading`、`futures`、`sys`、`argparse`、`logging`、`unittest`），
+不代表新版本或发布。至此 31 项标准库路线图全部处置完毕（27 项交付、
+4 项长期不做并给出替代；见 `docs/stdlib-todo.md` §7）。
 独立包管理器 crate 保持 **0.43.0**。修复先落 main，旧小版本不维护；
 支持 Windows/Linux；未发布 macOS 核心移植正在验证，尚无原生运行通过声明，
 Cocoa UI 为待桌面验证的未发布 Rust 桥实现；安装器仍仅 Windows。见 [CHANGELOG](CHANGELOG.md)。
@@ -298,7 +375,20 @@ CSS/Tailwind 选项明确拒绝而非转发，自举 CLI 也不解析 `.rs` 导�
 清单。内容键构建缓存信任可写缓存目录中已存在的文件：恶意缓存既可替换
 可执行文件，也可替换缓存于 `<cache>/rust/` 下的 Rust 静态库；PATH 未经认证，
 输出不是独占创建；`stdlib/socket` 以调用者权限进行真实网络 I/O；
-`stdlib/random` 明确非密码学安全。对不可信项目使用系统/容器文件、网络和凭据隔离；
+`stdlib/random` 明确非密码学安全；`stdlib/re` 是**没有步数预算**的回溯
+匹配器，对抗性的模式/输入对可能耗时指数级（ReDoS）——不要在无系统级
+时限的情况下用不可信模式匹配不可信输入。
+
+收官批次新增的调用方权限面同样都不是沙箱：**`stdlib/threading` 与
+`stdlib/futures` 创建真实 OS 线程**，以调用者完整权限运行（工作函数为
+`fn(int) -> int`；共享状态经堆地址传递，数据竞争由调用方负责——互斥量
+API 是唯一提供的同步手段）。**`stdlib/shutil` 执行真实文件复制/移动/
+删除**；它拒绝跟随重解析点（符号链接/junction）并把递归限制在深度 64，
+这是遍历/资源守卫而非权限检查——调用者能删的它仍能删。
+**`stdlib/logging` 以调用者权限追加写文件**；日志路径是调用方配置。
+**`stdlib/net` 的 HTTP 门面经 WinHTTP 传输发起真实 HTTP 请求**
+（Windows-only；其他平台传输返回值错误），重定向/凭据规则与 SDK 传输
+一致；其 URL 层是纯计算。对不可信项目使用系统/容器文件、网络和凭据隔离；
 类型检查通过不代表可以安全执行。
 
 `AOXN_RUSTC` 与 `AOXN_CLANG` 一样是调用方配置，而不是对攻击者的安全边界：
@@ -343,6 +433,10 @@ CSS/Tailwind 选项明确拒绝而非转发，自举 CLI 也不解析 `.rs` 导�
 - 包优先安装 stdlib，裸导入先同目录，引号导入有同目录兜底；环境路径、clang、
   rustc 和链接选项是调用方配置，不对控制环境者构成安全边界。
 - CSS 输出名由编译器生成并防路径逃逸；URL 只影响内容，Tailwind 不静默下载 Node。
+- **双平台 stdlib 模块把每个平台调用守卫在发起调用的函数内部**
+  （`target_os()` 在 codegen 前折叠），死分支的符号不会进入目标文件。
+  `tests/stdlib_defect_pins.rs` 在 Windows 上模拟 Linux 折叠并扫描符号表；
+  收官批次的 threading/futures/shutil/net 均被覆盖。调用方的守卫保护不了被调方。
 
 ### 包、安装器与应用边界
 
@@ -362,8 +456,13 @@ CSS/Tailwind 选项明确拒绝而非转发，自举 CLI 也不解析 `.rs` 导�
   但命令本身可离开该目录。因此本地 webview 必须视为可信；不要把该命令暴露给
   远程提供的 UI，除非另有授权层。助手代理（`ide_ai_chat`）把供应商密钥留在
   Rust 进程；`ide_read_bytes` 将预览载荷限制在 16 MiB。
-- JSON/UTF/SSE/URL/头/glob/base64/UI 解析必须推进且不越界；缺失 slab 索引守卫、
+- JSON/UTF/SSE/URL/头/glob/base64/正则/UI 解析必须推进且不越界；缺失 slab 索引守卫、
   realloc 活句柄写回、builder 不缩到 live count 以下；空/非有限/深 JSON 终止。
+  正则编译器对非法模式报具名错误，VM 用显式回溯栈运行（不占宿主递归），
+  但匹配时间无上限（见信任边界）。URL 解析器对任何非法输入返回**干净的全零
+  Url**（`ok = 0`、各字段为空），绝不返回半填充结构。WinHTTP 拒绝空头块
+  （错误 87），因此两条请求路径在无额外头时跳过 `WinHttpAddRequestHeaders`；
+  该守卫是正确性而非消毒。
   WinHTTP 不静默跨重定向泄密、不把截断当成功。
 - 字符串 clamp 属安全属性，不得借数组不检查取消。SDK key 不清零，优先环境配置，
   转储脱敏；WinHTTP 为 Windows-only。IDE/Web 公告在范围内，例外需要理由与退出条件，
@@ -390,10 +489,12 @@ runner 会失败而不是跳过桥测试。Windows 冒烟/发布逐条检查原�
 安装器下载仍为显式启用。web-bench 工作流的 bash 步骤使用正斜杠路径，Git Bash
 不会再把分隔符当转义吞掉；修复后的调用已在本地重跑（服务器构建 + 23/23 项
 功能 parity 检查通过）。本地 workflow 检查不证明托管 Actions 或安装器运行成功。
+GitHub `main` 分支受保护：必须经 pull request（2026-11-13 起批准数要求
+为 0，因为单人维护者无法批准自己的 PR），禁止直推与强推。
 
 文档检查器只读、无外部依赖，仅读本地 Git 历史，不访问 URL 或执行文档命令，
 默认仅警告。历史白名单与命令启发式限制其覆盖，不是安全/链接完整性保证。
-2026-11-09 它的报告为 `missing-path=0`、`historical-path=0` 和 25 条启发式命令
+2026-11-14 它的报告为 `missing-path=0`、`historical-path=0` 和 25 条启发式命令
 漂移警告，其自身测试 11/11 通过。[产物审计](docs/repository-audit.md)记录来源与
 保留决定，不删除或认证归档，没有执行归档内容。
 
@@ -417,6 +518,27 @@ Cocoa 桌面运行未验证，不包含 macOS 安装器，不代表发布新版�
 也拒绝取址，因为其 C 存储仍是 `ax_opt` 包装；这是防表示混淆，不是生命周期保证。
 `sizeof(T)` 报告包含填充的 C 表示大小。stage-2 明确拒绝两种形式，不静默采用另一套语义。
 
+`stdlib/re` 与所有 Aoxn 字符串一样按**字节**匹配：没有 Unicode 语义，没有
+MULTILINE/IGNORECASE/DOTALL，NUL 字节会因 `len()` 是 `strlen` 而截断 subject。
+不支持的语法（模式反向引用、环视、命名分组、内联标志、`\xHH`/`\uHHHH`/
+`\U`/`\N`）是带具名消息的编译错误，不是静默近似；`[[:alpha:]]` 这类 POSIX
+类按字面字符类解析，与 CPython 在括号表达式内的处理完全一致。替换展开遵循
+Python 规则（`\1`–`\9`、`\g<N>`、`\n`/`\t`/`\r`、`\\`）；替换中的 `\0`
+产生 NUL，会截断其后任何字符串内建。灾难性回溯可能存在且无上限——这是
+可用性问题而非内存安全问题：VM 的显式栈与捕获撤销 trail 在堆上增长，
+指令地址来自模式编译器，绝不来自 subject 文本。
+
+收官批次交付的是**有文档的降级形态**，不是完整 Python 等价物：
+`threading` 没有 TLS/条件变量/信号量/取消，Windows 上工作函数返回值是
+DWORD（请保持在 32 位内；Linux 保留 64 位）；`futures` 没有进程池、回调、
+超时、取消，超过 64 的元素内联执行；`itertools` 是急切批量物化（没有惰性
+迭代器，n>9 排列守卫）；`collections` 容器搬运 8 字节槽（字符串经指针
+视图）；`argparse` 没有子命令/互斥组/nargs；`logging` 没有处理器树/过滤器/
+轮转；`unittest` 没有类/fixture/发现，且仍没有 `aoxn test` 运行器；
+`sys` 没有 stdin 对象或模块注册表；`shutil` 的错误是布尔值而非异常对象。
+这些模块都不导入 `stdlib/stdlib.ax`（自举关键路径，零导入）；
+threading/futures 另在测试中由自举 CLI 编译运行。
+
 用户数组越界、带符号溢出、无效原始内存/FFI 是 UB。as_string 别名存储必须存活；
 字符串 NUL 结束、拼接故意泄漏，没有 GC/通用运行时内存安全。库处理外部数据损坏
 与调用方主动不安全操作有别；窗口服务和注册表等级不沙箱或认证程序。通过 `.rs`
@@ -425,10 +547,15 @@ Cocoa 桌面运行未验证，不包含 macOS 安装器，不代表发布新版�
 
 2026-10-17 审计13项已在0.51.0/0.51.1修复，不保证没有新缺陷。
 历史基线 **8f90aca** 在 Windows 显式 clang 23.1.2 记录343根+104包；当前树最终
-**383根+116包=499项通过，0失败/忽略**（2026-11-10，clang 23.1.0 位于
-`C:\Program Files\LLVM\bin\clang.exe`，rustc 来自 rustup），设置了
-`AOXN_TEST_REQUIRE_CLANG=1`。包测试通过 `bash run_pkg_tests.sh` 执行；新增八项
-根测试覆盖 sizeof/addr_of、泛型替换、活存储、值语义与拒绝诊断。
+**399根+116包=515项通过，0失败/忽略**（2026-11-14，本机 clang 23.1.2 位于
+`E:\llvm\bin\clang.exe`——`C:\Program Files\LLVM` 在本机并不存在，早前声称
+相反情况的说明已更正——rustc 来自 rustup），设置了
+`AOXN_TEST_REQUIRE_CLANG=1` 与 `AOXN_TEST_REQUIRE_RUSTC=1`。包测试通过
+`bash run_pkg_tests.sh` 执行；新增 14 项根测试为收官批次的驱动套件
+（sys、argparse、logging、unittest ×2、collections、itertools ×2 含 CPython
+顺序差分、shutil 真实临时树、net ×3 含 `urllib.parse` 差分与对本地 mock
+服务器的 HTTP 门面、threading ×2 含自举 CLI 钉测试）；`re` 差分/自举钉与
+8 项 sizeof/addr_of 钉测试仍在套件内。
 以下 IDE 证据为历史记录，本批未重跑：IDE Rust 测试 46/46 通过；IDE 前端 62/63，
 `theme.test.ts` 因本检出缺少 `node_modules` 无法加载 `react`，包管理器前端测试
 通过，缺少 `node_modules` 也使 `pnpm typecheck` 无法运行。根套件包含全部4项

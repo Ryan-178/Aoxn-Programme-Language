@@ -1,0 +1,147 @@
+# threading — minimal threads and mutexes (roadmap §2 #18).
+#
+#   thread_spawn(f: fn(int) -> int, arg: int) -> Thread
+#   thread_join(t: Thread) -> Thread        (write-back: result lands in t)
+#   thread_sleep_ms(ms)                     (delegates to stdlib/time)
+#   mutex_new() -> Mutex
+#   mutex_lock(m) / mutex_unlock(m) -> int  (0 = ok)
+#   mutex_free(m)
+#
+# A worker is `fn(int) -> int`: ONE pointer-width argument, one return.
+# There are no closures, so shared state travels as a heap address in the
+# argument (malloc a block, pass its pointer, read/write with load_i64 /
+# store_i64). The language's extern layer rejects fn-pointer parameters;
+# the documented escape hatch is used here — the function address rides
+# as an int (to_int(f)), which is ABI-correct on x86-64 for both
+# CreateThread's LPTHREAD_START_ROUTINE and pthread_create's start routine.
+#
+# Platforms (every call is guarded INSIDE its own function, os.ax idiom):
+#   Windows: CreateThread / WaitForSingleObject / GetExitCodeThread /
+#            CloseHandle / CreateMutexW / ReleaseMutex  (kernel32, no -l)
+#   Linux:   pthread_create / pthread_join / pthread_mutex_*  (-l pthread
+#            is implicit on glibc; the module declares the externs itself)
+# Windows note: the worker's return value is a DWORD (GetExitCodeThread),
+# so keep it within 32 bits; Linux preserves the full 64-bit return.
+#
+# NOT supported: thread-local storage, condition variables, read-write
+# locks, priorities, detach, cancellation, a thread registry. Errors are
+# VALUES (err=1 on a failed spawn/init; lock answers non-zero), never
+# raises. Selfhost-compilable (fn pointers are covered by stage 2).
+
+import * from "stdlib"
+import * from "stdlib/time"
+
+extern def CreateThread(sa: int, stack: int, start: int, param: int, flags: int, tid: int) -> int
+extern def WaitForSingleObject(h: int, ms: int) -> int
+extern def GetExitCodeThread(h: int, code: int) -> int
+extern def CloseHandle(h: int) -> int
+extern def CreateMutexW(sa: int, initial: int, name: int) -> int
+extern def ReleaseMutex(h: int) -> int
+extern def pthread_create(tid: int, attr: int, start: int, arg: int) -> int
+extern def pthread_join(tid: int, retval: int) -> int
+extern def pthread_mutex_init(m: int, attr: int) -> int
+extern def pthread_mutex_lock(m: int) -> int
+extern def pthread_mutex_unlock(m: int) -> int
+extern def pthread_mutex_destroy(m: int) -> int
+
+# INFINITE for WaitForSingleObject (DWORD 0xFFFFFFFF; the low 32 bits of
+# the i64 argument are what the callee reads)
+def TH_INFINITE() -> int:
+    return 4294967295
+
+struct Thread:
+    handle: int
+    err: int
+    result: int
+    joined: int
+
+struct Mutex:
+    handle: int
+    err: int
+
+def thread_spawn(f: fn(int) -> int, arg: int) -> Thread:
+    if target_os() == "windows":
+        tid = malloc(8)
+        h = CreateThread(0, 0, to_int(f), arg, 0, tid)
+        free(tid)
+        if h == 0:
+            return Thread(handle=0, err=1, result=0, joined=0)
+        return Thread(handle=h, err=0, result=0, joined=0)
+    tid = malloc(8)
+    rc = pthread_create(tid, 0, to_int(f), arg)
+    if rc != 0:
+        free(tid)
+        return Thread(handle=0, err=1, result=0, joined=0)
+    h = load_i64(tid)
+    free(tid)
+    return Thread(handle=h, err=0, result=0, joined=0)
+
+def thread_join(t: Thread) -> Thread:
+    if t.err != 0:
+        return t
+    if t.joined == 1:
+        return t
+    if target_os() == "windows":
+        WaitForSingleObject(t.handle, TH_INFINITE())
+        code = malloc(8)
+        store_i64(code, 0)
+        GetExitCodeThread(t.handle, code)
+        r = load_i64(code)
+        free(code)
+        CloseHandle(t.handle)
+        t.result = r
+        t.joined = 1
+        return t
+    retval = malloc(8)
+    store_i64(retval, 0)
+    pthread_join(t.handle, retval)
+    r = load_i64(retval)
+    free(retval)
+    t.result = r
+    t.joined = 1
+    return t
+
+def thread_sleep_ms(ms: int):
+    time_sleep_ms(ms)
+
+def mutex_new() -> Mutex:
+    if target_os() == "windows":
+        h = CreateMutexW(0, 0, 0)
+        if h == 0:
+            return Mutex(handle=0, err=1)
+        return Mutex(handle=h, err=0)
+    # pthread_mutex_t is 40 bytes on glibc/musl x86-64; 64 is a safe slab
+    m = malloc(64)
+    fill_zero(m, 64)
+    rc = pthread_mutex_init(m, 0)
+    if rc != 0:
+        free(m)
+        return Mutex(handle=0, err=1)
+    return Mutex(handle=m, err=0)
+
+def mutex_lock(m: Mutex) -> int:
+    if m.err != 0:
+        return 1
+    if target_os() == "windows":
+        WaitForSingleObject(m.handle, TH_INFINITE())
+        return 0
+    return pthread_mutex_lock(m.handle)
+
+def mutex_unlock(m: Mutex) -> int:
+    if m.err != 0:
+        return 1
+    if target_os() == "windows":
+        r = ReleaseMutex(m.handle)
+        if r == 0:
+            return 1
+        return 0
+    return pthread_mutex_unlock(m.handle)
+
+def mutex_free(m: Mutex):
+    if m.err != 0:
+        return
+    if target_os() == "windows":
+        CloseHandle(m.handle)
+        return
+    pthread_mutex_destroy(m.handle)
+    free(m.handle)
