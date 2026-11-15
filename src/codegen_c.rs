@@ -238,6 +238,11 @@ pub fn generate_to_object(
     let clang = crate::find_clang()
         .ok_or_else(|| Diag::cc("cannot find clang for the C backend (set AOXN_CLANG or add LLVM to PATH)"))?;
     let mut cmd = std::process::Command::new(&clang);
+    // macOS: point clang at the SDK so its linker finds libSystem/frameworks
+    // (no-op elsewhere; see platform::macos_sdk_root).
+    if let Some(sdk) = crate::platform::macos_sdk_root() {
+        cmd.arg("-isysroot").arg(sdk);
+    }
     cmd.arg(format!("-O{}", opt_level.min(3)));
     // clang's own warnings are off by default: the emitted C is machine text
     // and `-w` keeps it (and the user) quiet. `--cc-warnings` turns them back

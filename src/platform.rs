@@ -89,6 +89,40 @@ pub fn target_os_name() -> &'static str {
     }
 }
 
+/// The macOS SDK root for clang/rustc, or `None` off macOS.
+///
+/// Apple's linker resolves `libSystem` (and every framework) against the SDK's
+/// `.tbd` stubs rather than `/usr/lib`. A clang invoked by bare path with no
+/// sysroot can miss that and fail with `ld: library 'System' not found` — which
+/// is exactly how the first native macOS CI run failed at the link step of
+/// every generated program. Prefer an explicit `SDKROOT` (the CI job and most
+/// developer shells set it); otherwise ask `xcrun --show-sdk-path` once and
+/// cache it. Off macOS this is always `None`, so no flag is added and the
+/// emitted C and objects are byte-identical to before.
+pub fn macos_sdk_root() -> Option<String> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    static SDK: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    SDK.get_or_init(|| {
+        if let Ok(v) = std::env::var("SDKROOT") {
+            if !v.is_empty() {
+                return Some(v);
+            }
+        }
+        let out = std::process::Command::new("xcrun")
+            .arg("--show-sdk-path")
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if s.is_empty() { None } else { Some(s) }
+    })
+    .clone()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,6 +142,17 @@ mod tests {
             assert_eq!(obj_ext(), "o");
             assert_eq!(staticlib_ext(), ".a");
             assert_eq!(stack_link_flag(), None);
+        }
+    }
+
+    #[test]
+    fn macos_sdk_root_is_noop_off_macos() {
+        // The SDK sysroot flag must reach clang ONLY on macOS: everywhere else
+        // it is None, so the emitted C and objects stay byte-identical and the
+        // self-host fixed point is untouched. On macOS the native CI job
+        // exercises the real resolution (and the link it repairs).
+        if !cfg!(target_os = "macos") {
+            assert!(macos_sdk_root().is_none());
         }
     }
 }

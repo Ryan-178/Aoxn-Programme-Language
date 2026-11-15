@@ -902,7 +902,13 @@ pub fn compile_staticlib(rs: &Path, opt_level: u8) -> Result<RustLib, Vec<Diag>>
     std::fs::create_dir_all(&staging)
         .map_err(|e| vec![Diag::at("io", u32::MAX, 0, 0, format!("cannot create '{}': {}", staging.display(), crate::io_reason_for(&e, &staging, crate::IoTarget::Dir)))])?;
     let staged_lib = staging.join(&lib_name);
-    let out = Command::new(&rustc)
+    let mut rustc_cmd = Command::new(&rustc);
+    // macOS: rustc shells out to clang to assemble the staticlib; give it the
+    // SDK sysroot so that compile and the later link agree (no-op elsewhere).
+    if let Some(sdk) = crate::platform::macos_sdk_root() {
+        rustc_cmd.env("SDKROOT", sdk);
+    }
+    let out = rustc_cmd
         .arg("--edition=2021")
         .arg("--crate-type")
         .arg("staticlib")

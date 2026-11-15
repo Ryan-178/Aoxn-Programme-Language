@@ -1149,6 +1149,11 @@ fn link_inner(obj_path: &Path, exe_path: &Path, libs: &[String], lib_paths: &[St
     })?;
 
     let mut cmd = Command::new(&clang);
+    // macOS: the SDK sysroot lets ld resolve libSystem and the frameworks the
+    // Rust bridge links (no-op elsewhere; see platform::macos_sdk_root).
+    if let Some(sdk) = crate::platform::macos_sdk_root() {
+        cmd.arg("-isysroot").arg(sdk);
+    }
     cmd.arg(obj_path);
     // Rust staticlibs are link inputs like the object: they must sit AFTER
     // the object that references them (GNU ld resolves left to right).

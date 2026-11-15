@@ -72,6 +72,19 @@ from the new CI job, not the Windows development host.
   (`examples/ui_probe_cocoa.ax`) and a loopback libcurl HTTP probe
   (`examples/http_macos_probe.ax` against `python3 -m http.server`). This is
   the native runtime evidence the Windows host cannot produce.
+- **macOS SDK sysroot for clang/rustc.** The first native CI run built the
+  compiler but failed to LINK every generated program with
+  `ld: library 'System' not found`: Apple's linker resolves `libSystem` and the
+  frameworks against the SDK's `.tbd` stubs, and a clang spawned by bare path
+  with no sysroot missed them. `platform::macos_sdk_root()` now resolves the
+  SDK (explicit `SDKROOT` first, else `xcrun --show-sdk-path`, cached) and the
+  C compile (`codegen_c.rs`), the link (`lib.rs`) and the Rust bridge
+  (`rust.rs`) pass it to clang/rustc on macOS only. The CI job also exports
+  `SDKROOT` so the self-hosted compiler — which spawns clang itself and
+  inherits the environment — links the same way. Off macOS the helper is
+  `None`, so no flag is added and the emitted C/objects are byte-identical
+  (`macos_sdk_root_is_noop_off_macos` pins it); the self-host fixed point is
+  untouched.
 
 **`sizeof(T)` and `addr_of(x)`** — the language-level blocker for every
 non-8-byte-slot container (gap A2 in `docs/language-gaps.md`, ranked #2)

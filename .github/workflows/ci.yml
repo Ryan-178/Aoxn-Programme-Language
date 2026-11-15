@@ -170,10 +170,14 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       # Apple clang ships with the Command Line Tools. Pin AOXN_CLANG to it so
-      # discovery never falls through to a Windows-only candidate path.
+      # discovery never falls through to a Windows-only candidate path. Export
+      # SDKROOT too: the self-hosted compiler and the Rust bridge spawn clang
+      # by bare path and inherit this, so ld resolves libSystem against the SDK
+      # (without it the link fails with "library 'System' not found").
       - name: Select Apple clang
         run: |
           echo "AOXN_CLANG=$(xcrun --find clang)" >> "$GITHUB_ENV"
+          echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
           clang --version
 
       - name: Build
