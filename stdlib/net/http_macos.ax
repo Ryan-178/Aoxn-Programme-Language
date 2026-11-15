@@ -1,0 +1,34 @@
+# macOS HTTP transport provider (unreleased).
+#
+# stdlib/net/http.ax moves bytes over WinHTTP on Windows and reports an honest
+# "no transport" error elsewhere. On macOS the transport is the system libcurl
+# (SecureTransport TLS), bound through the Rust bridge in http_macos_native.rs.
+# Aoxn has no TLS stack and `extern def` cannot express libcurl's variadic
+# curl_easy_setopt, so the bridge is a .rs import (the ui_cocoa precedent).
+#
+# http.ax itself stays PURE Aoxn and selfhost-compilable: it DECLARES the bridge
+# externs and calls them only inside `target_os() == "macos"` branches, which
+# constant-fold away on every other platform — so a Windows/Linux program that
+# imports http.ax (or an SDK) never references the bridge symbols and never
+# needs rustc. To enable the macOS transport, a program imports THIS module in
+# addition to the SDK / http.ax:
+#
+#   import * from "stdlib/openai/client"
+#   import * from "stdlib/net/http_macos"   # links the libcurl bridge on macOS
+#
+# The bridge is bound as a NAMESPACE (`import http_macos_native`), not a star
+# import: http.ax already declares the aoxn_http_* externs, and a star import
+# here would re-export the .rs's synthesized externs as a SECOND provider of
+# those names — a "comes from two modules" binding conflict. A namespace import
+# re-exports nothing, yet still loads, compiles and links the .rs (the loader
+# collects every reached .rs into rust_sources). The flatten then collapses the
+# .rs's duplicate extern DECLARATION into http.ax's identical one (one C symbol,
+# at most one .rs definition), so typecheck sees a single binding. Importing
+# this module on Windows/Linux is harmless: the .rs compiles to inert stubs
+# there (rustc is then required for the build, which is why the SDKs do not
+# import it themselves). The bridge propagates `-lcurl` through rustc's
+# native-static-libs note; no manual link flag is needed.
+import http_macos_native
+
+def net_http_macos_ready() -> bool:
+    return target_os() == "macos"

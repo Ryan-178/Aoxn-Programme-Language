@@ -145,3 +145,87 @@ jobs:
         run: |
           cargo run -- build examples/ui_probe_x11.ax -o ui-probe -l X11 -l Xft
           xvfb-run -a ./ui-probe
+
+  # macOS: NATIVE runtime evidence for the macOS port (Apple Silicon runner).
+  # The compiler emits C and links with Apple clang (Command Line Tools,
+  # preinstalled); rustc is preinstalled too. Unlike a cross-check, this job
+  # COMPILES AND RUNS the Cocoa UI backend and the libcurl HTTP bridge on real
+  # macOS, so the platform guards (`target_os() == "macos"`) are exercised at
+  # runtime, not just folded away. The Windows-only surface (installer,
+  # WinHTTP, Win32/GDI) is not covered here.
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      # Apple clang ships with the Command Line Tools. Pin AOXN_CLANG to it so
+      # discovery never falls through to a Windows-only candidate path.
+      - name: Select Apple clang
+        run: |
+          echo "AOXN_CLANG=$(xcrun --find clang)" >> "$GITHUB_ENV"
+          clang --version
+
+      - name: Build
+        run: cargo build
+
+      # A non-virtual workspace defaults to the root package, not every member.
+      - name: Test compiler (pipeline, stdlib, TS, UI)
+        run: cargo test -p aoxn --locked
+
+      - name: Test C emitter parity and ABI (clang required)
+        run: cargo test -p aoxn --locked --test c_emitter_parity --test c_abi
+        env:
+          AOXN_TEST_REQUIRE_CLANG: "1"
+
+      # The Rust bridge drives rustc and links with clang; both are required
+      # here so a missing one fails, not skips. Includes the extern-declaration
+      # dedup that lets net/http.ax declare the bridge externs while
+      # net/http_macos.ax links the .rs that defines them.
+      - name: Test Rust bridge (clang + rustc required)
+        run: cargo test -p aoxn --locked --test rust_interop
+        env:
+          AOXN_TEST_REQUIRE_CLANG: "1"
+          AOXN_TEST_REQUIRE_RUSTC: "1"
+
+      - name: Test package manager
+        run: cargo test -p aoxn-pkg --locked
+
+      - name: Smoke test
+        run: |
+          cargo run -- run examples/hello.ax
+          cargo run -- run examples/strings.ax
+          cargo run -- run examples/stdlib_demo.ax
+          cargo run -- build examples/primes.ax -o primes
+          count=$(./primes)
+          if [ "$count" != "9592" ]; then echo "primes returned $count, expected 9592"; exit 1; fi
+
+      # Native Cocoa backend: the build links AppKit/Foundation/CoreGraphics/
+      # objc through the Rust bridge's native-static-libs note; the run drives
+      # 30 real frames in an NSWindow and prints "ui-cocoa-ok".
+      - name: Cocoa backend probe (native window)
+        run: |
+          cargo run -- build examples/ui_probe_cocoa.ax -o ui-probe-cocoa
+          ./ui-probe-cocoa
+
+      # Native libcurl HTTP bridge: the build links -lcurl through the bridge;
+      # the run exercises net/http.ax's macOS dispatch against a loopback
+      # server (no external network, no TLS certificate needed).
+      - name: macOS HTTP transport probe (libcurl)
+        run: |
+          python3 -m http.server 8765 --directory examples &
+          server_pid=$!
+          trap 'kill $server_pid 2>/dev/null || true' EXIT
+          sleep 1
+          cargo run -- build examples/http_macos_probe.ax -o http-macos-probe
+          ./http-macos-probe http://127.0.0.1:8765/hello.ax

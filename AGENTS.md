@@ -2013,7 +2013,15 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   was not done. Windows-only test crates that link Windows libraries
   (`winhttp`, `ws2_32`) are gated with `#![cfg(windows)]` at the top.
 - **Windows first-class, Linux supported (v0.46.0).** The user requested a
-  macOS core compiler/CLI/portable-stdlib port on 2026-11-11. Keep it unreleased
-  and distinguish cross-checks from native Apple evidence. Cocoa is an
-  unreleased Rust-bridge backend requested explicitly by the user; no macOS
-  installer is included. `docs/platform-support.md` is authoritative.
+  macOS core compiler/CLI/portable-stdlib port on 2026-11-11, then asked that
+  all libraries, the compiler and the installer adapt natively to macOS. Keep
+  it unreleased and distinguish cross-checks from native Apple evidence. Cocoa
+  is an unreleased Rust-bridge backend; macOS HTTP transport rides an opt-in
+  libcurl Rust bridge (`stdlib/net/http_macos` + `http_macos_native.rs`); a
+  build-from-source installer (`dist/install-macos.sh`) and a `macos-latest` CI
+  job (Cocoa + loopback libcurl probes) supply the native runtime evidence the
+  Windows host cannot. The resolver collapses identical extern declarations
+  when at most one is `.rs`-backed (`Module.is_rs`), so an `.ax` declaration and
+  a `.rs` definition share one symbol; two `.rs` definitions still error, and
+  only Rust-bridge programs are affected (the self-host fixed point is
+  untouched). `docs/platform-support.md` is authoritative.

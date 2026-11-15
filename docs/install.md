@@ -2,7 +2,10 @@
 
 **One file.** `Aoxn-<version>-Setup.exe` carries the entire toolchain — the
 compiler, the standard library, the UI toolkit and the examples — and
-installing it is a double-click. Aoxn targets **Windows** (x86_64).
+installing it is a double-click. The single-file installer targets
+**Windows** (x86_64), the first-class platform. **Linux** and **macOS**
+install from source — see [macOS](#macos-build-from-source) below and
+`docs/platform-support.md` for what ships where.
 
 ## Install
 
@@ -182,6 +185,53 @@ powershell -ExecutionPolicy Bypass -File dist\package.ps1
 A source checkout also works in place — `cargo run -- run examples\hello.ax`
 finds `stdlib/` next to the checkout.
 
+## macOS (build from source)
+
+macOS has no single-file packaged artifact yet. `dist/install-macos.sh` is the
+native equivalent of the Windows installer: it builds the compiler with cargo
+and lays the toolchain out exactly the way the compiler discovers it at
+runtime (`src/paths.rs` — the install root is the parent of `bin/`).
+
+Prerequisites (the script reports them and stops; it **downloads nothing**):
+
+- **Rust** (`cargo`) — install from <https://rustup.rs>.
+- **Apple clang** — `xcode-select --install` (the Command Line Tools). clang
+  must resolve an installed SDK.
+- **rustc** is also needed for the native Cocoa UI backend and the macOS
+  libcurl HTTP bridge (both are Rust `.rs` imports); the core compiler and the
+  portable stdlib do not need it.
+
+From the repository root:
+
+```bash
+bash dist/install-macos.sh                  # installs to ~/.local/aoxn
+bash dist/install-macos.sh --prefix /opt/aoxn
+bash dist/install-macos.sh --skip-build     # reuse target/release/aoxn
+```
+
+Where things land (the **whole** stdlib tree, including the `net/`, `openai/`
+and `anthropic/` subdirectories the Windows package omits):
+
+```text
+~/.local/aoxn/                (override with --prefix <dir>)
+  bin/aoxn                    the compiler driver
+  lib/stdlib/...              standard library + UI + SDK transports
+  examples/...                runnable samples
+  docs/install.md             this file
+  LICENSE  README.md  CHANGELOG.md
+```
+
+The script adds `<prefix>/bin` to PATH in `~/.zshrc` (or `~/.bash_profile`
+when that is your shell), then runs `aoxn doctor`. Open a **new** terminal
+afterwards. `target_os()` reports `"macos"`; objects are Mach-O `.o` and
+executables have no suffix.
+
+The native Cocoa UI backend and the libcurl HTTP transport are validated by
+the `macos-latest` CI job (a Cocoa probe and a loopback HTTP probe). Until
+that job runs green on real Apple hardware, treat macOS as a port under
+validation rather than a fully supported platform — see
+`docs/platform-support.md`.
+
 ---
 
 ## 中文速查
@@ -237,3 +287,30 @@ aoxn run examples\hello.ax
 装好后任何目录都能直接 `import * from "stdlib"`（不需要相对路径）。
 从源码构建并自行打包：`cargo build`，然后
 `powershell -ExecutionPolicy Bypass -File dist\package.ps1`。
+
+### macOS（从源码安装）
+
+macOS 暂时没有单文件安装包，`dist/install-macos.sh` 是 Windows 安装器的原生
+对应物：用 cargo 编译编译器，再按编译器运行时的发现规则（`src/paths.rs`，
+安装根目录是 `bin/` 的父目录）铺好工具链。
+
+前置条件（脚本只报告并停止，**绝不下载任何东西**）：Rust（`cargo`，
+<https://rustup.rs>）、Apple clang（`xcode-select --install`，需能解析已安装
+的 SDK）；原生 Cocoa UI 后端与 macOS libcurl HTTP 桥还需要 rustc（二者都是
+Rust `.rs` 导入），核心编译器与可移植标准库不需要它。
+
+在仓库根目录执行：
+
+```bash
+bash dist/install-macos.sh                  # 装到 ~/.local/aoxn
+bash dist/install-macos.sh --prefix /opt/aoxn
+bash dist/install-macos.sh --skip-build     # 复用 target/release/aoxn
+```
+
+它会把**整棵** stdlib 树（含 Windows 包省略的 `net/`、`openai/`、`anthropic/`
+子目录）装到 `<prefix>/lib/stdlib`，把 `<prefix>/bin` 加进 `~/.zshrc`（若你的
+shell 是 bash 则写 `~/.bash_profile`）的 PATH，再跑 `aoxn doctor`。装完请开一个
+**新终端**。`target_os()` 返回 `"macos"`，目标文件是 Mach-O `.o`，可执行文件
+无后缀。Cocoa UI 后端与 libcurl HTTP 传输由 `macos-latest` CI job（Cocoa 探针 +
+环回 HTTP 探针）验证；在该 job 于真实 Apple 硬件上跑绿之前，macOS 仍属「验证中
+的移植」而非完全支持的平台——详见 `docs/platform-support.md`。

@@ -1,0 +1,29 @@
+# Native macOS HTTP transport probe (unreleased).
+#
+# Exercises stdlib/net/http.ax's macOS dispatch (the libcurl Rust bridge in
+# http_macos_native.rs) against a loopback server, so CI needs no external
+# network and no TLS certificate. The CI step starts `python3 -m http.server`
+# and passes its URL as arg(0). On any non-macOS host this reports "not macOS"
+# and exits 1 — it is a NATIVE probe, not a cross-platform test.
+import * from "stdlib/net/http"
+import * from "stdlib/net/http_macos"
+
+def main() -> int:
+    if not net_http_macos_ready():
+        print("http-macos: not macOS")
+        return 1
+    url = arg(0)
+    if url == "":
+        url = "http://127.0.0.1:8765/hello.ax"
+    r = net_http_request("GET", url, "", "", "aoxn-macos-probe/1.0", 5000, 30000)
+    if r.err != 0:
+        print("http-macos: transport error: " + r.errmsg)
+        return 1
+    if r.status != 200:
+        print("http-macos: status " + str(r.status))
+        return 1
+    if len(r.body) == 0:
+        print("http-macos: empty body")
+        return 1
+    print("http-macos-ok status=" + str(r.status) + " bytes=" + str(len(r.body)))
+    return 0

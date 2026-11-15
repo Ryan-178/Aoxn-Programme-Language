@@ -86,7 +86,10 @@ analysis; only `build` and `run` need Rust installed.
 Windows is first-class and Linux is supported. The unreleased macOS core
 compiler/CLI and portable-stdlib port is under validation; native macOS
 runtime success is not yet claimed. Cocoa UI is implemented as an unreleased
-Rust-bridge backend; no macOS installer or IDE package is included. Darwin clock, filesystem, executable-path and socket
+Rust-bridge backend, and macOS HTTP transport rides libcurl through an opt-in
+Rust bridge (`stdlib/net/http_macos`). A build-from-source macOS installer
+(`dist/install-macos.sh`) is included; there is no packaged macOS artifact or
+IDE package. Darwin clock, filesystem, executable-path and socket
 adaptations have Windows regression and simulated-branch coverage. The
 [platform policy](docs/platform-support.md) is authoritative. Windows ships
 `Aoxn-<version>-Setup.exe` from the [release page](https://github.com/Ryan-178/Aoxn-Programme-Language/releases).
@@ -194,6 +197,23 @@ suite passed 17/17; native bridge metadata checks passed for ARM64 and Intel,
 and Apple Silicon workspace/tests cross-check passed. Full IME composition
 and Retina-native backing resolution are not implemented.
 
+Unreleased macOS HTTP transport: `stdlib/net/http_macos.ax` pulls in a
+dependency-free libcurl bridge (`http_macos_native.rs`, five scalar-ABI
+`extern "C"` exports) through a namespace import, and `stdlib/net/http.ax`
+dispatches to it when `target_os() == "macos"`. It is **opt-in** — the
+OpenAI/Anthropic SDKs import only the pure `http.ax`, so Windows and Linux
+builds pull in neither rustc nor libcurl; `-lcurl` propagates through rustc's
+`native-static-libs` note. This required a resolver fix: the flatten now
+collapses identical extern declarations when at most one is backed by a `.rs`
+module, so a program may both `extern def` a symbol and import the `.rs` that
+defines it (two `.rs` definitions of one name still error). Only Rust-bridge
+programs are affected, so the self-host fixed point is untouched. The
+build-from-source installer `dist/install-macos.sh` lays out the whole stdlib
+tree (including these transports), adds `bin/` to PATH and runs `aoxn doctor`,
+downloading nothing. A `macos-latest` CI job runs the suite plus a native Cocoa
+probe and a loopback libcurl HTTP probe — the native runtime evidence the
+Windows host cannot produce.
+
 macOS-port local validation (2026-11-11): **385 Windows compiler tests passed**,
 including datetime, filesystem/glob, socket, emitter parity and selfhost fixed
 point. Host-platform and simulated Darwin symbol tests plus 11 documentation
@@ -254,9 +274,11 @@ compiles under the self-hosted compiler. The
 [Rust bridge](docs/rust-interop.md) is the second foreign-code
 path beside clang FFI: a `.rs` import becomes synthesized extern declarations
 and a rustc-built static library, with rustc required only for `build`/`run`.
-The [UI](docs/ui.md) shares widgets across Win32/GDI and Linux X11/Xft. The
-[OpenAI](docs/openai-sdk.md) and [Anthropic](docs/anthropic-sdk.md) SDKs share
-JSON/HTTP/SSE; WinHTTP transport is Windows-only.
+The [UI](docs/ui.md) shares widgets across Win32/GDI, Linux X11/Xft and the
+unreleased macOS Cocoa backend. The [OpenAI](docs/openai-sdk.md) and
+[Anthropic](docs/anthropic-sdk.md) SDKs share JSON/HTTP/SSE; the WinHTTP
+transport is Windows-only, macOS has an opt-in libcurl transport
+(`stdlib/net/http_macos`), and Linux still has no HTTP transport.
 
 The [package manager](docs/pkg-manager.md) uses a pyproject-shaped `aoxn.toml`
 (`[project]` + `[project.optional-dependencies]` + `[tool.aoxn]`), `aoxn.lock`
@@ -275,14 +297,18 @@ preview panes; separately tested.
 ### Repository maintenance and CI scope
 
 Main CI explicitly runs `cargo test -p aoxn --locked` and
-`cargo test -p aoxn-pkg --locked` on Windows/Linux: the root non-virtual workspace
-otherwise defaults to only `aoxn`. A separate named step reruns
+`cargo test -p aoxn-pkg --locked` on Windows/Linux/macOS: the root non-virtual
+workspace otherwise defaults to only `aoxn`. A separate named step reruns
 `--test c_emitter_parity --test c_abi` with `AOXN_TEST_REQUIRE_CLANG=1`; missing
 clang fails that gate instead of silently skipping the comparisons. Both
 Windows and Linux jobs also run a named `Test Rust bridge` step,
 `cargo test -p aoxn --locked --test rust_interop`, with
 `AOXN_TEST_REQUIRE_CLANG=1` and `AOXN_TEST_REQUIRE_RUSTC=1`, so a missing rustc
-fails rather than skips. Linux also runs the X11 probe under Xvfb. Release
+fails rather than skips. Linux also runs the X11 probe under Xvfb. A
+`macos-latest` job runs the same suite plus a native Cocoa probe
+(`examples/ui_probe_cocoa.ax`) and a loopback libcurl HTTP probe
+(`examples/http_macos_probe.ax`) — the native Apple runtime evidence the
+Windows/Linux hosts cannot produce. Release
 packaging/install smoke runs on tags or manual dispatch, not every push;
 web benchmarks and IDE checks are separate. The web-bench workflow's bash steps
 use forward-slash paths: Git Bash treats a backslash as an escape, which had
@@ -320,26 +346,32 @@ cargo test -p aoxn --locked --test c_emitter_parity --test c_abi
 cargo test -p aoxn --locked --test rust_interop
 cargo test -p aoxn-pkg --locked
 cargo check --workspace --tests --target x86_64-unknown-linux-gnu
+cargo check --workspace --tests --target aarch64-apple-darwin
+cargo check --workspace --tests --target x86_64-apple-darwin
 ```
 
-Final Windows validation for the current tree (2026-11-14, clang 23.1.2 at
-`E:\llvm\bin\clang.exe` on this machine, rustc from rustup): **399 root +
-116 package = 515 passed, 0 failed, 0 ignored**. The root suite grew from
-385 to 399 with the closing stdlib batch's 14 tests across nine files:
-`sys` (1), `argparse` (1), `logging` (1), `unittest` (2), `collections` (1),
-`itertools` (2, including the CPython order differential), `shutil` (1, real
-temp trees), `net` (3: URL-layer codecs, the `urllib.parse` differential and
-the HTTP facade against a local mock server with a bounded wait) and
-`threading` (2: four-thread mutex contention plus futures, and a selfhost-CLI
-pin that builds `selfhost/cli.ax` and runs a threads program through it).
+Final Windows validation for the current tree (2026-11-15, clang 23.1.2 at
+`E:\llvm\bin\clang.exe` on this machine, rustc from rustup): **405 root +
+116 package = 521 passed, 0 failed, 0 ignored**. The root suite grew from
+399 to 405 with the macOS work: the Rust bridge gained a twelfth test
+(`ax_declaration_and_rs_definition_share_one_extern_symbol`, pinning the
+provenance-aware extern dedup that lets `http_macos.ax` declare the
+`aoxn_http_*` externs while the `.rs` bridge defines them), alongside the
+Cocoa bridge/contract tests. The earlier closing stdlib batch's 14 tests
+across nine files (`sys`, `argparse`, `logging`, `unittest`, `collections`,
+`itertools`, `shutil`, `net`, `threading`) remain green.
 The full run includes the fixed point, both parity targets, the four ABI
-tests (O0/O3), both CLI stages, the Rust bridge (11 tests), real socket
+tests (O0/O3), both CLI stages, the Rust bridge (12 tests), real socket
 loopback, random cross-process vectors, the Python `csv` differential, the
 `re` CPython differential and selfhost pin, and the eight
 `sizeof_*`/`addr_of_*` pins.
-`cargo check --workspace --tests --target x86_64-unknown-linux-gnu` passed;
-Linux native linking/runtime was not executed. The package suite ran
-through `run_pkg_tests.sh` (the Smart App Control hash-stamp workaround).
+`cargo check --workspace --tests` passed for `x86_64-unknown-linux-gnu`,
+`aarch64-apple-darwin` and `x86_64-apple-darwin`; these are cross-checks
+(no Apple linking/execution on this Windows host). Native macOS runtime
+evidence comes from the new `macos-latest` CI job, which builds the Cocoa
+and libcurl HTTP probes and runs the libcurl loopback probe against a local
+`python3 -m http.server`. The package suite ran through `run_pkg_tests.sh`
+(the Smart App Control hash-stamp workaround).
 The read-only doc audit (2026-11-14) reported `missing-path=0`,
 `historical-path=0` and 25 heuristic command-drift warnings; its own tests
 passed 11/11. Full installer packaging was not run; IDE suites were not
@@ -485,7 +517,9 @@ rustc 是**可选**外部工具链，发现顺序与 clang 相同。`check`、`c
 
 Windows 为一等平台，支持 Linux；未发布的 macOS 核心编译器/CLI 与可移植标准库
 正在验证，尚不声明 macOS 原生运行通过；Cocoa UI 已作为未发布 Rust 桥后端实现，
-不包含 macOS 安装器或 IDE 打包。Darwin 时钟、文件系统、程序路径和 socket 已适配，并有 Windows 回归与
+macOS HTTP 传输经可选启用的 libcurl Rust 桥（`stdlib/net/http_macos`）提供。
+包含从源码安装的 macOS 安装器（`dist/install-macos.sh`），但没有打包好的 macOS
+产物或 IDE 打包。Darwin 时钟、文件系统、程序路径和 socket 已适配，并有 Windows 回归与
 模拟分支覆盖。平台策略以
 [平台政策](docs/platform-support.md) 为准。[Windows 发布包](https://github.com/Ryan-178/Aoxn-Programme-Language/releases)
 为 `Aoxn-<version>-Setup.exe`，解包至 `%LOCALAPPDATA%\aoxn`、设置 PATH、
@@ -568,6 +602,20 @@ AppKit/CoreGraphics 桥复用可移植控件层，需要 rustc 与 Apple framewo
 本轮 Windows UI 套件 17/17 通过，桥通过 ARM64/Intel 元数据编译检查；
 这些不等于 macOS 原生窗口运行验证。完整 IME 与 Retina 原生分辨率尚未实现。
 
+未发布 macOS HTTP 传输：`stdlib/net/http_macos.ax` 经命名空间导入引入一个
+零依赖 libcurl 桥（`http_macos_native.rs`，五个标量 ABI 的 `extern "C"`
+导出），`stdlib/net/http.ax` 在 `target_os() == "macos"` 时分派到它。它是
+**可选启用**的——OpenAI/Anthropic SDK 只导入纯 `http.ax`，因此 Windows 与
+Linux 构建既不引入 rustc 也不引入 libcurl；`-lcurl` 经 rustc 的
+`native-static-libs` 注记传播。这需要一处解析器修复：flatten 现在会在「至多
+一个声明由 `.rs` 模块提供」时合并相同的 extern 声明，于是程序可以同时
+`extern def` 一个符号并导入定义它的 `.rs`（同名两份 `.rs` 定义仍报错）。
+只有 Rust 桥程序受影响，自举不动点不变。从源码安装器
+`dist/install-macos.sh` 铺好整棵 stdlib 树（含这些传输）、把 `bin/` 加进
+PATH 并运行 `aoxn doctor`，不下载任何东西。`macos-latest` CI job 运行整套
+测试外加原生 Cocoa 探针与环回 libcurl HTTP 探针——这是 Windows 主机无法
+产生的原生运行时证据。
+
 macOS 移植本地验证（2026-11-11）：**385 项 Windows 编译器测试通过**，含日期时间、
 文件/glob、socket、C 发射 parity 与自举不动点；宿主平台契约、模拟 Darwin
 符号检查及 11 项文档测试通过；Linux workspace/tests 交叉检查通过。不等于 macOS
@@ -614,9 +662,10 @@ CPython 差分一致；不支持的语法（反向引用、环视、内联标志
 Unicode 转义）报具名编译错误而非静默降级，且模块可在自举编译器下编译。
 [Rust 桥](docs/rust-interop.md)是 clang FFI 之外的第二条外部代码路径：
 `.rs` 导入变成合成的 extern 声明加 rustc 构建的静态库，只有 build/run 需要 rustc。
-[UI](docs/ui.md)共享控件层，后端为 Win32/GDI 与 X11/Xft。
+[UI](docs/ui.md)共享控件层，后端为 Win32/GDI、X11/Xft 与未发布的 macOS Cocoa。
 [OpenAI](docs/openai-sdk.md)/[Anthropic](docs/anthropic-sdk.md) SDK 共享传输基础，
-WinHTTP 为 Windows-only。
+WinHTTP 为 Windows-only，macOS 有可选启用的 libcurl 传输
+（`stdlib/net/http_macos`），Linux 仍无 HTTP 传输。
 
 [包管理器](docs/pkg-manager.md)使用 pyproject 形状的 `aoxn.toml`
 （`[project]` + `[project.optional-dependencies]` + `[tool.aoxn]`）、`aoxn.lock`
@@ -632,14 +681,17 @@ ZCode 衍生的 Zai 设计系统，并带助手、终端、Git 与预览面板�
 
 ### 仓库维护与 CI 范围
 
-主 CI 在 Windows/Linux 显式执行 `cargo test -p aoxn --locked` 和
+主 CI 在 Windows/Linux/macOS 显式执行 `cargo test -p aoxn --locked` 和
 `cargo test -p aoxn-pkg --locked`；非虚拟工作区裸 cargo test 默认只测试根包。
 独立命名步骤以 `AOXN_TEST_REQUIRE_CLANG=1` 重跑
 `--test c_emitter_parity --test c_abi`，缺少 clang 会判定门禁失败，不再静默跳过比较。
 Windows 与 Linux 另有命名步骤 `Test Rust bridge`，执行
 `cargo test -p aoxn --locked --test rust_interop`，并设
 `AOXN_TEST_REQUIRE_CLANG=1` 与 `AOXN_TEST_REQUIRE_RUSTC=1`：缺 rustc 会失败而不是跳过。
-Linux 另跑 Xvfb 下 X11 probe。安装打包与冒烟在 tag/手动触发，不是每次 push；
+Linux 另跑 Xvfb 下 X11 probe。`macos-latest` job 运行同一套测试，外加原生
+Cocoa 探针（`examples/ui_probe_cocoa.ax`）与环回 libcurl HTTP 探针
+（`examples/http_macos_probe.ax`）——这是 Windows/Linux 主机无法产生的原生
+Apple 运行时证据。安装打包与冒烟在 tag/手动触发，不是每次 push；
 Web 基准和 IDE 独立。web-bench 工作流的 bash 步骤改用正斜杠路径：Git Bash 把
 反斜杠当转义吞掉（`web\server_win.ax` 变成 `webserver_win.ax`），曾导致构建步骤
 直接失败。Windows 冒烟逐条检查原生命令退出码，发布文案与安装器
@@ -670,22 +722,26 @@ cargo test -p aoxn --locked --test c_emitter_parity --test c_abi
 cargo test -p aoxn --locked --test rust_interop
 cargo test -p aoxn-pkg --locked
 cargo check --workspace --tests --target x86_64-unknown-linux-gnu
+cargo check --workspace --tests --target aarch64-apple-darwin
+cargo check --workspace --tests --target x86_64-apple-darwin
 ```
 
-当前树 Windows 最终验证（2026-11-14，本机 clang 23.1.2 位于
-`E:\llvm\bin\clang.exe`，rustc 来自 rustup）：**399 根 + 116 包 = 515 项
-通过，0 失败，0 忽略**。根套件从 385 增至 399，新增收官批次的 14 项测试，
-分布在 9 个文件：sys（1）、argparse（1）、logging（1）、unittest（2）、
-collections（1）、itertools（2，含 CPython 顺序差分）、shutil（1，真实临时
-目录树）、net（3：URL 层编解码、`urllib.parse` 差分、对本地 mock 服务器的
-HTTP 门面限时等待测试）、threading（2：四线程互斥竞争加 futures，以及
-构建 selfhost/cli.ax 并经其运行线程程序的自举钉测试）。完整运行包含不动点、
-两项 parity、4 项 ABI（O0/O3）、两阶段 CLI、Rust 桥（11 项）、真实 socket
-回环、随机数跨进程向量、Python `csv` 差分、`re` 的 CPython 差分与自举钉、
-8 项 sizeof/addr_of 钉测试。
-`cargo check --workspace --tests --target x86_64-unknown-linux-gnu` 通过，
-未执行 Linux 原生链接/运行。包套件经 `run_pkg_tests.sh` 运行（Smart App
-Control 哈希戳 workaround）。只读文档审计（2026-11-14）报告
+当前树 Windows 最终验证（2026-11-15，本机 clang 23.1.2 位于
+`E:\llvm\bin\clang.exe`，rustc 来自 rustup）：**405 根 + 116 包 = 521 项
+通过，0 失败，0 忽略**。根套件从 399 增至 405，新增 macOS 工作的测试：
+Rust 桥增加第 12 项（`ax_declaration_and_rs_definition_share_one_extern_symbol`，
+钉住按来源去重 extern 的能力——让 `http_macos.ax` 声明 `aoxn_http_*` extern
+而由 `.rs` 桥定义它们），以及 Cocoa 桥/契约测试。早前收官批次的 14 项测试
+（sys、argparse、logging、unittest、collections、itertools、shutil、net、
+threading）保持全绿。完整运行包含不动点、两项 parity、4 项 ABI（O0/O3）、
+两阶段 CLI、Rust 桥（12 项）、真实 socket 回环、随机数跨进程向量、Python
+`csv` 差分、`re` 的 CPython 差分与自举钉、8 项 sizeof/addr_of 钉测试。
+`cargo check --workspace --tests` 对 `x86_64-unknown-linux-gnu`、
+`aarch64-apple-darwin`、`x86_64-apple-darwin` 均通过；这些是交叉检查
+（本 Windows 主机不做 Apple 链接/执行）。macOS 原生运行时证据来自新增的
+`macos-latest` CI 任务，它构建 Cocoa 与 libcurl HTTP 探针，并对本地
+`python3 -m http.server` 运行 libcurl 回环探针。包套件经 `run_pkg_tests.sh`
+运行（Smart App Control 哈希戳 workaround）。只读文档审计（2026-11-14）报告
 `missing-path=0`、`historical-path=0` 与 25 条启发式命令漂移警告，其自身
 测试 11/11 通过。完整安装器打包未运行；IDE 套件未重跑（IDE 源码未改动）。
 

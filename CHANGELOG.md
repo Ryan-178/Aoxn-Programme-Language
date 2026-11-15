@@ -27,7 +27,51 @@ libSystem supplies C math without
 Linux's `-lm`. POSIX sleeps now split seconds/nanoseconds, and localtime_r
 success is detected by a non-null return. Windows platform-sensitive tests
 and simulated Darwin symbol checks passed; native macOS tests are not yet
-available locally. No Cocoa UI, installer, IDE package or version release.
+available locally. No IDE package or version release. The Cocoa UI backend is
+described above; the macOS HTTP transport, installer and CI job below.
+
+### macOS HTTP transport, installer and CI
+
+Completes the macOS adaptation of the three surfaces the goal names —
+libraries, compiler, installer — on top of the core port above. All of it is
+**unreleased** (version stays 0.55.0); native Apple runtime evidence comes
+from the new CI job, not the Windows development host.
+
+- **HTTP transport via libcurl (Rust bridge).** `stdlib/net/http_macos_native.rs`
+  is a dependency-free libcurl bridge: five `#[no_mangle] extern "C"` exports
+  (`aoxn_http_request`, `aoxn_http_stream_open/read/close/err`) over the
+  scalar Rust-bridge ABI, with the macOS implementation behind
+  `#[cfg(target_os = "macos")]` and inert stubs elsewhere. `stdlib/net/http_macos.ax`
+  pulls it in with a **namespace** import (`import http_macos_native`) and
+  exposes `net_http_macos_ready()`. `stdlib/net/http.ax` dispatches its four
+  entry points to the macOS path when `target_os() == "macos"`, each helper
+  self-guarded so a non-macOS build never references the symbols. The bridge
+  is **opt-in**: the OpenAI/Anthropic SDKs import only the pure `http.ax`, so a
+  Windows or Linux build pulls in neither rustc nor libcurl. `-lcurl`
+  propagates through rustc's `native-static-libs` note.
+- **Resolver: one extern symbol shared by an `.ax` declaration and a `.rs`
+  definition.** The flatten in `src/resolve.rs` kept every module's
+  declarations, so a program that both `extern def`s a symbol and imports the
+  `.rs` that defines it died with "defined more than once". A provenance-aware
+  dedup now collapses identical extern declarations when **at most one** is
+  backed by a `.rs` module (`Module.is_rs`), keeping the first in source order
+  so the emitted C stays reproducible. Two `.rs` *definitions* of one name
+  still error (`two_modules_exporting_one_extern_name_collide` is preserved);
+  the new `ax_declaration_and_rs_definition_share_one_extern_symbol` pins the
+  accepted case. Only Rust-bridge programs are affected, so the self-host
+  fixed point is untouched.
+- **Installer.** `dist/install-macos.sh` builds the compiler with
+  `cargo build --release --locked --bin aoxn` and lays out `<prefix>/bin/aoxn`
+  + the **whole** `<prefix>/lib/stdlib` tree (including the `net/`, `openai/`,
+  `anthropic/` subdirectories the Windows package omits) + examples + docs,
+  adds `<prefix>/bin` to PATH (`~/.zshrc`, or `~/.bash_profile` for bash) and
+  runs `aoxn doctor`. It downloads nothing; missing cargo/clang are reported
+  with the remedy (`rustup.rs`, `xcode-select --install`). Documented in
+  `docs/install.md` and `docs/platform-support.md` (both halves).
+- **CI.** A `macos-latest` job runs the whole suite plus a native Cocoa probe
+  (`examples/ui_probe_cocoa.ax`) and a loopback libcurl HTTP probe
+  (`examples/http_macos_probe.ax` against `python3 -m http.server`). This is
+  the native runtime evidence the Windows host cannot produce.
 
 **`sizeof(T)` and `addr_of(x)`** — the language-level blocker for every
 non-8-byte-slot container (gap A2 in `docs/language-gaps.md`, ranked #2)

@@ -527,6 +527,7 @@ fn load_file(path: &Path, key: &str, state: &mut LoadState) -> Result<Option<usi
             structs: Vec::new(),
             funcs,
             imports: Vec::new(),
+            is_rs: true,
         });
         state.rust_sources.push(pretty_path);
         state.stack.pop();
@@ -552,6 +553,7 @@ fn load_file(path: &Path, key: &str, state: &mut LoadState) -> Result<Option<usi
         structs: Vec::new(),
         funcs: Vec::new(),
         imports: Vec::new(),
+        is_rs: false,
     });
 
     // resolve this file's imports relative to its own directory
