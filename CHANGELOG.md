@@ -13,9 +13,10 @@ stays inside Rust; Aoxn-facing exports use only the existing scalar ABI.
 Includes a 30-frame native window probe, bridge export checks and third-backend
 primitive-contract coverage. Building requires rustc and Apple's frameworks;
 the selfhost CLI does not load the Rust bridge. Native desktop execution is
-not verified on the Windows development host; no new version is released.
+validated by the `macos-latest` CI job (the 30-frame NSWindow probe), not on
+the Windows development host; no new version is released.
 
-### macOS core port (under validation)
+### macOS core port (natively validated on Apple Silicon CI)
 
 Adds `target_os() == "macos"`, Darwin executable-path lookup, monotonic clock
 selection, inode64 filesystem layout/symbol selection in both C emitters,
@@ -26,8 +27,9 @@ signal termination. The selfhost CLI selects `-mcpu=` for Darwin arm64 and
 libSystem supplies C math without
 Linux's `-lm`. POSIX sleeps now split seconds/nanoseconds, and localtime_r
 success is detected by a non-null return. Windows platform-sensitive tests
-and simulated Darwin symbol checks passed; native macOS tests are not yet
-available locally. No IDE package or version release. The Cocoa UI backend is
+and simulated Darwin symbol checks passed locally; native macOS execution is
+supplied by the `macos-latest` CI job (Apple Silicon), where the whole suite
+runs green. No IDE package or version release. The Cocoa UI backend is
 described above; the macOS HTTP transport, installer and CI job below.
 
 ### macOS HTTP transport, installer and CI
@@ -69,9 +71,13 @@ from the new CI job, not the Windows development host.
   with the remedy (`rustup.rs`, `xcode-select --install`). Documented in
   `docs/install.md` and `docs/platform-support.md` (both halves).
 - **CI.** A `macos-latest` job runs the whole suite plus a native Cocoa probe
-  (`examples/ui_probe_cocoa.ax`) and a loopback libcurl HTTP probe
-  (`examples/http_macos_probe.ax` against `python3 -m http.server`). This is
-  the native runtime evidence the Windows host cannot produce.
+  (`examples/ui_probe_cocoa.ax`), a loopback libcurl HTTP probe
+  (`examples/http_macos_probe.ax` against `python3 -m http.server`) and a
+  from-source installer + installed-toolchain smoke (`dist/install-macos.sh`
+  into a prefix, then `aoxn doctor` and `hello.ax`/`stdlib_demo.ax` resolved
+  through the installed `AOXN_HOME/lib/stdlib`). This is the native runtime
+  evidence the Windows host cannot produce; the job is green on Apple Silicon
+  (2026-11-15). Intel macOS is cross-checked clean, not natively run.
 - **macOS SDK sysroot for clang/rustc.** The first native CI run built the
   compiler but failed to LINK every generated program with
   `ld: library 'System' not found`: Apple's linker resolves `libSystem` and the
