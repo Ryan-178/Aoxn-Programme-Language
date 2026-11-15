@@ -85,6 +85,14 @@ from the new CI job, not the Windows development host.
   `None`, so no flag is added and the emitted C/objects are byte-identical
   (`macos_sdk_root_is_noop_off_macos` pins it); the self-host fixed point is
   untouched.
+- **net URL tests link the macOS transport.** With the sysroot fixed, the
+  next native run failed in `tests/net.rs` with `undefined symbol:
+  _aoxn_http_request` (and the four stream externs): `stdlib/net/http.ax`'s
+  macOS dispatch is LIVE on macOS, so even the pure URL-layer drivers
+  reference the libcurl bridge. The test now imports
+  `stdlib/net/http_macos` on macOS only (the provider that defines and links
+  the bridge, exactly as `examples/http_macos_probe.ax` does); Windows/Linux
+  fold those branches away and are byte-identical, needing no rustc.
 
 **`sizeof(T)` and `addr_of(x)`** — the language-level blocker for every
 non-8-byte-slot container (gap A2 in `docs/language-gaps.md`, ranked #2)

@@ -176,7 +176,14 @@ fn root() -> PathBuf {
 
 fn build(dir: &Path, name: &str, src: &str) -> PathBuf {
     let src_path = dir.join(format!("{name}.ax"));
-    fs::write(&src_path, src).unwrap();
+    // macOS: http.ax's transport dispatch is live here and references the
+    // libcurl bridge externs, so import the provider (inert on Windows/Linux).
+    let body = if cfg!(target_os = "macos") {
+        format!("import * from \"stdlib/net/http_macos\"\n{src}")
+    } else {
+        src.to_string()
+    };
+    fs::write(&src_path, body.as_bytes()).unwrap();
     let exe = dir.join(format!("{name}{EXE}"));
     aoxn::build_paths_opts(&[src_path.display().to_string()], &exe, true, &libs(), &[])
         .unwrap_or_else(|d| panic!("{name} failed: {d:?}"));
