@@ -206,6 +206,35 @@ fn two_modules_exporting_one_extern_name_collide() {
 }
 
 #[test]
+fn ax_declaration_and_rs_definition_share_one_extern_symbol() {
+    // A `.ax` `extern def` is a DECLARATION (a promise that some C library
+    // defines the symbol); a `.rs` bridge is a DEFINITION. One definition plus
+    // any number of identical declarations is one C symbol, so the flatten
+    // collapses the duplicate declaration instead of erroring. This is what
+    // lets net/http.ax declare the libcurl bridge externs while
+    // net/http_macos.ax links the .rs that defines them. The two-.rs collision
+    // above stays an error: two definitions cannot share one symbol.
+    let scratch = Scratch::new();
+    std::fs::write(
+        scratch.0.join("native.rs"),
+        "#[no_mangle]\npub extern \"C\" fn shared_sym(x: i64) -> i64 { x + 1 }\n",
+    )
+    .unwrap();
+    let main = scratch.0.join("main.ax");
+    std::fs::write(
+        &main,
+        "import native\n\nextern def shared_sym(x: int) -> int\n\ndef main() -> int:\n    \
+         assert(shared_sym(41) == 42)\n    print(\"PASS shared\")\n    return 0\n",
+    )
+    .unwrap();
+    let exe = scratch.0.join(format!("program{}", aoxn::platform::exe_ext()));
+    aoxn::build_paths_opts_lvl(&[main.display().to_string()], &exe, 0, &[], &[])
+        .unwrap_or_else(|d| panic!("{d:?}"));
+    let out = checked(&mut Command::new(&exe), "run shared-symbol program");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("PASS shared"));
+}
+
+#[test]
 fn scanner_rejects_unsupported_signatures() {
     // Pure scan: no rustc, no clang. Every case is a REAL ABI or cache
     // hazard, not a style preference.

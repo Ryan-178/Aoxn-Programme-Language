@@ -45,6 +45,20 @@ extern def WinHttpCloseHandle(h: int) -> int
 extern def GetLastError() -> int
 extern def Sleep(ms: int)
 
+# ---- macOS transport surface (libcurl Rust bridge) ----
+#
+# Provided by stdlib/net/http_macos.ax (which imports http_macos_native.rs). These are
+# declared here but called ONLY inside `target_os() == "macos"` branches, which
+# fold away on Windows/Linux — so a program that does not import http_macos
+# never references these symbols and never needs rustc. `out` is a caller-owned
+# aligned i64 array; returned strings/buffers are malloc'd and adopted (Aoxn
+# strings leak by design, like the WinHTTP path's as_string(buf)).
+extern def aoxn_http_request(method: string, url: string, headers: string, body_ptr: int, body_len: int, ua: string, connect_ms: int, recv_ms: int, out: int) -> int
+extern def aoxn_http_stream_open(method: string, url: string, headers: string, body_ptr: int, body_len: int, ua: string, connect_ms: int, recv_ms: int, out: int) -> int
+extern def aoxn_http_stream_read(handle: int, buf: int, cap: int) -> int
+extern def aoxn_http_stream_close(handle: int)
+extern def aoxn_http_stream_err(handle: int) -> string
+
 # ---- constants (decimal — the repo keeps byte/flag constants decimal) ----
 
 def WINHTTP_FLAG_SECURE() -> int:
@@ -385,6 +399,88 @@ def net_query_header_str(req: int, name: string) -> string:
 def net_query_header_int(req: int, name: string, dflt: int) -> int:
     return net_header_int(net_raw_headers(req), name, dflt)
 
+# ---- macOS transport helpers (libcurl bridge) ----
+#
+# Each helper guards ITSELF with `target_os() != "macos"`: the compiler emits
+# every function body, so an unguarded bridge call would drag the aoxn_http_*
+# symbols into a Windows/Linux object even when the entry point's macOS branch
+# is dead (the os.ax / v0.50.7 law). On macOS the program imports
+# stdlib/net/http_macos to supply the bridge; the raw header block the bridge
+# returns is parsed by the SAME pure helpers the WinHTTP path uses.
+
+def net_macos_request_bytes(method: string, url: string, headers: string, body_ptr: int, body_len: int, ua: string, connect_ms: int, recv_ms: int) -> NetHttpResp:
+    r = NetHttpResp(status=0, body="", request_id="", retry_after=0, location="", err=0, errmsg="")
+    if target_os() != "macos":
+        r.err = 1
+        r.errmsg = "net/http: macOS transport only"
+        return r
+    out = malloc(40)
+    fill_zero(out, 40)
+    rc = aoxn_http_request(method, url, headers, body_ptr, body_len, ua, connect_ms, recv_ms, out)
+    if rc != 0:
+        r.err = 1
+        ep = load_i64(out + 32)
+        if ep != 0:
+            r.errmsg = as_string(ep)
+        if len(r.errmsg) == 0:
+            r.errmsg = "macOS transport error"
+        free(out)
+        return r
+    r.status = load_i64(out)
+    rawh = as_string(load_i64(out + 8))
+    r.body = as_string(load_i64(out + 16))
+    r.request_id = net_header_value(rawh, "request-id")
+    r.retry_after = net_header_int(rawh, "retry-after", 0)
+    r.location = net_header_value(rawh, "location")
+    free(out)
+    return r
+
+def net_macos_stream_open_bytes(method: string, url: string, headers: string, body_ptr: int, body_len: int, ua: string, connect_ms: int, recv_ms: int) -> NetHttpStream:
+    s = NetHttpStream(session=0, conn=0, req=0, status=0, got=0, request_id="", err=0, errmsg="")
+    if target_os() != "macos":
+        s.err = 1
+        s.errmsg = "net/http: macOS transport only"
+        return s
+    out = malloc(24)
+    fill_zero(out, 24)
+    h = aoxn_http_stream_open(method, url, headers, body_ptr, body_len, ua, connect_ms, recv_ms, out)
+    if h == 0:
+        s.err = 1
+        ep = load_i64(out + 16)
+        if ep != 0:
+            s.errmsg = as_string(ep)
+        if len(s.errmsg) == 0:
+            s.errmsg = "macOS transport error"
+        free(out)
+        return s
+    # the bridge handle rides the `req` field; session/conn stay 0 on macOS
+    s.req = h
+    s.status = load_i64(out)
+    rawh = as_string(load_i64(out + 8))
+    s.request_id = net_header_value(rawh, "request-id")
+    free(out)
+    return s
+
+def net_macos_stream_read(s: NetHttpStream, buf: int, cap: int) -> NetHttpStream:
+    if target_os() != "macos":
+        return s
+    s.got = 0
+    n = aoxn_http_stream_read(s.req, buf, cap)
+    if n < 0:
+        s.err = 1
+        s.errmsg = aoxn_http_stream_err(s.req)
+        if len(s.errmsg) == 0:
+            s.errmsg = "macOS stream read failed"
+        return s
+    s.got = n
+    return s
+
+def net_macos_stream_close(s: NetHttpStream):
+    if target_os() != "macos":
+        return
+    if s.req != 0:
+        aoxn_http_stream_close(s.req)
+
 # ---- the request core ----
 
 # `ua` is the User-Agent string, also used as the WinHttpOpen agent name.
@@ -437,6 +533,8 @@ def net_http_no_redirects(session: int):
 
 def net_http_request_bytes(method: string, url: string, headers: string, body_ptr: int, body_len: int, ua: string, connect_ms: int, recv_ms: int) -> NetHttpResp:
     r = NetHttpResp(status=0, body="", request_id="", retry_after=0, location="", err=0, errmsg="")
+    if target_os() == "macos":
+        return net_macos_request_bytes(method, url, headers, body_ptr, body_len, ua, connect_ms, recv_ms)
     if target_os() != "windows":
         # honest platform gate: the transport is WinHTTP, and there is no
         # TLS stack in the language to replace it with on Linux yet
@@ -592,6 +690,8 @@ def net_http_stream_open(method: string, url: string, headers: string, body: str
 # carried by a string.
 def net_http_stream_open_bytes(method: string, url: string, headers: string, body_ptr: int, body_len: int, ua: string, connect_ms: int, recv_ms: int) -> NetHttpStream:
     s = NetHttpStream(session=0, conn=0, req=0, status=0, got=0, request_id="", err=0, errmsg="")
+    if target_os() == "macos":
+        return net_macos_stream_open_bytes(method, url, headers, body_ptr, body_len, ua, connect_ms, recv_ms)
     if target_os() != "windows":
         s.err = 1
         s.errmsg = "net/http: no transport on this platform yet (WinHTTP is Windows-only; docs/platform-support.md)"
@@ -670,6 +770,8 @@ def net_http_stream_open_bytes(method: string, url: string, headers: string, bod
 
 # one read into `buf` (capacity `cap`); byte count lands in s.got (0 = end)
 def net_http_stream_read(s: NetHttpStream, buf: int, cap: int) -> NetHttpStream:
+    if target_os() == "macos":
+        return net_macos_stream_read(s, buf, cap)
     if target_os() != "windows":
         return s
     s.got = 0
@@ -700,6 +802,9 @@ def net_http_stream_read(s: NetHttpStream, buf: int, cap: int) -> NetHttpStream:
     return s
 
 def net_http_stream_close(s: NetHttpStream):
+    if target_os() == "macos":
+        net_macos_stream_close(s)
+        return
     if target_os() != "windows":
         return
     if s.req != 0:

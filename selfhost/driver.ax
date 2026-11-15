@@ -186,7 +186,7 @@ def compile_file_opts(src_path: string, obj_path: string, exe_path: string, opts
         i = i + 1
     if target_os() == "windows":
         args = vec_push(args, as_ptr("-Wl,/STACK:8388608"))
-    else:
+    elif target_os() == "linux":
         args = vec_push(args, as_ptr("-lm"))
     rc = run_process(opts.clang_exe, args)
     if rc != 0:

@@ -13,8 +13,16 @@ this is not a new version or release. With that batch every item of the
 31-module stdlib roadmap is dispositioned (27 shipped, 4 standing won't-do
 decisions with substitutes; `docs/stdlib-todo.md` §7). The independent
 package-manager crate remains **0.43.0**. Fixes land on main first; earlier
-minor lines are not maintained. Windows and Linux are supported, macOS is not.
-Version history is in [CHANGELOG.md](CHANGELOG.md).
+minor lines are not maintained.
+Windows and Linux are supported, and macOS is natively validated on the
+`macos-latest` CI job (Apple Silicon): the whole suite, C parity/ABI, the Rust
+bridge, the package manager, a native Cocoa window probe and a loopback libcurl
+HTTP probe build and run on real macOS. Cocoa UI is an unreleased Rust-bridge
+implementation and macOS HTTP transport rides an opt-in libcurl Rust bridge
+(`stdlib/net/http_macos`). The single-file packaged installer remains
+Windows-only; macOS installs from source via `dist/install-macos.sh`, exercised
+by the same CI job. Version history is in
+[CHANGELOG.md](CHANGELOG.md).
 
 Report vulnerabilities privately to **zmjsjsg3@163.com**, before public issues
 or disclosure. Include commit/version, OS/architecture, `aoxn doctor`, minimal
@@ -65,9 +73,12 @@ which are traversal/resource guards, not permission checks — it can still
 delete anything the caller may delete. **`stdlib/logging` appends to files**
 with the caller's permissions; log paths are caller-controlled configuration.
 **`stdlib/net`'s HTTP facade performs real HTTP requests** through the WinHTTP
-transport (Windows-only; elsewhere the transport answers an error value), with
+transport on Windows and an opt-in libcurl Rust bridge on macOS
+(`stdlib/net/http_macos`; Linux still answers an error value), with
 the same redirect/credential rules as the SDK transport; its URL layer is pure
-computation. Isolate untrusted projects with
+computation. The libcurl bridge is trusted native code running with the
+caller's permissions and performs real TLS network I/O — it is not a sandbox.
+Isolate untrusted projects with
 OS/container controls over files, network and credentials. Type checking is not
 permission to execute untrusted output.
 
@@ -115,7 +126,10 @@ verification does not establish sandboxing or constitute a security audit.
   A mismatched user declaration may link yet have undefined behavior; tests with
   known C helpers are not a validator for arbitrary third-party signatures.
   Extern names are emitted verbatim and never namespace-prefixed: the name is the
-  C symbol the program links against.
+  C symbol the program links against. The resolver collapses identical extern
+  declarations only when at most one is backed by a `.rs` definition; two `.rs`
+  definitions of one symbol still error, so dedup can never silently pick one of
+  two conflicting native implementations.
 - The Rust ABI surface is narrow and exact: `i64` to `int`, `f64` to `float`,
   `*const`/`*mut c_char` to `string`, and no return to `void`. Rust `bool`,
   `i32`, `u64`, `String`, `&str`, `*const i64`, generics, `where` clauses,
@@ -162,6 +176,9 @@ verification does not establish sandboxing or constitute a security audit.
 - Windows installation stays under its selected root, updates PATH and rechecks
   the compiler after self-test. Downloads are disabled by default; InstallClang
   is opt-in. Quarantine is OS policy; falsely reporting install success is a bug.
+  The macOS installer (`dist/install-macos.sh`) builds from source into a
+  caller-chosen prefix, downloads nothing, and reports missing cargo/clang
+  rather than fetching them; it overwrites only its own `<prefix>/lib/stdlib`.
 - The IDE canonicalizes workspace paths, rejects link escapes/clobbering, recreates
   outputs rather than following hard links and validates commands in Rust. File
   read/write/create and preview commands are bounded to the opened folder.
@@ -185,7 +202,8 @@ verification does not establish sandboxing or constitute a security audit.
   WinHTTP must not silently leak credentials across redirects or accept truncation.
 - String bounds clamps are compiler/library safety properties, not interchangeable
   with unchecked array semantics. SDK keys are unsanitized heap strings: use
-  environment configuration and redact dumps; WinHTTP transport is Windows-only.
+  environment configuration and redact dumps; the WinHTTP transport is
+  Windows-only and the macOS libcurl transport is opt-in.
 - IDE/web advisories are in scope. Exceptions require reasons and exit conditions;
   do not drop the glib audit exception without resolving its dependency constraint.
 - JS manifests carry no known advisory as of 2026-11-01: `ide` runs `next` 16.4.3
@@ -210,8 +228,11 @@ step requires clang for the C parity and ABI targets, so their early-return skip
 path cannot produce a green gate without the comparisons. Both jobs also run a
 named `Test Rust bridge` step with `AOXN_TEST_REQUIRE_CLANG=1` and
 `AOXN_TEST_REQUIRE_RUSTC=1`, so a runner without rustc fails rather than skipping
-the bridge tests. Native command exit codes gate Windows smoke/release steps, and
-installer downloads remain opt-in.
+the bridge tests. A `macos-latest` job runs the same suite plus a native Cocoa
+probe, a loopback libcurl HTTP probe and a from-source installer +
+installed-toolchain smoke, supplying the Apple runtime evidence
+the Windows/Linux hosts cannot. Native command exit codes gate Windows
+smoke/release steps, and installer downloads remain opt-in.
 The web-bench workflow's bash steps use forward-slash paths so Git Bash cannot
 consume a separator as an escape; the fixed invocation was rerun locally
 (server build plus 23/23 functional parity checks).
@@ -231,6 +252,33 @@ provenance/retention rather than deleting or certifying stored archives. No
 archive content was executed.
 
 ### Deliberate limitations and evidence
+
+The unreleased Cocoa backend invokes AppKit/CoreGraphics through an unsafe,
+fixed-signature Objective-C Rust bridge on the main thread. It requires rustc;
+it is trusted native code, not a sandbox. Scalar bridge buffers and borrowed
+clipboard strings retain explicit lifetime contracts. Windows UI tests (17/17)
+and both Apple metadata checks passed, and a native Cocoa window probe
+(30 frames in an NSWindow) passes on the `macos-latest` CI job. Full
+IME composition and Retina-resolution backing are outside current coverage.
+
+The unreleased Darwin port uses the modern inode64 layout, with Intel symbol
+redirection emitted by both compilers. Raw libc calls remain subject to the
+FFI contract; Windows regressions and simulated macOS symbol checks alone do
+not validate Apple's runtime ABI. Local validation on 2026-11-11 passed 385
+Windows compiler tests, the Linux workspace/tests cross-check and 11
+documentation tests; both Apple Silicon and Intel workspace/tests cross-checks
+passed, and those do not link or execute Apple binaries. **Native Apple
+execution is supplied by the `macos-latest` CI job (2026-11-15, Apple
+Silicon)**: the whole suite, C parity/ABI, the Rust bridge, the package
+manager, the native Cocoa window probe, the loopback libcurl HTTP probe and the
+from-source installer + installed-toolchain smoke all build and run green,
+including the Darwin SDK layout and fixed-timezone tests on the native runner.
+Intel macOS is cross-checked clean; the hosted runner is Apple Silicon, so
+Intel native execution is not separately claimed. The macOS installer builds
+from source (`dist/install-macos.sh`) and no new version release is implied.
+The macOS libcurl HTTP bridge is trusted native code performing real TLS I/O
+with the caller's permissions, validated by the `macos-latest` CI probe rather
+than on this Windows host.
 
 The unreleased `addr_of` is an unchecked raw-memory escape hatch, not a
 reference type: its address is valid only while the owner lives. A struct
@@ -281,16 +329,19 @@ permissions, and the bridge checks its declarations, not its behavior.
 The thirteen findings from the 2026-10-17 audit were fixed in 0.51.0/0.51.1;
 that is history, not absence of new defects. Baseline **8f90aca** recorded
 343 root + 104 package tests on Windows with explicit clang 23.1.2. Current-tree
-validation passed **399 root + 116 package tests (515), 0 failed/ignored** on
-Windows (2026-11-14, clang 23.1.2 at `E:\llvm\bin\clang.exe` on this machine —
+validation passed **405 root + 116 package tests (521), 0 failed/ignored** on
+Windows (2026-11-15, clang 23.1.2 at `E:\llvm\bin\clang.exe` on this machine —
 `C:\Program Files\LLVM` does not exist here, an earlier note claiming the
 opposite was corrected — rustc from rustup), with `AOXN_TEST_REQUIRE_CLANG=1`
 and `AOXN_TEST_REQUIRE_RUSTC=1`. Package tests ran via
-`bash run_pkg_tests.sh`; the 14 new root tests are the closing batch's driver
+`bash run_pkg_tests.sh`; the root suite grew 399→405 with the macOS work —
+the Rust bridge's twelfth test pins the provenance-aware extern dedup
+(`http_macos.ax` declares the `aoxn_http_*` externs, the `.rs` bridge defines
+them) plus the Cocoa bridge/contract tests. The closing batch's 14 driver
 suites (sys, argparse, logging, unittest ×2, collections, itertools ×2 incl.
 the CPython order differential, shutil over real temp trees, net ×3 incl. the
 `urllib.parse` differential and the HTTP facade against a local mock server,
-threading ×2 incl. the selfhost-CLI pin); the `re` differential/selfhost pins
+threading ×2 incl. the selfhost-CLI pin), the `re` differential/selfhost pins
 and the eight sizeof/addr_of pins remain in the suite.
 IDE validation below is historical, not rerun for this batch: IDE
 Rust tests passed 46/46. The IDE frontend ran 62/63: `theme.test.ts` could not
@@ -303,8 +354,14 @@ stages, real socket loopback (Rust and selfhost builds), random cross-process
 vectors and the Python CSV differential are part of the suite. The manifest v2
 flows were exercised end to end (init, path install, directory-registry
 publish/install, migrate with round-trip verification). Linux Rust
-workspace/tests cross-check passed, not Linux
-native runtime. See [verification evidence](docs/c-compatibility.md). No fresh
+workspace/tests cross-check passed, and both Apple targets
+(`aarch64-apple-darwin`, `x86_64-apple-darwin`) cross-checked clean — these
+are cross-checks, not native runtime. Native macOS evidence comes from the
+`macos-latest` CI job (2026-11-15, Apple Silicon, green): the whole suite,
+Cocoa + libcurl HTTP probes, libcurl loopback against a local server and the
+from-source installer + installed-toolchain smoke; it is not a claim of local
+Apple execution on this Windows host. See
+[verification evidence](docs/c-compatibility.md). No fresh
 security audit, IDE validation, Linux native runtime or full installer release is
 implied. The P2 maintenance follow-up reran the explicit locked compiler/package
 commands; results and the Python checker tests are recorded in
@@ -328,7 +385,13 @@ Xvfb) ran again.
 不代表新版本或发布。至此 31 项标准库路线图全部处置完毕（27 项交付、
 4 项长期不做并给出替代；见 `docs/stdlib-todo.md` §7）。
 独立包管理器 crate 保持 **0.43.0**。修复先落 main，旧小版本不维护；
-支持 Windows/Linux，不支持 macOS。见 [CHANGELOG](CHANGELOG.md)。
+支持 Windows/Linux；macOS 已在 `macos-latest` CI 任务（Apple Silicon）上
+原生验证通过：整套测试、C parity/ABI、Rust 桥、包管理器、原生 Cocoa 窗口
+探针与环回 libcurl HTTP 探针都在真实 macOS 上构建运行。Cocoa UI 为未发布
+Rust 桥实现，macOS HTTP 传输经可选启用的 libcurl Rust 桥
+（`stdlib/net/http_macos`）提供。单文件打包安装器仍仅 Windows；macOS 经
+`dist/install-macos.sh` 从源码安装，并由同一 CI 任务实测。见
+[CHANGELOG](CHANGELOG.md)。
 
 漏洞先私报 **zmjsjsg3@163.com**，不要先发公开 issue。提供 commit/版本、系统架构、
 aoxn doctor、最小输入、命令、预期/实际行为与影响。误编译附 aoxn c 与 O0 复现情况。
@@ -363,10 +426,11 @@ API 是唯一提供的同步手段）。**`stdlib/shutil` 执行真实文件复�
 删除**；它拒绝跟随重解析点（符号链接/junction）并把递归限制在深度 64，
 这是遍历/资源守卫而非权限检查——调用者能删的它仍能删。
 **`stdlib/logging` 以调用者权限追加写文件**；日志路径是调用方配置。
-**`stdlib/net` 的 HTTP 门面经 WinHTTP 传输发起真实 HTTP 请求**
-（Windows-only；其他平台传输返回值错误），重定向/凭据规则与 SDK 传输
-一致；其 URL 层是纯计算。对不可信项目使用系统/容器文件、网络和凭据隔离；
-类型检查通过不代表可以安全执行。
+**`stdlib/net` 的 HTTP 门面发起真实 HTTP 请求**：Windows 经 WinHTTP 传输，
+macOS 经可选启用的 libcurl Rust 桥（`stdlib/net/http_macos`；Linux 仍返回
+值错误），重定向/凭据规则与 SDK 传输一致；其 URL 层是纯计算。libcurl 桥是
+以调用者权限运行的可信原生代码，进行真实 TLS 网络 I/O——不是沙箱。
+对不可信项目使用系统/容器文件、网络和凭据隔离；类型检查通过不代表可以安全执行。
 
 `AOXN_RUSTC` 与 `AOXN_CLANG` 一样是调用方配置，而不是对攻击者的安全边界：
 它只是指定构建要运行的 rustc 可执行文件。src/ 无外部 Rust crate 依赖；
@@ -396,7 +460,9 @@ API 是唯一提供的同步手段）。**`stdlib/shutil` 执行真实文件复�
 - 外部 ABI 依赖正确声明。Aoxn int 对应 long long，bool 对应 C int，不能推为
   任意 C int/_Bool 兼容；固定参数 extern 不支持 C 可变参数。错误声明可能链接
   成功却产生 UB；已知签名 C helper 测试不能校验任意第三方声明。extern 名称逐字
-  发射、绝不加命名空间前缀：该名字就是程序链接的 C 符号。
+  发射、绝不加命名空间前缀：该名字就是程序链接的 C 符号。解析器只在「至多一个
+  声明由 `.rs` 定义提供」时合并相同 extern 声明；同名两份 `.rs` 定义仍报错，
+  因此合并绝不能在两个冲突的原生实现之间静默择一。
 - Rust ABI 面窄而精确：`i64` 对应 `int`，`f64` 对应 `float`，
   `*const`/`*mut c_char` 对应 `string`，无返回值对应 `void`。Rust `bool`、
   `i32`、`u64`、`String`、`&str`、`*const i64`、泛型、`where` 子句、`async`、
@@ -426,7 +492,9 @@ API 是唯一提供的同步手段）。**`stdlib/shutil` 执行真实文件复�
   注册表 HTTP 为明文，恶意索引可同时替换数据和摘要；信任等级是声明而非审计。
 - 并行 worker 各有 registry state；未知 schema 失败；生产剪枝保留生产可达包。
 - 安装器限制在选定根、更新 PATH、自检后再确认二进制。默认不下载，InstallClang
-  显式启用；系统隔离不是编译器漏洞，假报成功是 bug。
+  显式启用；系统隔离不是编译器漏洞，假报成功是 bug。macOS 安装器
+  （`dist/install-macos.sh`）从源码构建到调用方选定的前缀，不下载任何东西，
+  缺 cargo/clang 时报告而非自行获取；只覆盖自己的 `<prefix>/lib/stdlib`。
 - IDE Rust 层限制工作区路径、防链接逃逸/覆盖、重建输出防硬链接，并验证命令。
   文件读写/创建与预览命令限制在已打开目录内。**终端面板是有意的例外**：
   `ide_terminal_exec` 通过平台 shell 执行用户输入的命令，初始 cwd 限制在工作区，
@@ -442,7 +510,7 @@ API 是唯一提供的同步手段）。**`stdlib/shutil` 执行真实文件复�
   该守卫是正确性而非消毒。
   WinHTTP 不静默跨重定向泄密、不把截断当成功。
 - 字符串 clamp 属安全属性，不得借数组不检查取消。SDK key 不清零，优先环境配置，
-  转储脱敏；WinHTTP 为 Windows-only。IDE/Web 公告在范围内，例外需要理由与退出条件，
+  转储脱敏；WinHTTP 为 Windows-only，macOS libcurl 传输为可选启用。IDE/Web 公告在范围内，例外需要理由与退出条件，
   未解决依赖约束前不得删除 glib audit 例外。
 - 2026-11-01 起 JS 清单无已知公告：`ide` 为 `next` 16.4.3、dompurify 3.4.17
   （monaco 锁死精确版本，只能靠 override），`web/next-app` 为 `next`
@@ -462,7 +530,9 @@ API 是唯一提供的同步手段）。**`stdlib/shutil` 执行真实文件复�
 Windows/Linux 另有独立步骤强制 C parity/ABI 目标使用 clang，提前返回的跳过路径
 不能让未实际比较的门禁变绿。两个平台还各有一个命名步骤 `Test Rust bridge`，
 设置 `AOXN_TEST_REQUIRE_CLANG=1` 与 `AOXN_TEST_REQUIRE_RUSTC=1`：缺少 rustc 的
-runner 会失败而不是跳过桥测试。Windows 冒烟/发布逐条检查原生命令退出码，
+runner 会失败而不是跳过桥测试。`macos-latest` job 运行同一套测试，外加原生
+Cocoa 探针、环回 libcurl HTTP 探针与从源码安装器 + 已安装工具链冒烟，提供
+Windows/Linux 主机无法给出的 Apple 运行时证据。Windows 冒烟/发布逐条检查原生命令退出码，
 安装器下载仍为显式启用。web-bench 工作流的 bash 步骤使用正斜杠路径，Git Bash
 不会再把分隔符当转义吞掉；修复后的调用已在本地重跑（服务器构建 + 23/23 项
 功能 parity 检查通过）。本地 workflow 检查不证明托管 Actions 或安装器运行成功。
@@ -476,6 +546,25 @@ GitHub `main` 分支受保护：必须经 pull request（2026-11-13 起批准数
 保留决定，不删除或认证归档，没有执行归档内容。
 
 ### 有意限制与证据
+
+未发布 Cocoa 后端以主线程上的 unsafe 固定签名 Objective-C Rust 桥调用
+AppKit/CoreGraphics，需要 rustc，是可信原生代码而非沙箱；缓冲区与剪贴板
+借用字符串仍有显式生命周期契约。Windows UI 17/17 与双 Apple 元数据检查通过，
+原生 Cocoa 窗口探针（NSWindow 中 30 帧）也在 `macos-latest` CI 任务上通过。
+完整 IME 与 Retina 分辨率缓冲区不在当前覆盖内。
+
+未发布 Darwin 移植采用现代 inode64 布局，两套编译器同步发射 Intel 符号重定向。
+原始 libc 调用仍受 FFI 契约限制；仅凭 Windows 回归和模拟 macOS 符号检查不能
+证明 Apple 运行期 ABI 正确。2026-11-11 本地通过 385 项 Windows 编译器测试、
+Linux workspace/tests 交叉检查及 11 项文档测试；Apple Silicon 与 Intel
+workspace/tests 交叉检查均通过，这些不链接或执行 Apple 二进制。**Apple 原生
+执行由 `macos-latest` CI 任务提供（2026-11-15，Apple Silicon）**：整套测试、
+C parity/ABI、Rust 桥、包管理器、原生 Cocoa 窗口探针、环回 libcurl HTTP 探针
+与从源码安装器 + 已安装工具链冒烟都构建运行通过，含原生 runner 上的 Darwin SDK
+布局与固定时区测试。Intel macOS 交叉检查干净；托管 runner 为 Apple Silicon，
+故不单独声明 Intel 原生执行。macOS 安装器从源码构建（`dist/install-macos.sh`），
+不代表发布新版本。macOS libcurl HTTP 桥是以调用者权限进行真实 TLS I/O 的
+可信原生代码，由 `macos-latest` CI 探针验证，而非本 Windows 主机。
 
 未发布的 `addr_of` 是不检查生命周期的原始内存逃生通道，不是引用类型；地址只在
 所有者存活期间有效。结构体参数地址属于被调方副本。nullable 为根的左值即使收窄
@@ -511,14 +600,16 @@ threading/futures 另在测试中由自举 CLI 编译运行。
 
 2026-10-17 审计13项已在0.51.0/0.51.1修复，不保证没有新缺陷。
 历史基线 **8f90aca** 在 Windows 显式 clang 23.1.2 记录343根+104包；当前树最终
-**399根+116包=515项通过，0失败/忽略**（2026-11-14，本机 clang 23.1.2 位于
+**405根+116包=521项通过，0失败/忽略**（2026-11-15，本机 clang 23.1.2 位于
 `E:\llvm\bin\clang.exe`——`C:\Program Files\LLVM` 在本机并不存在，早前声称
 相反情况的说明已更正——rustc 来自 rustup），设置了
 `AOXN_TEST_REQUIRE_CLANG=1` 与 `AOXN_TEST_REQUIRE_RUSTC=1`。包测试通过
-`bash run_pkg_tests.sh` 执行；新增 14 项根测试为收官批次的驱动套件
+`bash run_pkg_tests.sh` 执行；根套件从 399 增至 405，新增 macOS 工作的测试——
+Rust 桥第 12 项钉住按来源去重 extern（`http_macos.ax` 声明 `aoxn_http_*`
+extern，由 `.rs` 桥定义它们）以及 Cocoa 桥/契约测试。收官批次的 14 项驱动套件
 （sys、argparse、logging、unittest ×2、collections、itertools ×2 含 CPython
 顺序差分、shutil 真实临时树、net ×3 含 `urllib.parse` 差分与对本地 mock
-服务器的 HTTP 门面、threading ×2 含自举 CLI 钉测试）；`re` 差分/自举钉与
+服务器的 HTTP 门面、threading ×2 含自举 CLI 钉测试）、`re` 差分/自举钉与
 8 项 sizeof/addr_of 钉测试仍在套件内。
 以下 IDE 证据为历史记录，本批未重跑：IDE Rust 测试 46/46 通过；IDE 前端 62/63，
 `theme.test.ts` 因本检出缺少 `node_modules` 无法加载 `react`，包管理器前端测试
@@ -528,7 +619,11 @@ ABI 与2项 parity。
 原不动点、两阶段 CLI、真实 socket 回环（Rust 与 selfhost 构建）、随机数跨进程向量
 与 Python CSV 差分都在套件内。清单 v2 流程已端到端跑过（init、路径安装、
 目录注册表发布/安装、带往返校验的 migrate）。Linux Rust workspace/tests
-cross-check 通过，不等于原生运行。
+cross-check 通过，两个 Apple 目标（`aarch64-apple-darwin`、`x86_64-apple-darwin`）
+交叉检查也均干净——这些是交叉检查，不是原生运行。macOS 原生证据来自
+`macos-latest` CI 任务（2026-11-15，Apple Silicon，全绿）：整套测试、Cocoa 与
+libcurl HTTP 探针、对本地服务器的 libcurl 回环，以及从源码安装器 + 已安装
+工具链冒烟；并非本 Windows 主机 Apple 执行的声明。
 见[C 兼容证据](docs/c-compatibility.md)。不暗示新安全审计、IDE 验证、Linux 原生运行
 或完整安装器发布。P2维护后又执行显式locked编译器/包测试，结果与Python检查器
 测试见[仓库维护证据](docs/repository-audit.md)。该次维护未触发托管CI，

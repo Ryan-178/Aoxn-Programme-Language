@@ -238,6 +238,11 @@ pub fn generate_to_object(
     let clang = crate::find_clang()
         .ok_or_else(|| Diag::cc("cannot find clang for the C backend (set AOXN_CLANG or add LLVM to PATH)"))?;
     let mut cmd = std::process::Command::new(&clang);
+    // macOS: point clang at the SDK so its linker finds libSystem/frameworks
+    // (no-op elsewhere; see platform::macos_sdk_root).
+    if let Some(sdk) = crate::platform::macos_sdk_root() {
+        cmd.arg("-isysroot").arg(sdk);
+    }
     cmd.arg(format!("-O{}", opt_level.min(3)));
     // clang's own warnings are off by default: the emitted C is machine text
     // and `-w` keeps it (and the user) quiet. `--cc-warnings` turns them back
@@ -667,6 +672,10 @@ impl<'a> GenC<'a> {
         s.push_str("   No C standard headers: the runtime surface uses __builtin_* forms\n");
         s.push_str("   and every other C function is an Aoxn `extern def` declaration. */\n\n");
 
+        if crate::platform::target_os_name() == "macos" {
+            // Match Darwin's modern inode layout without changing user extern names.
+            s.push_str("#if defined(__x86_64__)\n#pragma redefine_extname stat stat$INODE64\n#pragma redefine_extname lstat lstat$INODE64\n#pragma redefine_extname fstat fstat$INODE64\n#pragma redefine_extname readdir readdir$INODE64\n#pragma redefine_extname opendir opendir$INODE64\n#endif\n\n");
+        }
         for decl in self.extern_decls.values() {
             s.push_str(decl);
             s.push('\n');

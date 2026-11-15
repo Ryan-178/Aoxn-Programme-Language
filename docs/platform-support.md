@@ -1,5 +1,52 @@
 # Platform support
 
+## Unreleased macOS core port (natively validated on Apple Silicon CI)
+
+The source tree adds macOS core compiler/CLI and portable-stdlib adaptations
+for Apple Silicon and Intel. **macOS is natively validated on the
+`macos-latest` CI job (Apple Silicon, 2026-11-15)**: the whole compiler/stdlib/
+TS/UI suite, C parity/ABI, the Rust bridge, the package manager, a native Cocoa
+window probe, a loopback libcurl HTTP probe and the from-source installer +
+installed-toolchain smoke all build and run green on real macOS. This is
+unreleased work (no version tag); Intel macOS is cross-checked clean, and the
+hosted runner is Apple Silicon, so Intel native execution is not separately
+claimed. Build from source with Rust and Apple's Command
+Line Tools (`xcode-select --install`); clang must resolve an installed SDK.
+A build-from-source installer is provided (`dist/install-macos.sh`): it builds
+the compiler with cargo, lays out `<prefix>/bin/aoxn` + the whole
+`<prefix>/lib/stdlib` tree + examples, adds `<prefix>/bin` to PATH and runs
+`aoxn doctor`, downloading nothing. There is no single-file packaged macOS
+artifact and no IDE packaging. An unreleased native Cocoa backend is available
+through `stdlib/ui_cocoa`, using a single-file Rust AppKit/CoreGraphics bridge;
+it requires rustc, and a native Cocoa window probe passes on the CI job. HTTP
+transport on macOS rides
+libcurl through an opt-in Rust bridge (`stdlib/net/http_macos` +
+`http_macos_native.rs`); the WinHTTP transport stays Windows-only and Linux
+still has no HTTP transport.
+
+`target_os()` reports `"macos"`. Native objects are Mach-O `.o`, static
+libraries `.a`, executables have no suffix, and libSystem supplies C math.
+Darwin adaptations cover clock IDs, executable-path discovery, inode64
+filesystem layouts/symbols, errno and IPv4 sockaddr layout. Darwin sockets
+use SO_NOSIGPIPE on created and accepted connections. Both C emitters select
+the Intel inode64 names before extern declarations; arm64 uses native names.
+Local cross-checks are distinct from real Apple clang linking/runtime tests.
+Local Windows regressions and Linux/Apple Silicon/Intel macOS Rust
+workspace/tests cross-checks passed; the `macos-latest` CI job now supplies the
+real Apple clang linking/runtime evidence on Apple Silicon — compiler, package,
+C ABI/parity, Rust bridge and socket suites, plus the Darwin SDK layout fixture
+and fixed-timezone POSIX test, all run natively there. Intel macOS still rests
+on cross-checks: run the same suites on an Intel runner before calling that
+architecture fully supported.
+
+The selfhost CLI selects `-mcpu=` for macOS arm64 and `-march=` for Intel
+using Darwin uname's machine field. Both CLI stages exercise `--cpu native`
+in the regression suite, and the `macos-latest` CI job validates the arm64
+path against Apple clang natively; the Intel `-march=` path is cross-checked
+and awaits an Intel runner.
+
+The platform history below describes the established Windows/Linux baseline.
+
 **Aoxn's first-class platform is Windows x86_64. Linux x86_64 is supported
 for the compiler, the standard library and the X11 UI backend as of
 v0.46.0.**
@@ -9,26 +56,26 @@ job, one windowing backend). v0.46.0 brings Linux back as a supported
 target — the compiler, the whole test suite and an X11 UI backend
 rewritten against the v3 `plat_*` contract all run on it — while Windows
 keeps everything that is Windows-specific: the installer, the release
-packaging and the Win32/GDI UI backend. macOS remains unsupported (the
-Cocoa surface needs struct-by-value externs the language cannot express;
-see `docs/ui.md`).
+packaging and the Win32/GDI UI backend. The unreleased macOS core port is
+separate from Cocoa UI support; see the validation scope above.
 
 ## What ships where
 
-| | Windows (first-class) | Linux (v0.46.0) |
-|---|---|---|
-| Compiler | `aoxn.exe` | `aoxn` (ELF objects, `-lm` linked automatically) |
-| Installer | `Aoxn-<version>-Setup.exe` | none — build from source |
-| Standard library | full, including `stdlib/net` (WinHTTP) | full **except** the `net/http` + `openai` transports (honest runtime error) |
-| UI backend | Win32/GDI (`stdlib/ui_win.ax`) | Xlib + Xft (`stdlib/ui_x11.ax`) |
-| UI link flags | `-l user32 -l gdi32` | `-l X11 -l Xft` |
-| CI | `windows-latest`, whole suite | `ubuntu-latest`, whole suite + Xvfb probe |
-| External tools | clang + MSVC Build Tools | clang (distro packages) |
+| | Windows (first-class) | Linux (v0.46.0) | macOS (unreleased) |
+|---|---|---|---|
+| Compiler | `aoxn.exe` | `aoxn` (ELF objects, `-lm` linked automatically) | `aoxn` (Mach-O `.o`, libSystem C math) |
+| Installer | `Aoxn-<version>-Setup.exe` | none — build from source | `dist/install-macos.sh` (build from source) |
+| Standard library | full, including `stdlib/net` (WinHTTP) | full **except** the `net/http` + `openai` transports (honest runtime error) | full; HTTP via opt-in libcurl bridge (`stdlib/net/http_macos`) |
+| UI backend | Win32/GDI (`stdlib/ui_win.ax`) | Xlib + Xft (`stdlib/ui_x11.ax`) | Cocoa (`stdlib/ui_cocoa`, Rust AppKit bridge) |
+| UI link flags | `-l user32 -l gdi32` | `-l X11 -l Xft` | AppKit/CoreGraphics frameworks (via rustc) |
+| CI | `windows-latest`, whole suite | `ubuntu-latest`, whole suite + Xvfb probe | `macos-latest`, whole suite + Cocoa + libcurl + installer probes |
+| External tools | clang + MSVC Build Tools | clang (distro packages) | Apple clang (Command Line Tools) + rustc |
 
 ## The invariants that make both platforms one codebase
 
 - **`target_os()` folds the BUILD host's OS.** `"windows"` on a Windows
-  build, `"linux"` on a Linux build (v0.46.0), `"other"` elsewhere. The
+  build, `"linux"` on a Linux build (v0.46.0), `"macos"` in the unreleased
+  macOS port, and `"other"` elsewhere. The
   self-hosted compiler has no platform check of its own:
   `selfhost/codegen.ax` folds `target_os()` by calling the builtin, whose
   value was burned in by the compiler that built it — so every stage of
@@ -58,11 +105,16 @@ see `docs/ui.md`).
 
 ## Still Windows-only (deliberately)
 
-- **`net/http` + `openai` transports** — the HTTP layer rides WinHTTP
-  (TLS, proxies, redirects for free). There is no TLS stack in the
-  language to replace it on Linux; the entry points return a clean
-  "no transport on this platform" error instead of failing to link.
-- **The installer / `aoxn-setup`** — one artifact, Windows packaging.
+- **The WinHTTP `net/http` + `openai` transports** — the Windows HTTP layer
+  rides WinHTTP (TLS, proxies, redirects for free). macOS has its own opt-in
+  libcurl bridge (`stdlib/net/http_macos`, a Rust `.rs` import); Linux still
+  has no TLS stack in the language to replace WinHTTP, so its entry points
+  return a clean "no transport on this platform" error instead of failing to
+  link. The SDKs import only the pure `http.ax`, so a Windows/Linux build
+  never pulls rustc or libcurl in.
+- **The single-file installer / `aoxn-setup`** — one PE artifact, Windows
+  packaging. macOS installs from source via `dist/install-macos.sh`; Linux
+  builds with cargo.
 - **The web benchmark suite's server** (`web/`) — its sockets speak
   ws2_32. `stdlib/socket.ax` now provides a portable blocking IPv4 TCP subset
   (Winsock on Windows, POSIX on Linux) with per-function `target_os()` guards;
@@ -73,8 +125,11 @@ see `docs/ui.md`).
   (Windows CRT `_spawnvp` + CRT argument quoting, POSIX `fork`/`execvp`); it does
   not use a shell. The selfhost CLI was exercised on Windows this round; no
   Linux-native CLI result is claimed here.
-- **macOS** — no Cocoa backend is expressible (struct-by-value externs);
-  nothing changed since the v0.30.0 removal.
+- **macOS UI** — the unreleased `ui_cocoa` backend requires the Rust bridge;
+  a native Cocoa window probe (30 frames in an NSWindow) passes on the
+  `macos-latest` CI job. The build-from-source installer
+  (`dist/install-macos.sh`) ships the backend's sources with the rest of the
+  stdlib tree; there is no packaged macOS UI artifact.
 
 ## History
 

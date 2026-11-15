@@ -84,7 +84,10 @@ def time_posix_clock_ns(clk: int) -> int:
     if target_os() == "windows":
         return 0
     ts = malloc(16)
-    rc = clock_gettime(clk, ts)
+    clock_id = clk
+    if target_os() == "macos" and clk == 1:
+        clock_id = 6
+    rc = clock_gettime(clock_id, ts)
     if rc != 0:
         free(ts)
         return 0
@@ -170,8 +173,8 @@ def time_sleep_ms(ms: int):
         Sleep(ms)
         return
     req = malloc(16)
-    store_i64(req, 0)
-    store_i64(req + 8, ms * 1000000)
+    store_i64(req, ms / 1000)
+    store_i64(req + 8, (ms % 1000) * 1000000)
     nanosleep(req, 0)
     free(req)
 

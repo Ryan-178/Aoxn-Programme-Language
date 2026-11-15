@@ -99,7 +99,9 @@ def OS_LINUX_STAT_SIZE() -> int:
     return 144        # sizeof(struct stat) x86-64, generous buffer
 
 def OS_LINUX_ST_MODE() -> int:
-    return 24         # offsetof(struct stat, st_mode)
+    if target_os() == "macos":
+        return 4
+    return 24
 
 def OS_LINUX_S_IFMT() -> int:
     return 61440      # S_IFMT
@@ -111,7 +113,9 @@ def OS_LINUX_S_IFLNK() -> int:
     return 40960      # S_IFLNK
 
 def OS_LINUX_DIRENT_NAME() -> int:
-    return 19         # offsetof(struct dirent, d_name) x86-64 glibc
+    if target_os() == "macos":
+        return 21
+    return 19
 
 # ---- UTF-8 <-> UTF-16LE (kept in sync with stdlib/net/codec.ax) ----
 
@@ -232,7 +236,11 @@ def os_attributes(path: string) -> int:
         # st_mode (4 bytes at offset 24) is the LOW half of the loaded i64
         # (little-endian; the high half is st_uid) — mask the S_IFMT bits.
         # & is fine here: bitwise ops exist since v0.38.0.
-        mode = load_i64(buf + OS_LINUX_ST_MODE()) % 4294967296
+        mode = 0
+        if target_os() == "macos":
+            mode = load_u8(buf, 4) + load_u8(buf, 5) * 256
+        else:
+            mode = load_i64(buf + OS_LINUX_ST_MODE()) % 4294967296
         a = 0
         ft = mode & 61440
         if ft == OS_LINUX_S_IFDIR():

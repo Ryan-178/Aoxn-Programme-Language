@@ -1,0 +1,25 @@
+import * from "stdlib/ui_cocoa"
+
+def main() -> int:
+    c = ui_init("Aoxn Cocoa probe", 480, 320)
+    if not c.open:
+        print("ui-cocoa: no native window")
+        ui_fini(c)
+        return 1
+    n = 0
+    while c.open:
+        c = ui_frame(c)
+        if not c.open:
+            break
+        ui_label(c, 16, 16, "Native Cocoa / UTF-8: 你好")
+        ui_button(c, 16, 56, 160, 32, "Cocoa button")
+        ui_clip_push(c, 16, 104, 220, 180)
+        ui_fill_rect(c, 0, 100, 300, 100, ui_rgb(40, 120, 220))
+        ui_clip_pop(c)
+        ui_present(c)
+        n = n + 1
+        if n >= 30:
+            ui_close(c)
+    ui_fini(c)
+    print("ui-cocoa-ok frames=" + str(n))
+    return 0

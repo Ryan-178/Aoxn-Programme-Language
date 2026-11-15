@@ -5,6 +5,101 @@ minor bumps while pre-1.0: each minor version is a language milestone.
 
 ## [Unreleased]
 
+### Native Cocoa UI backend
+
+Adds `stdlib/ui_cocoa.ax`, reusing the portable immediate-mode widget layer
+through a single-file Rust AppKit/CoreGraphics bridge. Cocoa's structure ABI
+stays inside Rust; Aoxn-facing exports use only the existing scalar ABI.
+Includes a 30-frame native window probe, bridge export checks and third-backend
+primitive-contract coverage. Building requires rustc and Apple's frameworks;
+the selfhost CLI does not load the Rust bridge. Native desktop execution is
+validated by the `macos-latest` CI job (the 30-frame NSWindow probe), not on
+the Windows development host; no new version is released.
+
+### macOS core port (natively validated on Apple Silicon CI)
+
+Adds `target_os() == "macos"`, Darwin executable-path lookup, monotonic clock
+selection, inode64 filesystem layout/symbol selection in both C emitters,
+and Darwin IPv4/errno/SO_NOSIGPIPE handling. POSIX child exit status is
+zero-initialized, masked to eight bits, and handles fork/wait failures and
+signal termination. The selfhost CLI selects `-mcpu=` for Darwin arm64 and
+`-march=` for Intel; both CLI stages now test explicit `--cpu native` builds.
+libSystem supplies C math without
+Linux's `-lm`. POSIX sleeps now split seconds/nanoseconds, and localtime_r
+success is detected by a non-null return. Windows platform-sensitive tests
+and simulated Darwin symbol checks passed locally; native macOS execution is
+supplied by the `macos-latest` CI job (Apple Silicon), where the whole suite
+runs green. No IDE package or version release. The Cocoa UI backend is
+described above; the macOS HTTP transport, installer and CI job below.
+
+### macOS HTTP transport, installer and CI
+
+Completes the macOS adaptation of the three surfaces the goal names —
+libraries, compiler, installer — on top of the core port above. All of it is
+**unreleased** (version stays 0.55.0); native Apple runtime evidence comes
+from the new CI job, not the Windows development host.
+
+- **HTTP transport via libcurl (Rust bridge).** `stdlib/net/http_macos_native.rs`
+  is a dependency-free libcurl bridge: five `#[no_mangle] extern "C"` exports
+  (`aoxn_http_request`, `aoxn_http_stream_open/read/close/err`) over the
+  scalar Rust-bridge ABI, with the macOS implementation behind
+  `#[cfg(target_os = "macos")]` and inert stubs elsewhere. `stdlib/net/http_macos.ax`
+  pulls it in with a **namespace** import (`import http_macos_native`) and
+  exposes `net_http_macos_ready()`. `stdlib/net/http.ax` dispatches its four
+  entry points to the macOS path when `target_os() == "macos"`, each helper
+  self-guarded so a non-macOS build never references the symbols. The bridge
+  is **opt-in**: the OpenAI/Anthropic SDKs import only the pure `http.ax`, so a
+  Windows or Linux build pulls in neither rustc nor libcurl. `-lcurl`
+  propagates through rustc's `native-static-libs` note.
+- **Resolver: one extern symbol shared by an `.ax` declaration and a `.rs`
+  definition.** The flatten in `src/resolve.rs` kept every module's
+  declarations, so a program that both `extern def`s a symbol and imports the
+  `.rs` that defines it died with "defined more than once". A provenance-aware
+  dedup now collapses identical extern declarations when **at most one** is
+  backed by a `.rs` module (`Module.is_rs`), keeping the first in source order
+  so the emitted C stays reproducible. Two `.rs` *definitions* of one name
+  still error (`two_modules_exporting_one_extern_name_collide` is preserved);
+  the new `ax_declaration_and_rs_definition_share_one_extern_symbol` pins the
+  accepted case. Only Rust-bridge programs are affected, so the self-host
+  fixed point is untouched.
+- **Installer.** `dist/install-macos.sh` builds the compiler with
+  `cargo build --release --locked --bin aoxn` and lays out `<prefix>/bin/aoxn`
+  + the **whole** `<prefix>/lib/stdlib` tree (including the `net/`, `openai/`,
+  `anthropic/` subdirectories the Windows package omits) + examples + docs,
+  adds `<prefix>/bin` to PATH (`~/.zshrc`, or `~/.bash_profile` for bash) and
+  runs `aoxn doctor`. It downloads nothing; missing cargo/clang are reported
+  with the remedy (`rustup.rs`, `xcode-select --install`). Documented in
+  `docs/install.md` and `docs/platform-support.md` (both halves).
+- **CI.** A `macos-latest` job runs the whole suite plus a native Cocoa probe
+  (`examples/ui_probe_cocoa.ax`), a loopback libcurl HTTP probe
+  (`examples/http_macos_probe.ax` against `python3 -m http.server`) and a
+  from-source installer + installed-toolchain smoke (`dist/install-macos.sh`
+  into a prefix, then `aoxn doctor` and `hello.ax`/`stdlib_demo.ax` resolved
+  through the installed `AOXN_HOME/lib/stdlib`). This is the native runtime
+  evidence the Windows host cannot produce; the job is green on Apple Silicon
+  (2026-11-15). Intel macOS is cross-checked clean, not natively run.
+- **macOS SDK sysroot for clang/rustc.** The first native CI run built the
+  compiler but failed to LINK every generated program with
+  `ld: library 'System' not found`: Apple's linker resolves `libSystem` and the
+  frameworks against the SDK's `.tbd` stubs, and a clang spawned by bare path
+  with no sysroot missed them. `platform::macos_sdk_root()` now resolves the
+  SDK (explicit `SDKROOT` first, else `xcrun --show-sdk-path`, cached) and the
+  C compile (`codegen_c.rs`), the link (`lib.rs`) and the Rust bridge
+  (`rust.rs`) pass it to clang/rustc on macOS only. The CI job also exports
+  `SDKROOT` so the self-hosted compiler — which spawns clang itself and
+  inherits the environment — links the same way. Off macOS the helper is
+  `None`, so no flag is added and the emitted C/objects are byte-identical
+  (`macos_sdk_root_is_noop_off_macos` pins it); the self-host fixed point is
+  untouched.
+- **net URL tests link the macOS transport.** With the sysroot fixed, the
+  next native run failed in `tests/net.rs` with `undefined symbol:
+  _aoxn_http_request` (and the four stream externs): `stdlib/net/http.ax`'s
+  macOS dispatch is LIVE on macOS, so even the pure URL-layer drivers
+  reference the libcurl bridge. The test now imports
+  `stdlib/net/http_macos` on macOS only (the provider that defines and links
+  the bridge, exactly as `examples/http_macos_probe.ax` does); Windows/Linux
+  fold those branches away and are byte-identical, needing no rustc.
+
 **`sizeof(T)` and `addr_of(x)`** — the language-level blocker for every
 non-8-byte-slot container (gap A2 in `docs/language-gaps.md`, ranked #2)
 is gone. This batch is **unreleased**: per the standing no-release rule

@@ -1229,6 +1229,61 @@ fn ui_x11_backend_emits_c() {
 /// The whole point of ui_draw.ax: one widget layer over one backend. The
 /// Win32 vocabulary must not appear in it — if it does, a widget has grown a
 /// platform dependency and the split stops meaning anything.
+#[cfg(target_os = "macos")]
+#[test]
+fn cocoa_native_window_probe() {
+    if std::env::var_os("AOXN_TEST_COCOA_WINDOW").is_none() {
+        eprintln!("Cocoa window probe requires AOXN_TEST_COCOA_WINDOW=1 and a desktop session");
+        return;
+    }
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let dir = temp_dir("cocoa-native-window");
+    let exe = dir.join("probe");
+    aoxn::build_paths_exe(&[root.join("examples/ui_probe_cocoa.ax").display().to_string()], &exe, true).unwrap();
+    let out = std::process::Command::new(exe).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("ui-cocoa-ok frames=30"));
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn cocoa_bridge_links_as_unsupported_off_macos() {
+    if aoxn::find_clang().is_none() || aoxn::rust::find_rustc().is_none() {
+        return;
+    }
+    let dir = temp_dir("cocoa-unsupported");
+    let input = dir.join("input.ax");
+    let exe = dir.join("probe").with_extension(aoxn::platform::exe_ext());
+    std::fs::write(&input, format!("import * from \"{}\"\ndef main() -> int:\n    assert(not plat_supported())\n    assert(cocoa_open(\"test\", 320, 200) == 0)\n    return 0\n", abs("stdlib/ui_cocoa.ax"))).unwrap();
+    aoxn::build_paths_exe(&[input.display().to_string()], &exe, true).unwrap();
+    assert!(std::process::Command::new(exe).status().unwrap().success());
+}
+
+#[test]
+fn cocoa_rust_bridge_exports_scan() {
+    let source = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("stdlib/ui_cocoa_native.rs")).unwrap();
+    let exports = aoxn::rust::scan(&source, 0).unwrap();
+    assert!(exports.iter().any(|f| f.name == "cocoa_open"));
+    assert!(exports.iter().any(|f| f.name == "cocoa_clipboard_get"));
+    assert!(exports.iter().all(|f| f.is_extern));
+}
+
+#[test]
+fn ui_cocoa_backend_emits_c() {
+    let c = emit_c_with_backend("ui_cocoa.ax", r#"def main() -> int:
+    c = ui_init("Cocoa", 320, 200)
+    c = ui_frame(c)
+    ui_button(c, 12, 12, 100, 30, "ok")
+    ui_present(c)
+    ui_close(c)
+    ui_fini(c)
+    return 0
+"#);
+    assert!(c.contains("cocoa_open"));
+    assert!(c.contains("cocoa_shape"));
+    assert!(c.contains("cocoa_pump"));
+}
+
 #[test]
 fn ui_draw_layer_is_platform_neutral() {
     let src = std::fs::read_to_string(
@@ -1293,7 +1348,7 @@ fn ui_draw_calls_only_implemented_primitives() {
     called.sort();
     called.dedup();
     assert!(!called.is_empty(), "no plat_* calls found in ui_draw.ax");
-    for backend in ["ui_win.ax", "ui_x11.ax"] {
+    for backend in ["ui_win.ax", "ui_x11.ax", "ui_cocoa.ax"] {
         let src = std::fs::read_to_string(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("stdlib")

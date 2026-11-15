@@ -868,8 +868,9 @@ for k in d:                 # walks KEYS, in insertion order
   syscall). Both compilers (Rust and self-hosted) resolve it the same way, so
   the value is stable within a build and identical between compilers on the
   same machine: each compiler folds the OS it was BUILT on. A Windows build
-  folds `"windows"`; a Linux build folds `"linux"` (v0.46.0); any other host
-  folds `"other"` rather than lying. The self-hosted compiler needs no mirror
+  folds "windows"; a Linux build folds "linux" (v0.46.0); the unreleased
+  macOS core port folds "macos"; other hosts fold "other". The self-hosted
+  compiler needs no mirror
   of the platform check: `selfhost/codegen.ax`'s builtin emitter calls
   `target_os()` itself, whose value was burned in by whatever compiler built
   it - so every stage of the fixed-point chain folds the same host OS, and

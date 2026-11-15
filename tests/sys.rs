@@ -42,7 +42,7 @@ fn sys_argv_platform_and_executable() {
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    let platform = if cfg!(windows) { "windows" } else { "linux" };
+    let platform = aoxn::platform::target_os_name();
     let expected = format!(
         "platform {platform}\nargc 3\narg alpha\narg beta two\narg \nexe true\nmaxsize 9223372036854775807\nDONE\n"
     );

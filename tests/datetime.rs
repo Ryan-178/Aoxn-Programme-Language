@@ -4,6 +4,30 @@
 //! QPC monotonic timing with a 50 ms sleep, and the month-grid renderer.
 use std::process::Command;
 
+#[cfg(unix)]
+#[test]
+fn posix_local_time_observes_timezone() {
+    if aoxn::find_clang().is_none() {
+        assert!(std::env::var_os("AOXN_TEST_REQUIRE_CLANG").is_none());
+        return;
+    }
+    std::env::set_var("AOXN_STDLIB", abs("stdlib"));
+    let dir = std::env::temp_dir().join(format!("aoxn-local-zone-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("zone.ax");
+    let exe = dir.join("zone");
+    std::fs::write(&input, r#"import * from "stdlib/datetime"
+def main() -> int:
+    delta = datetime_to_unix(datetime_now()) - time_unix()
+    assert(delta >= 19798 and delta <= 19802)
+    return 0
+"#).unwrap();
+    aoxn::build_paths_opts(&[input.display().to_string()], &exe, true, &[], &[]).unwrap();
+    let out = Command::new(&exe).env("TZ", "UTC-5:30").output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 const EXE: &str = if cfg!(windows) { ".exe" } else { "" };
 
 fn abs(rel: &str) -> String {

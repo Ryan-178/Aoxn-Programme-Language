@@ -55,6 +55,11 @@ pub struct Module {
     pub structs: Vec<StructDecl>,
     pub funcs: Vec<FnDecl>,
     pub imports: Vec<Import>,
+    /// true when this module is a `.rs` Rust bridge: its externs are backed by
+    /// a real definition in the compiled staticlib, not just a C declaration.
+    /// The flatten uses this to tell a definition apart from a declaration
+    /// when several modules name one extern symbol (see the dedup below).
+    pub is_rs: bool,
 }
 
 #[derive(Clone)]
@@ -442,13 +447,62 @@ pub fn resolve(mut mods: Vec<Module>, order: &[usize], entries: &[usize]) -> Res
     // --- 4. flatten ------------------------------------------------------
     // Each module is emitted exactly once, in the order the loader reached it
     // depth-first: an import's declarations land before the importer's.
+    //
+    // Extern dedup: an extern name IS a C symbol, so it is never mangled and
+    // every module that names it emits the SAME declaration. A symbol may be
+    // DECLARED by any number of modules (a `.ax` `extern def` is a promise that
+    // some C library defines it) but DEFINED by at most one `.rs` bridge. So a
+    // group of identical extern declarations collapses to one whenever at most
+    // one of them is `.rs`-backed — that is what lets `net/http.ax` declare the
+    // libcurl bridge externs while `net/http_macos.ax` links the `.rs` that
+    // defines them. Two `.rs` definitions of one symbol (or mismatched
+    // signatures) are a genuine collision: keep them all so typecheck reports
+    // "defined more than once", exactly as before. The keeper is chosen by
+    // `order`, never by hash iteration, so the emitted C stays reproducible.
+    let mut skip_extern: HashSet<(usize, String)> = HashSet::new();
+    {
+        let mut groups: HashMap<&str, Vec<(usize, &FnDecl)>> = HashMap::new();
+        for (i, m) in mods.iter().enumerate() {
+            for f in &m.funcs {
+                if f.is_extern {
+                    groups.entry(f.name.as_str()).or_default().push((i, f));
+                }
+            }
+        }
+        for (name, decls) in &groups {
+            if decls.len() < 2 {
+                continue;
+            }
+            let rs_defs = decls.iter().filter(|(i, _)| mods[*i].is_rs).count();
+            let sig = decls[0].1;
+            let identical = decls.iter().all(|(_, f)| {
+                f.ret == sig.ret
+                    && f.params.len() == sig.params.len()
+                    && f.params.iter().zip(&sig.params).all(|(a, b)| a.ty == b.ty)
+            });
+            if rs_defs <= 1 && identical {
+                if let Some(&keeper) = order.iter().find(|&&i| decls.iter().any(|(mi, _)| *mi == i)) {
+                    for (mi, _) in decls {
+                        if *mi != keeper {
+                            skip_extern.insert((*mi, name.to_string()));
+                        }
+                    }
+                }
+            }
+        }
+    }
     let mut slots: Vec<Option<Module>> = mods.into_iter().map(Some).collect();
     let mut structs = Vec::new();
     let mut funcs = Vec::new();
     for &i in order {
         if let Some(m) = slots[i].take() {
             structs.extend(m.structs);
-            funcs.extend(m.funcs);
+            for f in m.funcs {
+                if f.is_extern && skip_extern.contains(&(i, f.name.clone())) {
+                    continue;
+                }
+                funcs.push(f);
+            }
         }
     }
     // Every flat name mapped back to what its module calls it. Identity

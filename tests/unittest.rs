@@ -64,7 +64,7 @@ def check_args():
 
 def check_platform():
     p = sys_platform()
-    ut_assert_true(p == "windows" or p == "linux" or p == "other", "platform")
+    ut_assert_true(p == "windows" or p == "linux" or p == "macos" or p == "other", "platform")
 
 def check_log():
     lg = log_new("sh")

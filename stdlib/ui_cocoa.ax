@@ -1,0 +1,135 @@
+import * from "./ui_draw.ax"
+import * from "./ui_cocoa_native.rs"
+import * from "./time.ax"
+
+def plat_supported() -> bool:
+    return target_os() == "macos"
+
+def plat_now_ms() -> int:
+    return time_mono_ms()
+
+def plat_canvas_ok(c: UI) -> bool:
+    return c.hwnd != 0 and cocoa_alive(c.hwnd) != 0
+
+def plat_init(c: UI, title: string, w: int, h: int) -> UI:
+    c.msg = malloc(8192)
+    fill_zero(c.msg, 8192)
+    c.hwnd = cocoa_open(title, w, h)
+    c.open = c.hwnd != 0
+    c.w = w
+    c.h = h
+    c.font = 1
+    c.font_big = 2
+    c.font_mono = 3
+    st_set(c, 826, c.font)
+    return c
+
+def plat_canvas_resize(c: UI, nw: int, nh: int) -> UI:
+    cocoa_resize(c.hwnd, nw, nh)
+    return c
+
+def plat_present(c: UI):
+    cocoa_present(c.hwnd)
+
+def plat_fill_rect(c: UI, x: int, y: int, w: int, h: int, color: int):
+    cocoa_shape(c.hwnd, 0, x, y, w, h, color, color)
+
+def plat_frame_rect(c: UI, x: int, y: int, w: int, h: int, color: int):
+    cocoa_shape(c.hwnd, 1, x, y, w, h, color, color)
+
+def plat_round_fill(c: UI, x: int, y: int, w: int, h: int, fill: int, border: int):
+    cocoa_shape(c.hwnd, 2, x, y, w, h, fill, border)
+
+def plat_ellipse(c: UI, x: int, y: int, w: int, h: int, fill: int, border: int):
+    cocoa_shape(c.hwnd, 3, x, y, w, h, fill, border)
+
+def plat_ellipse_fill(c: UI, x: int, y: int, w: int, h: int, fill: int):
+    cocoa_shape(c.hwnd, 4, x, y, w, h, fill, fill)
+
+def plat_line(c: UI, x1: int, y1: int, x2: int, y2: int, color: int):
+    cocoa_shape(c.hwnd, 5, x1, y1, x2, y2, color, color)
+
+def cocoa_font(c: UI) -> int:
+    if c.font == c.font_mono:
+        return 2
+    return 0
+
+def plat_text(c: UI, x: int, y: int, s: string, color: int):
+    cocoa_text(c.hwnd, x, y, s, color, cocoa_font(c))
+
+def plat_text_big(c: UI, x: int, y: int, s: string, color: int):
+    cocoa_text(c.hwnd, x, y, s, color, 1)
+
+def cocoa_text_slice(c: UI, s: string, f: int, t: int) -> string:
+    n = len(s)
+    first = clamp_i(f, 0, n)
+    last = clamp_i(t, first, n)
+    need = last - first + 1
+    off = st_get(c, 2)
+    p = 0
+    if off + need <= st_get(c, 3):
+        p = st_get(c, 1) + off
+        st_set(c, 2, off + need)
+    else:
+        p = malloc(need)
+    memcpy(p, as_ptr(s) + first, last - first)
+    store_u8(p, last - first, 0)
+    return as_string(p)
+
+def plat_text_sub(c: UI, x: int, y: int, s: string, f: int, t: int, color: int):
+    cocoa_text(c.hwnd, x, y, cocoa_text_slice(c, s, f, t), color, cocoa_font(c))
+
+def plat_measure(c: UI, s: string) -> TextSize:
+    font = cocoa_font(c)
+    return TextSize(w=cocoa_measure(s, font, 0), h=cocoa_measure(s, font, 1))
+
+def plat_measure_sub(c: UI, s: string, f: int, t: int) -> TextSize:
+    return plat_measure(c, cocoa_text_slice(c, s, f, t))
+
+def plat_clip_push(c: UI, l: int, t: int, r: int, b: int):
+    cocoa_clip(c.hwnd, l, t, r, b)
+
+def plat_clip_pop(c: UI):
+    cocoa_unclip(c.hwnd)
+
+def plat_pump(c: UI) -> UI:
+    c.dn_prev = c.dn
+    cocoa_pump(c.hwnd, c.msg, c.cap_ms)
+    c.open = cocoa_alive(c.hwnd) != 0
+    if not c.open:
+        return c
+    c.mx = load_i64(c.msg)
+    c.my = load_i64(c.msg + 8)
+    c.dn = load_i64(c.msg + 16) != 0
+    c.dn2 = load_i64(c.msg + 24) != 0
+    st_set(c, 544, load_i64(c.msg + 32))
+    for i in range(256):
+        st_set(c, 4 + i, load_i64(c.msg + (8 + i) * 8))
+    count = min_i(load_i64(c.msg + 264 * 8), st_get(c, 543))
+    for i in range(count):
+        store_i64(st_get(c, 541) + i * 8, load_i64(c.msg + (265 + i) * 8))
+    st_set(c, 542, count)
+    nw = cocoa_width(c.hwnd)
+    nh = cocoa_height(c.hwnd)
+    if nw > 0 and nh > 0 and (nw != c.w or nh != c.h):
+        c = ui_resize_canvas(c, nw, nh)
+    return c
+
+def plat_close(c: UI):
+    cocoa_close(c.hwnd)
+
+def plat_fini(c: UI):
+    cocoa_free(c.hwnd)
+
+def plat_alert(text: string, caption: string):
+    cocoa_alert(text, caption)
+
+def plat_clip_set(c: UI, s: string):
+    cocoa_clipboard_set(s)
+
+def plat_clip_get(c: UI) -> string:
+    s = cocoa_clipboard_get()
+    n = len(s)
+    p = malloc(n + 1)
+    memcpy(p, as_ptr(s), n + 1)
+    return as_string(p)
