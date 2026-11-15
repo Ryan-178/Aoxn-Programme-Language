@@ -83,14 +83,18 @@ analysis; only `build` and `run` need Rust installed.
 
 ### Installation, platforms and commands
 
-Windows is first-class and Linux is supported. The unreleased macOS core
-compiler/CLI and portable-stdlib port is under validation; native macOS
-runtime success is not yet claimed. Cocoa UI is implemented as an unreleased
-Rust-bridge backend, and macOS HTTP transport rides libcurl through an opt-in
-Rust bridge (`stdlib/net/http_macos`). A build-from-source macOS installer
-(`dist/install-macos.sh`) is included; there is no packaged macOS artifact or
-IDE package. Darwin clock, filesystem, executable-path and socket
-adaptations have Windows regression and simulated-branch coverage. The
+Windows is first-class, Linux is supported, and **macOS is natively validated
+on the `macos-latest` CI job (Apple Silicon)**: the whole compiler/stdlib/TS/UI
+suite, C parity/ABI, the Rust bridge, the package manager, a native Cocoa
+window probe and a loopback libcurl HTTP probe all build and run on real
+macOS. Cocoa UI is an unreleased Rust-bridge backend, and macOS HTTP transport
+rides libcurl through an opt-in Rust bridge (`stdlib/net/http_macos`). A
+build-from-source macOS installer (`dist/install-macos.sh`) is included and
+exercised by the same job; there is no packaged macOS artifact or IDE package.
+Darwin clock, filesystem, executable-path and socket adaptations have Windows
+regression, simulated-branch and native CI coverage. Intel macOS is
+cross-checked clean; the hosted runner is Apple Silicon, so Intel native
+execution is not separately claimed. The
 [platform policy](docs/platform-support.md) is authoritative. Windows ships
 `Aoxn-<version>-Setup.exe` from the [release page](https://github.com/Ryan-178/Aoxn-Programme-Language/releases).
 It unpacks into `%LOCALAPPDATA%\aoxn`, updates PATH and runs `aoxn doctor`.
@@ -191,8 +195,9 @@ The Rust CLI remains the production entry point. Read
 Unreleased native Cocoa UI: `import * from "stdlib/ui_cocoa"` reuses the
 portable widget layer through a single-file Rust AppKit/CoreGraphics bridge.
 It requires rustc and Apple's frameworks, not XQuartz. Widgets retain their
-immediate-mode design. The selfhost CLI cannot load this `.rs`-backed module;
-macOS desktop/window behavior still requires native validation. Windows UI
+immediate-mode design. The selfhost CLI cannot load this `.rs`-backed module.
+A native Cocoa window probe (`examples/ui_probe_cocoa.ax`) drives 30 real
+frames in an NSWindow and passes on the `macos-latest` CI job. Windows UI
 suite passed 17/17; native bridge metadata checks passed for ARM64 and Intel,
 and Apple Silicon workspace/tests cross-check passed. Full IME composition
 and Retina-native backing resolution are not implemented.
@@ -211,22 +216,27 @@ programs are affected, so the self-host fixed point is untouched. The
 build-from-source installer `dist/install-macos.sh` lays out the whole stdlib
 tree (including these transports), adds `bin/` to PATH and runs `aoxn doctor`,
 downloading nothing. A `macos-latest` CI job runs the suite plus a native Cocoa
-probe and a loopback libcurl HTTP probe — the native runtime evidence the
-Windows host cannot produce.
+probe, a loopback libcurl HTTP probe and the from-source installer smoke — the
+native runtime evidence the Windows host cannot produce.
 
-macOS-port local validation (2026-11-11): **385 Windows compiler tests passed**,
-including datetime, filesystem/glob, socket, emitter parity and selfhost fixed
-point. Host-platform and simulated Darwin symbol tests plus 11 documentation
-checks passed. Linux workspace/tests cross-check also passed. These are not
-macOS-native execution results. Both Apple Silicon and Intel workspace/tests
-cross-checks passed; native Apple linking and execution remain pending. Subsequent
-selfhost CLI/parity and four platform regression tests passed after correcting
-POSIX child exit-status handling. Fixed-timezone and Darwin SDK layout tests
-are included for native runners; they have not executed on this Windows host.
-Selfhost `--cpu` now uses `-mcpu=` on macOS arm64 and `-march=` on Intel;
-both CLI stages' `--cpu native` regression passed locally, and both Apple
-Rust cross-checks passed again. Apple clang native linking/running remains
-unverified because this session has no macOS execution host.
+macOS-port validation: the local Windows baseline (2026-11-11) passed **385
+compiler tests** — datetime, filesystem/glob, socket, emitter parity and the
+selfhost fixed point — plus host-platform/simulated Darwin symbol tests, 11
+documentation checks and the Linux workspace/tests cross-check; both Apple
+Silicon and Intel workspace/tests cross-checks passed. Those are cross-checks,
+not Apple execution. **Native Apple execution is now supplied by the
+`macos-latest` CI job** (2026-11-15, Apple Silicon): the whole suite, C
+parity/ABI, the Rust bridge, the package manager, the native Cocoa window
+probe and the loopback libcurl HTTP probe all build and run green on real
+macOS, after the SDK-sysroot fix (clang/rustc get `-isysroot` so Apple ld
+resolves libSystem/frameworks) and the net-bridge link fix (the URL tests
+import `stdlib/net/http_macos` on macOS so the live transport dispatch
+resolves). The selfhost `--cpu` path uses `-mcpu=` on macOS arm64 and
+`-march=` on Intel; both CLI stages' `--cpu native` regression passed locally
+and the native job exercises the selfhost chain. Fixed-timezone and Darwin
+SDK layout tests run on the native runner. Intel macOS is cross-checked
+clean; the hosted runner is Apple Silicon, so Intel native execution is not
+separately claimed.
 
 Explicitly imported [stdlib modules](docs/stdlib.md) now cover the whole
 roadmap: math, time, datetime, calendar, pathlib, base64, hashlib, hmac, os,
@@ -306,9 +316,10 @@ Windows and Linux jobs also run a named `Test Rust bridge` step,
 `AOXN_TEST_REQUIRE_CLANG=1` and `AOXN_TEST_REQUIRE_RUSTC=1`, so a missing rustc
 fails rather than skips. Linux also runs the X11 probe under Xvfb. A
 `macos-latest` job runs the same suite plus a native Cocoa probe
-(`examples/ui_probe_cocoa.ax`) and a loopback libcurl HTTP probe
-(`examples/http_macos_probe.ax`) — the native Apple runtime evidence the
-Windows/Linux hosts cannot produce. Release
+(`examples/ui_probe_cocoa.ax`), a loopback libcurl HTTP probe
+(`examples/http_macos_probe.ax`) and a from-source installer +
+installed-toolchain smoke (`dist/install-macos.sh`) — the native Apple runtime
+evidence the Windows/Linux hosts cannot produce. Release
 packaging/install smoke runs on tags or manual dispatch, not every push;
 web benchmarks and IDE checks are separate. The web-bench workflow's bash steps
 use forward-slash paths: Git Bash treats a backslash as an escape, which had
@@ -367,10 +378,14 @@ loopback, random cross-process vectors, the Python `csv` differential, the
 `sizeof_*`/`addr_of_*` pins.
 `cargo check --workspace --tests` passed for `x86_64-unknown-linux-gnu`,
 `aarch64-apple-darwin` and `x86_64-apple-darwin`; these are cross-checks
-(no Apple linking/execution on this Windows host). Native macOS runtime
-evidence comes from the new `macos-latest` CI job, which builds the Cocoa
-and libcurl HTTP probes and runs the libcurl loopback probe against a local
-`python3 -m http.server`. The package suite ran through `run_pkg_tests.sh`
+(no Apple linking/execution on this Windows host). **Native macOS runtime
+evidence: the `macos-latest` CI job (2026-11-15, Apple Silicon) is green** —
+it builds and runs the whole suite, C parity/ABI, the Rust bridge, the package
+manager, the native Cocoa window probe, the loopback libcurl HTTP probe against
+a local `python3 -m http.server`, and the from-source installer +
+installed-toolchain smoke (`dist/install-macos.sh`, then `aoxn doctor` and
+`hello.ax`/`stdlib_demo.ax` resolved through the installed
+`AOXN_HOME/lib/stdlib`). The package suite ran through `run_pkg_tests.sh`
 (the Smart App Control hash-stamp workaround).
 The read-only doc audit (2026-11-14) reported `missing-path=0`,
 `historical-path=0` and 25 heuristic command-drift warnings; its own tests
@@ -515,12 +530,15 @@ rustc 是**可选**外部工具链，发现顺序与 clang 相同。`check`、`c
 
 ### 平台、安装和命令
 
-Windows 为一等平台，支持 Linux；未发布的 macOS 核心编译器/CLI 与可移植标准库
-正在验证，尚不声明 macOS 原生运行通过；Cocoa UI 已作为未发布 Rust 桥后端实现，
-macOS HTTP 传输经可选启用的 libcurl Rust 桥（`stdlib/net/http_macos`）提供。
-包含从源码安装的 macOS 安装器（`dist/install-macos.sh`），但没有打包好的 macOS
-产物或 IDE 打包。Darwin 时钟、文件系统、程序路径和 socket 已适配，并有 Windows 回归与
-模拟分支覆盖。平台策略以
+Windows 为一等平台，支持 Linux；**macOS 已在 `macos-latest` CI 任务
+（Apple Silicon）上原生验证通过**：整套编译器/标准库/TS/UI 测试、C parity/ABI、
+Rust 桥、包管理器、原生 Cocoa 窗口探针与环回 libcurl HTTP 探针都在真实 macOS 上
+构建并运行。Cocoa UI 为未发布 Rust 桥后端，macOS HTTP 传输经可选启用的 libcurl
+Rust 桥（`stdlib/net/http_macos`）提供。包含从源码安装的 macOS 安装器
+（`dist/install-macos.sh`），并由同一 CI 任务实测；没有打包好的 macOS 产物或
+IDE 打包。Darwin 时钟、文件系统、程序路径和 socket 已适配，并有 Windows 回归、
+模拟分支与原生 CI 覆盖。Intel macOS 交叉检查干净；托管 runner 为 Apple Silicon，
+故不单独声明 Intel 原生执行。平台策略以
 [平台政策](docs/platform-support.md) 为准。[Windows 发布包](https://github.com/Ryan-178/Aoxn-Programme-Language/releases)
 为 `Aoxn-<version>-Setup.exe`，解包至 `%LOCALAPPDATA%\aoxn`、设置 PATH、
 运行 doctor。**默认不下载**；`-InstallClang` 显式启用下载。
@@ -599,8 +617,9 @@ W001、内容键 run 缓存（`AOXN_NO_CACHE`/`AOXN_CACHE_DIR`）与
 未发布原生 Cocoa UI：`import * from "stdlib/ui_cocoa"` 通过单文件 Rust
 AppKit/CoreGraphics 桥复用可移植控件层，需要 rustc 与 Apple frameworks，
 不需要 XQuartz。控件仍为立即模式；自举 CLI 不支持该模块的 `.rs` 导入。
-本轮 Windows UI 套件 17/17 通过，桥通过 ARM64/Intel 元数据编译检查；
-这些不等于 macOS 原生窗口运行验证。完整 IME 与 Retina 原生分辨率尚未实现。
+原生 Cocoa 窗口探针（`examples/ui_probe_cocoa.ax`）在 NSWindow 中驱动 30 帧
+真实画面，并在 `macos-latest` CI 任务上通过。本轮 Windows UI 套件 17/17 通过，
+桥通过 ARM64/Intel 元数据编译检查。完整 IME 与 Retina 原生分辨率尚未实现。
 
 未发布 macOS HTTP 传输：`stdlib/net/http_macos.ax` 经命名空间导入引入一个
 零依赖 libcurl 桥（`http_macos_native.rs`，五个标量 ABI 的 `extern "C"`
@@ -613,18 +632,23 @@ Linux 构建既不引入 rustc 也不引入 libcurl；`-lcurl` 经 rustc 的
 只有 Rust 桥程序受影响，自举不动点不变。从源码安装器
 `dist/install-macos.sh` 铺好整棵 stdlib 树（含这些传输）、把 `bin/` 加进
 PATH 并运行 `aoxn doctor`，不下载任何东西。`macos-latest` CI job 运行整套
-测试外加原生 Cocoa 探针与环回 libcurl HTTP 探针——这是 Windows 主机无法
-产生的原生运行时证据。
+测试外加原生 Cocoa 探针、环回 libcurl HTTP 探针与从源码安装器冒烟——这是
+Windows 主机无法产生的原生运行时证据。
 
-macOS 移植本地验证（2026-11-11）：**385 项 Windows 编译器测试通过**，含日期时间、
-文件/glob、socket、C 发射 parity 与自举不动点；宿主平台契约、模拟 Darwin
-符号检查及 11 项文档测试通过；Linux workspace/tests 交叉检查通过。不等于 macOS
-原生运行；Apple Silicon 与 Intel workspace/tests 交叉检查均已通过，Apple 原生链接/运行仍待验证。
-POSIX 子进程退出状态修正后，自举 CLI/parity 与 4 项平台回归通过；固定时区
-和 Darwin SDK 布局用例已加入，尚未在此 Windows 主机原生执行。
-自举 `--cpu` 在 macOS arm64 使用 `-mcpu=`、Intel 使用 `-march=`；本地两阶段
-`--cpu native` 回归通过，两种 Apple Rust 交叉检查再次通过。当前会话没有
-macOS 执行主机，Apple clang 原生链接/运行仍未验证。
+macOS 移植验证：本地 Windows 基线（2026-11-11）通过 **385 项编译器测试**，
+含日期时间、文件/glob、socket、C 发射 parity 与自举不动点；宿主平台契约、
+模拟 Darwin 符号检查及 11 项文档测试通过；Linux workspace/tests 交叉检查通过；
+Apple Silicon 与 Intel workspace/tests 交叉检查均已通过。这些是交叉检查，
+不是 Apple 执行。**Apple 原生执行现由 `macos-latest` CI 任务提供**
+（2026-11-15，Apple Silicon）：整套测试、C parity/ABI、Rust 桥、包管理器、
+原生 Cocoa 窗口探针与环回 libcurl HTTP 探针都在真实 macOS 上构建并运行通过，
+此前修复了 SDK sysroot（给 clang/rustc 传 `-isysroot`，使 Apple ld 解析
+libSystem/frameworks）与 net 桥链接（URL 测试在 macOS 上导入
+`stdlib/net/http_macos`，使存活的传输分派可解析）。自举 `--cpu` 在 macOS arm64
+使用 `-mcpu=`、Intel 使用 `-march=`；本地两阶段 `--cpu native` 回归通过，
+原生任务也跑自举链。固定时区与 Darwin SDK 布局用例在原生 runner 上执行。
+Intel macOS 交叉检查干净；托管 runner 为 Apple Silicon，故不单独声明 Intel
+原生执行。
 
 [标准库](docs/stdlib.md)独立模块现已覆盖整个路线图：math/time/datetime/
 calendar/pathlib/base64/hashlib/hmac/os/glob/json/bisect/heapq/csv/random/
@@ -689,8 +713,9 @@ Windows 与 Linux 另有命名步骤 `Test Rust bridge`，执行
 `cargo test -p aoxn --locked --test rust_interop`，并设
 `AOXN_TEST_REQUIRE_CLANG=1` 与 `AOXN_TEST_REQUIRE_RUSTC=1`：缺 rustc 会失败而不是跳过。
 Linux 另跑 Xvfb 下 X11 probe。`macos-latest` job 运行同一套测试，外加原生
-Cocoa 探针（`examples/ui_probe_cocoa.ax`）与环回 libcurl HTTP 探针
-（`examples/http_macos_probe.ax`）——这是 Windows/Linux 主机无法产生的原生
+Cocoa 探针（`examples/ui_probe_cocoa.ax`）、环回 libcurl HTTP 探针
+（`examples/http_macos_probe.ax`）与从源码安装器 + 已安装工具链冒烟
+（`dist/install-macos.sh`）——这是 Windows/Linux 主机无法产生的原生
 Apple 运行时证据。安装打包与冒烟在 tag/手动触发，不是每次 push；
 Web 基准和 IDE 独立。web-bench 工作流的 bash 步骤改用正斜杠路径：Git Bash 把
 反斜杠当转义吞掉（`web\server_win.ax` 变成 `webserver_win.ax`），曾导致构建步骤
@@ -738,10 +763,13 @@ threading）保持全绿。完整运行包含不动点、两项 parity、4 项 A
 `csv` 差分、`re` 的 CPython 差分与自举钉、8 项 sizeof/addr_of 钉测试。
 `cargo check --workspace --tests` 对 `x86_64-unknown-linux-gnu`、
 `aarch64-apple-darwin`、`x86_64-apple-darwin` 均通过；这些是交叉检查
-（本 Windows 主机不做 Apple 链接/执行）。macOS 原生运行时证据来自新增的
-`macos-latest` CI 任务，它构建 Cocoa 与 libcurl HTTP 探针，并对本地
-`python3 -m http.server` 运行 libcurl 回环探针。包套件经 `run_pkg_tests.sh`
-运行（Smart App Control 哈希戳 workaround）。只读文档审计（2026-11-14）报告
+（本 Windows 主机不做 Apple 链接/执行）。**macOS 原生运行时证据：
+`macos-latest` CI 任务（2026-11-15，Apple Silicon）全绿**——构建并运行整套
+测试、C parity/ABI、Rust 桥、包管理器、原生 Cocoa 窗口探针、对本地
+`python3 -m http.server` 的环回 libcurl HTTP 探针，以及从源码安装器 +
+已安装工具链冒烟（`dist/install-macos.sh`，随后 `aoxn doctor` 与经已安装
+`AOXN_HOME/lib/stdlib` 解析的 `hello.ax`/`stdlib_demo.ax`）。包套件经
+`run_pkg_tests.sh` 运行（Smart App Control 哈希戳 workaround）。只读文档审计（2026-11-14）报告
 `missing-path=0`、`historical-path=0` 与 25 条启发式命令漂移警告，其自身
 测试 11/11 通过。完整安装器打包未运行；IDE 套件未重跑（IDE 源码未改动）。
 

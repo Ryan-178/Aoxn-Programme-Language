@@ -1,10 +1,16 @@
 # Platform support
 
-## Unreleased macOS core port
+## Unreleased macOS core port (natively validated on Apple Silicon CI)
 
 The source tree adds macOS core compiler/CLI and portable-stdlib adaptations
-for Apple Silicon and Intel. This is a port under validation, not a claim of
-macOS-native test success. Build from source with Rust and Apple's Command
+for Apple Silicon and Intel. **macOS is natively validated on the
+`macos-latest` CI job (Apple Silicon, 2026-11-15)**: the whole compiler/stdlib/
+TS/UI suite, C parity/ABI, the Rust bridge, the package manager, a native Cocoa
+window probe, a loopback libcurl HTTP probe and the from-source installer +
+installed-toolchain smoke all build and run green on real macOS. This is
+unreleased work (no version tag); Intel macOS is cross-checked clean, and the
+hosted runner is Apple Silicon, so Intel native execution is not separately
+claimed. Build from source with Rust and Apple's Command
 Line Tools (`xcode-select --install`); clang must resolve an installed SDK.
 A build-from-source installer is provided (`dist/install-macos.sh`): it builds
 the compiler with cargo, lays out `<prefix>/bin/aoxn` + the whole
@@ -12,7 +18,8 @@ the compiler with cargo, lays out `<prefix>/bin/aoxn` + the whole
 `aoxn doctor`, downloading nothing. There is no single-file packaged macOS
 artifact and no IDE packaging. An unreleased native Cocoa backend is available
 through `stdlib/ui_cocoa`, using a single-file Rust AppKit/CoreGraphics bridge;
-it requires rustc and native desktop validation. HTTP transport on macOS rides
+it requires rustc, and a native Cocoa window probe passes on the CI job. HTTP
+transport on macOS rides
 libcurl through an opt-in Rust bridge (`stdlib/net/http_macos` +
 `http_macos_native.rs`); the WinHTTP transport stays Windows-only and Linux
 still has no HTTP transport.
@@ -23,17 +30,20 @@ Darwin adaptations cover clock IDs, executable-path discovery, inode64
 filesystem layouts/symbols, errno and IPv4 sockaddr layout. Darwin sockets
 use SO_NOSIGPIPE on created and accepted connections. Both C emitters select
 the Intel inode64 names before extern declarations; arm64 uses native names.
-Local cross-checks are distinct from real Apple clang linking/runtime tests;
-run compiler, package, C ABI/parity, Rust bridge and socket suites on each
-architecture before calling that architecture fully supported. Local Windows
-regressions and Linux/Apple Silicon/Intel macOS Rust workspace/tests cross-checks passed.
-The Darwin SDK layout fixture and fixed-timezone POSIX test require native
-execution; cross-checking their Rust wrappers does not run them.
+Local cross-checks are distinct from real Apple clang linking/runtime tests.
+Local Windows regressions and Linux/Apple Silicon/Intel macOS Rust
+workspace/tests cross-checks passed; the `macos-latest` CI job now supplies the
+real Apple clang linking/runtime evidence on Apple Silicon — compiler, package,
+C ABI/parity, Rust bridge and socket suites, plus the Darwin SDK layout fixture
+and fixed-timezone POSIX test, all run natively there. Intel macOS still rests
+on cross-checks: run the same suites on an Intel runner before calling that
+architecture fully supported.
 
 The selfhost CLI selects `-mcpu=` for macOS arm64 and `-march=` for Intel
 using Darwin uname's machine field. Both CLI stages exercise `--cpu native`
-in the regression suite. Native Apple execution is still required to validate
-this option against Apple clang.
+in the regression suite, and the `macos-latest` CI job validates the arm64
+path against Apple clang natively; the Intel `-march=` path is cross-checked
+and awaits an Intel runner.
 
 The platform history below describes the established Windows/Linux baseline.
 
@@ -58,7 +68,7 @@ separate from Cocoa UI support; see the validation scope above.
 | Standard library | full, including `stdlib/net` (WinHTTP) | full **except** the `net/http` + `openai` transports (honest runtime error) | full; HTTP via opt-in libcurl bridge (`stdlib/net/http_macos`) |
 | UI backend | Win32/GDI (`stdlib/ui_win.ax`) | Xlib + Xft (`stdlib/ui_x11.ax`) | Cocoa (`stdlib/ui_cocoa`, Rust AppKit bridge) |
 | UI link flags | `-l user32 -l gdi32` | `-l X11 -l Xft` | AppKit/CoreGraphics frameworks (via rustc) |
-| CI | `windows-latest`, whole suite | `ubuntu-latest`, whole suite + Xvfb probe | `macos-latest`, whole suite + Cocoa + libcurl probes |
+| CI | `windows-latest`, whole suite | `ubuntu-latest`, whole suite + Xvfb probe | `macos-latest`, whole suite + Cocoa + libcurl + installer probes |
 | External tools | clang + MSVC Build Tools | clang (distro packages) | Apple clang (Command Line Tools) + rustc |
 
 ## The invariants that make both platforms one codebase
@@ -116,7 +126,8 @@ separate from Cocoa UI support; see the validation scope above.
   not use a shell. The selfhost CLI was exercised on Windows this round; no
   Linux-native CLI result is claimed here.
 - **macOS UI** — the unreleased `ui_cocoa` backend requires the Rust bridge;
-  native desktop validation remains pending. The build-from-source installer
+  a native Cocoa window probe (30 frames in an NSWindow) passes on the
+  `macos-latest` CI job. The build-from-source installer
   (`dist/install-macos.sh`) ships the backend's sources with the rest of the
   stdlib tree; there is no packaged macOS UI artifact.
 

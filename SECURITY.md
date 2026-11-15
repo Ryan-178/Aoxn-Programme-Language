@@ -14,12 +14,14 @@ this is not a new version or release. With that batch every item of the
 decisions with substitutes; `docs/stdlib-todo.md` §7). The independent
 package-manager crate remains **0.43.0**. Fixes land on main first; earlier
 minor lines are not maintained.
-Windows and Linux are supported. The unreleased macOS core port is under
-validation, without a native-runtime success claim. Cocoa UI is an unreleased
-Rust-bridge implementation requiring desktop validation, and macOS HTTP
-transport rides an opt-in libcurl Rust bridge (`stdlib/net/http_macos`). The
-single-file packaged installer remains Windows-only; macOS installs from
-source via `dist/install-macos.sh`. Version history is in
+Windows and Linux are supported, and macOS is natively validated on the
+`macos-latest` CI job (Apple Silicon): the whole suite, C parity/ABI, the Rust
+bridge, the package manager, a native Cocoa window probe and a loopback libcurl
+HTTP probe build and run on real macOS. Cocoa UI is an unreleased Rust-bridge
+implementation and macOS HTTP transport rides an opt-in libcurl Rust bridge
+(`stdlib/net/http_macos`). The single-file packaged installer remains
+Windows-only; macOS installs from source via `dist/install-macos.sh`, exercised
+by the same CI job. Version history is in
 [CHANGELOG.md](CHANGELOG.md).
 
 Report vulnerabilities privately to **zmjsjsg3@163.com**, before public issues
@@ -227,7 +229,8 @@ path cannot produce a green gate without the comparisons. Both jobs also run a
 named `Test Rust bridge` step with `AOXN_TEST_REQUIRE_CLANG=1` and
 `AOXN_TEST_REQUIRE_RUSTC=1`, so a runner without rustc fails rather than skipping
 the bridge tests. A `macos-latest` job runs the same suite plus a native Cocoa
-probe and a loopback libcurl HTTP probe, supplying the Apple runtime evidence
+probe, a loopback libcurl HTTP probe and a from-source installer +
+installed-toolchain smoke, supplying the Apple runtime evidence
 the Windows/Linux hosts cannot. Native command exit codes gate Windows
 smoke/release steps, and installer downloads remain opt-in.
 The web-bench workflow's bash steps use forward-slash paths so Git Bash cannot
@@ -254,22 +257,28 @@ The unreleased Cocoa backend invokes AppKit/CoreGraphics through an unsafe,
 fixed-signature Objective-C Rust bridge on the main thread. It requires rustc;
 it is trusted native code, not a sandbox. Scalar bridge buffers and borrowed
 clipboard strings retain explicit lifetime contracts. Windows UI tests (17/17)
-and both Apple metadata checks passed, not native desktop validation. Full
+and both Apple metadata checks passed, and a native Cocoa window probe
+(30 frames in an NSWindow) passes on the `macos-latest` CI job. Full
 IME composition and Retina-resolution backing are outside current coverage.
 
 The unreleased Darwin port uses the modern inode64 layout, with Intel symbol
 redirection emitted by both compilers. Raw libc calls remain subject to the
-FFI contract; Windows regressions and simulated macOS symbol checks do not
-validate Apple's runtime ABI. Native Intel and Apple Silicon execution remains
-required. Local validation on 2026-11-11 passed 385 Windows compiler tests,
-Linux workspace/tests cross-check and 11 documentation tests. Both Apple
-Silicon and Intel workspace/tests cross-checks passed; these do not link or
-execute Apple binaries. A Darwin SDK
-layout test is present but has not run here. Cocoa desktop execution remains
-unverified; the macOS installer builds from source (`dist/install-macos.sh`)
-and no new version release is implied. The macOS libcurl HTTP bridge is trusted
-native code performing real TLS I/O with the caller's permissions, validated by
-the `macos-latest` CI probe rather than on this Windows host.
+FFI contract; Windows regressions and simulated macOS symbol checks alone do
+not validate Apple's runtime ABI. Local validation on 2026-11-11 passed 385
+Windows compiler tests, the Linux workspace/tests cross-check and 11
+documentation tests; both Apple Silicon and Intel workspace/tests cross-checks
+passed, and those do not link or execute Apple binaries. **Native Apple
+execution is supplied by the `macos-latest` CI job (2026-11-15, Apple
+Silicon)**: the whole suite, C parity/ABI, the Rust bridge, the package
+manager, the native Cocoa window probe, the loopback libcurl HTTP probe and the
+from-source installer + installed-toolchain smoke all build and run green,
+including the Darwin SDK layout and fixed-timezone tests on the native runner.
+Intel macOS is cross-checked clean; the hosted runner is Apple Silicon, so
+Intel native execution is not separately claimed. The macOS installer builds
+from source (`dist/install-macos.sh`) and no new version release is implied.
+The macOS libcurl HTTP bridge is trusted native code performing real TLS I/O
+with the caller's permissions, validated by the `macos-latest` CI probe rather
+than on this Windows host.
 
 The unreleased `addr_of` is an unchecked raw-memory escape hatch, not a
 reference type: its address is valid only while the owner lives. A struct
@@ -348,8 +357,10 @@ publish/install, migrate with round-trip verification). Linux Rust
 workspace/tests cross-check passed, and both Apple targets
 (`aarch64-apple-darwin`, `x86_64-apple-darwin`) cross-checked clean — these
 are cross-checks, not native runtime. Native macOS evidence comes from the
-`macos-latest` CI job (Cocoa + libcurl HTTP probes, libcurl loopback against a
-local server); it is not a claim of local Apple execution. See
+`macos-latest` CI job (2026-11-15, Apple Silicon, green): the whole suite,
+Cocoa + libcurl HTTP probes, libcurl loopback against a local server and the
+from-source installer + installed-toolchain smoke; it is not a claim of local
+Apple execution on this Windows host. See
 [verification evidence](docs/c-compatibility.md). No fresh
 security audit, IDE validation, Linux native runtime or full installer release is
 implied. The P2 maintenance follow-up reran the explicit locked compiler/package
@@ -374,10 +385,13 @@ Xvfb) ran again.
 不代表新版本或发布。至此 31 项标准库路线图全部处置完毕（27 项交付、
 4 项长期不做并给出替代；见 `docs/stdlib-todo.md` §7）。
 独立包管理器 crate 保持 **0.43.0**。修复先落 main，旧小版本不维护；
-支持 Windows/Linux；未发布 macOS 核心移植正在验证，尚无原生运行通过声明，
-Cocoa UI 为待桌面验证的未发布 Rust 桥实现，macOS HTTP 传输经可选启用的
-libcurl Rust 桥（`stdlib/net/http_macos`）提供。单文件打包安装器仍仅 Windows；
-macOS 经 `dist/install-macos.sh` 从源码安装。见 [CHANGELOG](CHANGELOG.md)。
+支持 Windows/Linux；macOS 已在 `macos-latest` CI 任务（Apple Silicon）上
+原生验证通过：整套测试、C parity/ABI、Rust 桥、包管理器、原生 Cocoa 窗口
+探针与环回 libcurl HTTP 探针都在真实 macOS 上构建运行。Cocoa UI 为未发布
+Rust 桥实现，macOS HTTP 传输经可选启用的 libcurl Rust 桥
+（`stdlib/net/http_macos`）提供。单文件打包安装器仍仅 Windows；macOS 经
+`dist/install-macos.sh` 从源码安装，并由同一 CI 任务实测。见
+[CHANGELOG](CHANGELOG.md)。
 
 漏洞先私报 **zmjsjsg3@163.com**，不要先发公开 issue。提供 commit/版本、系统架构、
 aoxn doctor、最小输入、命令、预期/实际行为与影响。误编译附 aoxn c 与 O0 复现情况。
@@ -517,8 +531,8 @@ Windows/Linux 另有独立步骤强制 C parity/ABI 目标使用 clang，提前�
 不能让未实际比较的门禁变绿。两个平台还各有一个命名步骤 `Test Rust bridge`，
 设置 `AOXN_TEST_REQUIRE_CLANG=1` 与 `AOXN_TEST_REQUIRE_RUSTC=1`：缺少 rustc 的
 runner 会失败而不是跳过桥测试。`macos-latest` job 运行同一套测试，外加原生
-Cocoa 探针与环回 libcurl HTTP 探针，提供 Windows/Linux 主机无法给出的 Apple
-运行时证据。Windows 冒烟/发布逐条检查原生命令退出码，
+Cocoa 探针、环回 libcurl HTTP 探针与从源码安装器 + 已安装工具链冒烟，提供
+Windows/Linux 主机无法给出的 Apple 运行时证据。Windows 冒烟/发布逐条检查原生命令退出码，
 安装器下载仍为显式启用。web-bench 工作流的 bash 步骤使用正斜杠路径，Git Bash
 不会再把分隔符当转义吞掉；修复后的调用已在本地重跑（服务器构建 + 23/23 项
 功能 parity 检查通过）。本地 workflow 检查不证明托管 Actions 或安装器运行成功。
@@ -536,15 +550,19 @@ GitHub `main` 分支受保护：必须经 pull request（2026-11-13 起批准数
 未发布 Cocoa 后端以主线程上的 unsafe 固定签名 Objective-C Rust 桥调用
 AppKit/CoreGraphics，需要 rustc，是可信原生代码而非沙箱；缓冲区与剪贴板
 借用字符串仍有显式生命周期契约。Windows UI 17/17 与双 Apple 元数据检查通过，
-不等于原生桌面验证。完整 IME 与 Retina 分辨率缓冲区不在当前覆盖内。
+原生 Cocoa 窗口探针（NSWindow 中 30 帧）也在 `macos-latest` CI 任务上通过。
+完整 IME 与 Retina 分辨率缓冲区不在当前覆盖内。
 
 未发布 Darwin 移植采用现代 inode64 布局，两套编译器同步发射 Intel 符号重定向。
-原始 libc 调用仍受 FFI 契约限制；Windows 回归和模拟 macOS 符号检查不能证明
-Apple 运行期 ABI 正确，仍需 Intel 与 Apple Silicon 原生执行验证。
-2026-11-11 本地通过 385 项 Windows 编译器测试、Linux workspace/tests
-交叉检查及 11 项文档测试。Apple Silicon 与 Intel workspace/tests 交叉检查均通过，
-不等于 Apple 二进制链接或执行。已加入 Darwin SDK 布局测试，但本机未执行。
-Cocoa 桌面运行未验证；macOS 安装器从源码构建（`dist/install-macos.sh`），
+原始 libc 调用仍受 FFI 契约限制；仅凭 Windows 回归和模拟 macOS 符号检查不能
+证明 Apple 运行期 ABI 正确。2026-11-11 本地通过 385 项 Windows 编译器测试、
+Linux workspace/tests 交叉检查及 11 项文档测试；Apple Silicon 与 Intel
+workspace/tests 交叉检查均通过，这些不链接或执行 Apple 二进制。**Apple 原生
+执行由 `macos-latest` CI 任务提供（2026-11-15，Apple Silicon）**：整套测试、
+C parity/ABI、Rust 桥、包管理器、原生 Cocoa 窗口探针、环回 libcurl HTTP 探针
+与从源码安装器 + 已安装工具链冒烟都构建运行通过，含原生 runner 上的 Darwin SDK
+布局与固定时区测试。Intel macOS 交叉检查干净；托管 runner 为 Apple Silicon，
+故不单独声明 Intel 原生执行。macOS 安装器从源码构建（`dist/install-macos.sh`），
 不代表发布新版本。macOS libcurl HTTP 桥是以调用者权限进行真实 TLS I/O 的
 可信原生代码，由 `macos-latest` CI 探针验证，而非本 Windows 主机。
 
@@ -603,8 +621,9 @@ ABI 与2项 parity。
 目录注册表发布/安装、带往返校验的 migrate）。Linux Rust workspace/tests
 cross-check 通过，两个 Apple 目标（`aarch64-apple-darwin`、`x86_64-apple-darwin`）
 交叉检查也均干净——这些是交叉检查，不是原生运行。macOS 原生证据来自
-`macos-latest` CI 任务（Cocoa 与 libcurl HTTP 探针、对本地服务器的 libcurl
-回环），并非本机 Apple 执行的声明。
+`macos-latest` CI 任务（2026-11-15，Apple Silicon，全绿）：整套测试、Cocoa 与
+libcurl HTTP 探针、对本地服务器的 libcurl 回环，以及从源码安装器 + 已安装
+工具链冒烟；并非本 Windows 主机 Apple 执行的声明。
 见[C 兼容证据](docs/c-compatibility.md)。不暗示新安全审计、IDE 验证、Linux 原生运行
 或完整安装器发布。P2维护后又执行显式locked编译器/包测试，结果与Python检查器
 测试见[仓库维护证据](docs/repository-audit.md)。该次维护未触发托管CI，

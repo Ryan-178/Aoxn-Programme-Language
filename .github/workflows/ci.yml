@@ -151,8 +151,9 @@ jobs:
   # preinstalled); rustc is preinstalled too. Unlike a cross-check, this job
   # COMPILES AND RUNS the Cocoa UI backend and the libcurl HTTP bridge on real
   # macOS, so the platform guards (`target_os() == "macos"`) are exercised at
-  # runtime, not just folded away. The Windows-only surface (installer,
-  # WinHTTP, Win32/GDI) is not covered here.
+  # runtime, not just folded away. The macOS installer (dist/install-macos.sh)
+  # is built and run here too; the Windows-only surface (WinHTTP, Win32/GDI,
+  # the PE installer) is not covered here.
   macos:
     runs-on: macos-latest
     steps:
@@ -233,3 +234,16 @@ jobs:
           sleep 1
           cargo run -- build examples/http_macos_probe.ax -o http-macos-probe
           ./http-macos-probe http://127.0.0.1:8765/hello.ax
+
+      # Native installer: build from source, lay out bin/ + lib/stdlib +
+      # examples under a prefix, then prove the INSTALLED toolchain runs —
+      # doctor plus a stdlib import resolved through AOXN_HOME/lib/stdlib (the
+      # installed tree, not the checkout). Downloads nothing.
+      - name: macOS installer and installed-toolchain smoke
+        run: |
+          PREFIX="$RUNNER_TEMP/aoxn-install"
+          bash dist/install-macos.sh --prefix "$PREFIX"
+          export AOXN_HOME="$PREFIX"
+          "$PREFIX/bin/aoxn" doctor
+          "$PREFIX/bin/aoxn" run "$PREFIX/examples/hello.ax"
+          "$PREFIX/bin/aoxn" run "$PREFIX/examples/stdlib_demo.ax"
