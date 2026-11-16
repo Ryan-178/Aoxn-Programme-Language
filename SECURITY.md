@@ -4,13 +4,13 @@
 
 ### Scope and reporting
 
-**Compiler 0.55.0 plus unreleased work; no new release.** Fixes target current
+**Compiler 0.55.0; released as pre-release tag `v0.55.0-snapshot-5`
+(2026-11-16).** Fixes target current
 0.55.x. Windows is first-class; Linux has an established compiler/stdlib/X11
-baseline. New Linux HTTP, installer, socket and doctor changes are in progress;
-native Linux validation of this batch is pending. Windows/cross-checks are not
-Linux runtime evidence. Prior macOS Apple Silicon success is historical evidence
-from 2026-11-15, not validation of the modified bridge; Intel lacks separate
-native runtime evidence. See [platform support](docs/platform-support.md).
+baseline. The Linux HTTP, installer, socket and doctor changes were natively
+validated on 2026-11-16 (PR #11: Ubuntu 22.04/24.04 x86_64, Ubuntu 24.04 ARM64,
+macOS, Windows); Alpine/musl and native Wayland remain unverified. See
+[platform support](docs/platform-support.md).
 
 Report privately to **zmjsjsg3@163.com** before disclosure. Include commit,
 platform, doctor output, minimal input, commands, behavior and impact; for
@@ -93,10 +93,11 @@ ide/src-tauri/audit.toml, not newly endorsed by this update.
 
 ## 中文
 
-编译器仍为 **0.55.0 + 未发布工作**，修复当前 0.55.x，不是新发行。Windows 为
-一等平台，Linux 已有编译器/库/X11 基线；本批 HTTP/安装器/socket/doctor 尚待
-新增改动原生 Linux 验证。Windows/交叉检查不是原生运行；macOS Apple Silicon
-成功为 2026-11-15 历史记录，不验证修改桥；Intel 无独立原生证据。
+编译器 0.55.0，已发布预发布标签 **v0.55.0-snapshot-5**（2026-11-16），修复当前
+0.55.x。Windows 为一等平台，Linux 已有编译器/库/X11 基线；本批 HTTP/安装器/
+socket/doctor 已由 2026-11-16 PR #11 原生验证（Ubuntu 22.04/24.04 x86_64、
+Ubuntu 24.04 ARM64、macOS、Windows）；Alpine/musl 与原生 Wayland 仍未验证；
+Intel macOS 无独立原生证据。
 漏洞先私信 **zmjsjsg3@163.com**，附提交/平台/doctor/最小输入/命令/影响，误编译
 附 C/O0 复现，脱敏并说明署名，可协商加密。目标 3 工作日确认、10 工作日初评，
 确认后 90 天或修复时披露（先到者）；紧急问题优先，利用中可提前提示，署名须同意，无奖金。

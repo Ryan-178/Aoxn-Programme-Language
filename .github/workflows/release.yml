@@ -118,8 +118,8 @@ jobs:
           body: |
             ## Aoxn ${{ github.ref_name }} — Windows
 
-            One file installs everything. Download `Aoxn-${{ github.ref_name }}-Setup.exe`,
-            double-click it, and `aoxn` ends up on your PATH.
+            One file installs everything. Download the `Aoxn-<version>-Setup.exe`
+            asset attached to this release, double-click it, and `aoxn` ends up on your PATH.
 
             ```
             aoxn run examples\hello.ax

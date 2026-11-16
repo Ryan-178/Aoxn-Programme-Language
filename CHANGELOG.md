@@ -3,25 +3,33 @@
 Notable changes to the Aoxn compiler and language. Aoxn follows semver-ish
 minor bumps while pre-1.0: each minor version is a language milestone.
 
-## [Unreleased]
+## [0.55.0-snapshot-5] - 2026-11-16
 
-### Native Linux libraries, compiler diagnostics and source installer (in progress)
+**Snapshot 5** is a pre-release tag; the compiler version stays 0.55.0. It
+publishes the native Linux batch below together with the earlier unreleased
+macOS/Cocoa, stdlib-closing, `re` and Rust-bridge work. Native CI on PR #11
+(2026-11-16) is green on Ubuntu 22.04/24.04 x86_64, Ubuntu 24.04 ARM64,
+macOS and Windows; Alpine/musl and native Wayland remain unverified.
 
-Version remains 0.55.0; no release. Adds opt-in stdlib/net/http_linux.ax,
-loading the shared http_macos_native.rs libcurl bridge now enabled on Linux and
-macOS. http.ax dispatches to net_curl_* helpers; Linux HTTP/SDK programs require
-an explicit provider import, rustc and libcurl development files. Windows
-WinHTTP remains unchanged. Bridge handling tightens HTTP(S), proxy/interim
-headers and upload-buffer ownership; new native Linux runtime evidence is pending.
+### Native Linux libraries, compiler diagnostics and source installer
+
+Adds opt-in stdlib/net/http_linux.ax, loading the shared
+http_macos_native.rs libcurl bridge now enabled on Linux and macOS. http.ax
+dispatches to net_curl_* helpers; Linux HTTP/SDK programs require an explicit
+provider import, rustc and libcurl development files. Windows WinHTTP remains
+unchanged. Bridge handling tightens HTTP(S) protocol scope, proxy/interim
+headers and streaming upload-buffer ownership; the Linux and macOS native CI
+jobs exercise the changed shared bridge on 2026-11-16.
 
 Adds dist/install-linux.sh with an absolute dedicated --prefix, --skip-build,
 complete stdlib tree copying, no profile changes by default and safely quoted
-.profile PATH persistence only with --modify-path. Doctor failure is fatal;
+.profile PATH persistence only with --modify-path. It rejects prefixes that
+overlap the source/package tree and honours AOXN_CLANG. Doctor failure is fatal;
 the script downloads no toolchains (cargo may fetch locked dependencies).
 Linux socket sends use MSG_NOSIGNAL and close accepts fd zero. Doctor checks
 portable modules plus host backend/provider sources and rejects incomplete trees.
-Windows regressions/cross-checks are distinct from native Linux verification;
-the prior macOS 2026-11-15 CI result does not validate this changed shared bridge.
+dist/package-linux.sh builds a checksummed local x86_64/aarch64 archive whose
+bundled installer needs no cargo.
 
 ### Native Cocoa UI backend
 
@@ -32,7 +40,7 @@ Includes a 30-frame native window probe, bridge export checks and third-backend
 primitive-contract coverage. Building requires rustc and Apple's frameworks;
 the selfhost CLI does not load the Rust bridge. Native desktop execution is
 validated by the `macos-latest` CI job (the 30-frame NSWindow probe), not on
-the Windows development host; no new version is released.
+the Windows development host; included in v0.55.0-snapshot-5.
 
 ### macOS core port (natively validated on Apple Silicon CI)
 
@@ -47,7 +55,7 @@ Linux's `-lm`. POSIX sleeps now split seconds/nanoseconds, and localtime_r
 success is detected by a non-null return. Windows platform-sensitive tests
 and simulated Darwin symbol checks passed locally; native macOS execution is
 supplied by the `macos-latest` CI job (Apple Silicon), where the whole suite
-runs green. No IDE package or version release. The Cocoa UI backend is
+runs green. No IDE package is included. The Cocoa UI backend is
 described above; the macOS HTTP transport, installer and CI job below.
 
 ### Linux validation and portability follow-up
@@ -63,16 +71,17 @@ described above; the macOS HTTP transport, installer and CI job below.
   native header fixtures check filesystem, clock and uname layouts at O0/O3.
 - Ubuntu 22.04/24.04 x86_64 and Ubuntu 24.04 ARM64 CI now include libcurl,
   SDK/socket regressions, installer contracts and installed HTTP/X11 smoke.
-  Native execution of this branch is pending; this is not a release.
+  Native execution ran green on 2026-11-16 (PR #11); this snapshot tag is a
+  pre-release.
 - The Windows package now includes nested standard-library and Rust bridge
   sources, matching the expanded doctor completeness check.
 
 ### macOS HTTP transport, installer and CI
 
 Completes the macOS adaptation of the three surfaces the goal names —
-libraries, compiler, installer — on top of the core port above. All of it is
-**unreleased** (version stays 0.55.0); native Apple runtime evidence comes
-from the new CI job, not the Windows development host.
+libraries, compiler, installer — on top of the core port above. All of it
+ships in v0.55.0-snapshot-5 (version stays 0.55.0); native Apple runtime
+evidence comes from the CI job, not the Windows development host.
 
 - **HTTP transport via libcurl (Rust bridge).** `stdlib/net/http_macos_native.rs`
   is a dependency-free libcurl bridge: five `#[no_mangle] extern "C"` exports
@@ -137,9 +146,9 @@ from the new CI job, not the Windows development host.
 
 **`sizeof(T)` and `addr_of(x)`** — the language-level blocker for every
 non-8-byte-slot container (gap A2 in `docs/language-gaps.md`, ranked #2)
-is gone. This batch is **unreleased**: per the standing no-release rule
-(2026-11-10), the compiler version stays **0.55.0** and no version tag is
-created until the user asks for a release.
+is gone. This batch ships in the **v0.55.0-snapshot-5** pre-release; the
+compiler version stays **0.55.0** per the standing rule, and the tag was
+created when the user requested this release (2026-11-16).
 
 ### The two forms
 
@@ -230,7 +239,7 @@ regex engine. Pure Aoxn, no externs, and inside the self-host subset.
   is present, plus a selfhost-compilable check. `examples/re_demo.ax` shows the
   tag-extraction use case.
 
-### Standard library: the roadmap closes (10 modules, all unreleased)
+### Standard library: the roadmap closes (10 modules)
 
 `docs/stdlib-todo.md` §2's remaining feasible modules all land in this
 batch, so **all 31 Python-stdlib roadmap items are now dispositioned**:

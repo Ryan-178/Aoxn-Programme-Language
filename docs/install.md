@@ -4,7 +4,7 @@
 compiler, the standard library, the UI toolkit and the examples — and
 installing it is a double-click. The single-file installer targets
 **Windows** (x86_64), the first-class platform. **Linux** and **macOS**
-install from source — see [Linux](#linux-unreleased-source-installer) and [macOS](#macos-build-from-source) below and
+install from source — see [Linux](#linux-source-installer-snapshot-5) and [macOS](#macos-build-from-source) below and
 `docs/platform-support.md` for what ships where.
 
 ## Install
@@ -174,11 +174,12 @@ powershell -ExecutionPolicy Bypass -File dist\package.ps1
 A source checkout also works in place — `cargo run -- run examples\hello.ax`
 finds `stdlib/` next to the checkout.
 
-## Linux (unreleased source installer)
+## Linux (source installer, snapshot 5)
 
-Version remains 0.55.0. These Linux installer/HTTP changes are in progress;
-**native Linux validation of the new batch is pending**, not implied by Windows
-regressions or cross-checks. Prior macOS CI success is historical (2026-11-15).
+Version remains 0.55.0; this batch ships as pre-release tag
+`v0.55.0-snapshot-5`. **Natively validated on 2026-11-16**: PR #11 checks are
+green on Ubuntu 22.04/24.04 x86_64, Ubuntu 24.04 ARM64, macOS and Windows.
+Alpine/musl and native Wayland remain unverified.
 
 Install Rust/cargo separately, plus clang and a system C development environment.
 Debian/Ubuntu HTTP prerequisites (rustc is also required):
@@ -224,7 +225,7 @@ CLI cannot load .rs imports. Windows WinHTTP remains unchanged; macOS uses
 stdlib/net/http_macos. See [stdlib](stdlib.md), [OpenAI](openai-sdk.md) and
 [Anthropic](anthropic-sdk.md).
 
-## Linux binary archive (unreleased)
+## Linux binary archive (snapshot 5)
 
 On a native Linux x86_64 or aarch64 host, run `bash dist/package-linux.sh`.
 The script builds the release compiler and produces a `.tar.gz` plus SHA-256
@@ -234,13 +235,13 @@ Verify with `sha256sum -c *.sha256`, extract the archive, then run its
 `dist/install-linux.sh --prefix "$HOME/.local/aoxn"`. The packaged installer
 uses its bundled compiler and whole stdlib tree without cargo; clang remains
 external, and HTTP applications still require rustc and libcurl development files.
-Ubuntu CI installs from this archive and runs installed HTTP/X11 probes.
-Native results for this branch remain pending.
+Ubuntu CI installs from this archive and runs installed HTTP/X11 probes; the
+2026-11-16 run is green (PR #11).
 
 中文：Linux 原生运行 `bash dist/package-linux.sh` 本地打包，生成 tar.gz 与 SHA-256，
 不发布版本。校验后解包，运行包内 dist/install-linux.sh；使用随包编译器，无需 cargo，
 clang 仍外置，HTTP 仍需 rustc/libcurl 开发文件。Ubuntu CI 验证打包后安装与 HTTP/X11，
-本分支原生结果待取得。
+2026-11-16 运行通过（PR #11）。
 
 ## macOS (build from source)
 
@@ -370,10 +371,11 @@ shell 是 bash 则写 `~/.bash_profile`）的 PATH，再跑 `aoxn doctor`。装�
 环回 HTTP 探针）验证；在该 job 于真实 Apple 硬件上跑绿之前，macOS 仍属「验证中
 的移植」而非完全支持的平台——详见 `docs/platform-support.md`。
 
-### Linux 源码安装（未发布）
+### Linux 源码安装（快照 5）
 
-版本仍为 0.55.0，本批 Linux HTTP/安装器改动尚待原生 Linux 验证；Windows 回归/
-交叉检查不替代原生执行，macOS 2026-11-15 成功为历史证据。
+版本仍为 0.55.0，本批随预发布标签 `v0.55.0-snapshot-5` 发布，**2026-11-16 已原生
+验证**：PR #11 的 Ubuntu 22.04/24.04 x86_64、Ubuntu 24.04 ARM64、macOS 与 Windows
+检查全绿；Alpine/musl 与原生 Wayland 仍未验证。
 自行准备 Rust/cargo、clang、C 开发环境；Debian/Ubuntu HTTP 依赖使用
 `sudo apt-get install clang build-essential libcurl4-openssl-dev ca-certificates`，
 另需 rustc。X11 可装 libx11-dev/libxft-dev/libfontconfig1-dev，运行需显示服务。
