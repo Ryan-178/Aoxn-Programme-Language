@@ -1,13 +1,15 @@
 # Platform support
 
-## Unreleased Linux native adaptation (in progress)
+## Linux native adaptation (released as v0.55.0-snapshot-5)
 
-The compiler remains 0.55.0. Linux compiler/portable-stdlib/X11 support dates to
-0.46.0; this batch adds the native HTTP provider and source installer and fixes
-socket/doctor behavior. **Native Linux verification of these new changes is
-pending.** Windows regressions and Rust cross-checks are not native Linux
-execution. The macOS result below is historical evidence from 2026-11-15,
-not validation of the modified shared libcurl bridge.
+The compiler remains 0.55.0; this batch ships as pre-release tag
+`v0.55.0-snapshot-5` (2026-11-16). Linux compiler/portable-stdlib/X11 support
+dates to 0.46.0; this batch adds the native HTTP provider and source installer
+and fixes socket/doctor behavior. **It was natively validated on 2026-11-16**:
+PR #11 checks are green on Ubuntu 22.04/24.04 x86_64, Ubuntu 24.04 ARM64, macOS
+and Windows. That run exposed a Rust-bridge staging race, fixed in df4c3dd and
+pinned by a six-thread regression. Alpine/musl, other distributions and native
+Wayland remain unverified.
 
 Linux prerequisites: Rust/cargo for building the compiler, clang and system C
 development tools for linking. HTTP additionally needs rustc, libcurl development
@@ -36,10 +38,10 @@ The new CI matrix targets Ubuntu 22.04/24.04 x86_64 and Ubuntu 24.04 ARM64,
 including SDK retries/SSE, socket failures, installer contracts and installed
 HTTP/X11 probes. Earlier native Linux/macOS runs failed because concurrent
 Rust bridge builds shared a PID-only staging directory. Commit df4c3dd isolates
-those directories; successful native reruns after that fix are still pending.
-Alpine/musl and other distributions remain unverified; a green Ubuntu job would
-not prove them. Local Apple Silicon/Intel workspace/test cross-checks pass,
-but are not native execution.
+those directories; the rerun on 0fc443d is green (2026-11-16), including the
+SDK, HTTPS-rejection, ABI and installed HTTP/X11 gates. Alpine/musl and other
+distributions remain unverified; a green Ubuntu job does not prove them. Local
+Apple Silicon/Intel workspace/test cross-checks pass but are not native execution.
 
 中文：本批 Linux 原生适配仍在进行中且未发布，版本保持 0.55.0；新增改动尚待原生
 Linux 验证，Windows/交叉检查不替代原生运行。安装需 Rust/cargo、clang、C 开发环境，
@@ -48,7 +50,7 @@ HTTP 另需 rustc、libcurl 开发文件和 CA；应用显式导入 stdlib/net/h
 完整复制标准库，doctor 失败即安装失败，不下载工具链，但 cargo 可获取锁定依赖。
 macOS 2026-11-15 成功记录是历史证据，不能验证本批共享桥变更。
 
-## Unreleased macOS core port (historical native evidence: 2026-11-15)
+## macOS core port (native evidence: 2026-11-15; included in snapshot 5)
 
 The source tree adds macOS core compiler/CLI and portable-stdlib adaptations
 for Apple Silicon and Intel. **macOS is natively validated on the
@@ -56,7 +58,7 @@ for Apple Silicon and Intel. **macOS is natively validated on the
 TS/UI suite, C parity/ABI, the Rust bridge, the package manager, a native Cocoa
 window probe, a loopback libcurl HTTP probe and the from-source installer +
 installed-toolchain smoke all build and run green on real macOS. This is
-unreleased work (no version tag); Intel macOS is cross-checked clean, and the
+part of v0.55.0-snapshot-5; Intel macOS is cross-checked clean, and the
 hosted runner is Apple Silicon, so Intel native execution is not separately
 claimed. Build from source with Rust and Apple's Command
 Line Tools (`xcode-select --install`); clang must resolve an installed SDK.
@@ -64,13 +66,14 @@ A build-from-source installer is provided (`dist/install-macos.sh`): it builds
 the compiler with cargo, lays out `<prefix>/bin/aoxn` + the whole
 `<prefix>/lib/stdlib` tree + examples, adds `<prefix>/bin` to PATH and runs
 `aoxn doctor`, without installing toolchains (cargo may fetch dependencies). There is no single-file packaged macOS
-artifact and no IDE packaging. An unreleased native Cocoa backend is available
+artifact and no IDE packaging. A native Cocoa backend is available
 through `stdlib/ui_cocoa`, using a single-file Rust AppKit/CoreGraphics bridge;
 it requires rustc, and a native Cocoa window probe passes on the CI job. HTTP
 transport on macOS rides
 libcurl through an opt-in Rust bridge (`stdlib/net/http_macos` +
-`http_macos_native.rs`); the WinHTTP implementation stays Windows-only. Linux now has the unreleased
-opt-in provider described above; new shared-bridge runtime checks are pending.
+`http_macos_native.rs`); the WinHTTP implementation stays Windows-only. Linux has the
+opt-in provider described above; the shared bridge passed the native Linux and
+macOS jobs on 2026-11-16.
 
 `target_os()` reports `"macos"`. Native objects are Mach-O `.o`, static
 libraries `.a`, executables have no suffix, and libSystem supplies C math.
@@ -104,16 +107,16 @@ job, one windowing backend). v0.46.0 brings Linux back as a supported
 target — the compiler, the whole test suite and an X11 UI backend
 rewritten against the v3 `plat_*` contract all run on it — while Windows
 keeps everything that is Windows-specific: the installer, the release
-packaging and the Win32/GDI UI backend. The unreleased macOS core port is
+packaging and the Win32/GDI UI backend. The macOS core port is
 separate from Cocoa UI support; see the validation scope above.
 
 ## What ships where
 
-| | Windows (first-class) | Linux (v0.46.0) | macOS (unreleased) |
+| | Windows (first-class) | Linux (v0.46.0; snapshot 5) | macOS (snapshot 5) |
 |---|---|---|---|
 | Compiler | `aoxn.exe` | `aoxn` (ELF objects, `-lm` linked automatically) | `aoxn` (Mach-O `.o`, libSystem C math) |
-| Installer | `Aoxn-<version>-Setup.exe` | `dist/install-linux.sh` (unreleased source installer) | `dist/install-macos.sh` (build from source) |
-| Standard library | full, including `stdlib/net` (WinHTTP) | portable modules; HTTP/SDKs via opt-in `stdlib/net/http_linux` (unreleased) | full; HTTP via opt-in libcurl bridge (`stdlib/net/http_macos`) |
+| Installer | `Aoxn-<version>-Setup.exe` | `dist/install-linux.sh` (snapshot 5 source installer; `dist/package-linux.sh` archives) | `dist/install-macos.sh` (build from source) |
+| Standard library | full, including `stdlib/net` (WinHTTP) | portable modules; HTTP/SDKs via opt-in `stdlib/net/http_linux` | full; HTTP via opt-in libcurl bridge (`stdlib/net/http_macos`) |
 | UI backend | Win32/GDI (`stdlib/ui_win.ax`) | Xlib + Xft (`stdlib/ui_x11.ax`) | Cocoa (`stdlib/ui_cocoa`, Rust AppKit bridge) |
 | UI link flags | `-l user32 -l gdi32` | `-l X11 -l Xft` | AppKit/CoreGraphics frameworks (via rustc) |
 | CI | `windows-latest`, whole suite | `ubuntu-latest`, whole suite + Xvfb probe | `macos-latest`, whole suite + Cocoa + libcurl + installer probes |
@@ -122,7 +125,7 @@ separate from Cocoa UI support; see the validation scope above.
 ## The invariants that make both platforms one codebase
 
 - **`target_os()` folds the BUILD host's OS.** `"windows"` on a Windows
-  build, `"linux"` on a Linux build (v0.46.0), `"macos"` in the unreleased
+  build, `"linux"` on a Linux build (v0.46.0), `"macos"` in the macOS port
   macOS port, and `"other"` elsewhere. The
   self-hosted compiler has no platform check of its own:
   `selfhost/codegen.ax` folds `target_os()` by calling the builtin, whose
@@ -138,7 +141,7 @@ separate from Cocoa UI support; see the validation scope above.
 - **`stack_link_flag()`/`default_link_libs()`** (`src/platform.rs`):
   Windows links `-Wl,/STACK:8388608` and folds C math into the CRT;
   Linux passes no stack flag (RLIMIT_STACK governs) and adds `-lm`.
-- **The installer stays Windows-only.** `src/setup/` is cfg-gated: on
+- **The PE installer stub stays Windows-only.** `src/setup/` is cfg-gated: on
   Linux the `aoxn-setup` binary builds as a stub that refuses to run.
   Linux users install from source with `dist/install-linux.sh`; the PE stub is not
   the Linux installer.
@@ -164,14 +167,14 @@ separate from Cocoa UI support; see the validation scope above.
 - **The web benchmark suite's server** (`web/`) — its sockets speak
   ws2_32. `stdlib/socket.ax` now provides a portable blocking IPv4 TCP subset
   (Winsock on Windows, POSIX on Linux) with per-function `target_os()` guards;
-  it has real Windows loopback evidence, while the Linux branch has not been
-  executed natively in this workspace. The web suite itself has not yet been
-  migrated to the portable module.
+  it has Windows loopback evidence and now runs natively in the Ubuntu 22.04/
+  24.04 x86_64 and 24.04 ARM64 jobs (2026-11-16). The web suite itself has not
+  yet been migrated to the portable module.
 - The selfhost CLI's process execution is argv-based on both platforms
   (Windows CRT `_spawnvp` + CRT argument quoting, POSIX `fork`/`execvp`); it does
   not use a shell. The selfhost CLI was exercised on Windows this round; no
   Linux-native CLI result is claimed here.
-- **macOS UI** — the unreleased `ui_cocoa` backend requires the Rust bridge;
+- **macOS UI** — the `ui_cocoa` backend requires the Rust bridge;
   a native Cocoa window probe (30 frames in an NSWindow) passes on the
   `macos-latest` CI job. The build-from-source installer
   (`dist/install-macos.sh`) ships the backend's sources with the rest of the

@@ -793,7 +793,7 @@ half-filled one; a scheme-less input keeps the WHOLE input in `path`
 `http_get(url)`, `http_post(url, body, content_type)`,
 `http_request(method, url, headers, body)` → `HttpResponse{status, body,
 request_id, retry_after, location, err, errmsg}`, and `http_ok(r)`.
-Windows links `-l winhttp` (unchanged). Linux now uses an unreleased opt-in
+Windows links `-l winhttp` (unchanged). Linux uses an opt-in
 libcurl Rust bridge; macOS uses the same bridge. Linux applications must add
 `import * from "stdlib/net/http_linux"` alongside `import * from "stdlib/net"`,
 then run `aoxn run app.ax` without -l winhttp. Install rustc and libcurl
@@ -804,7 +804,7 @@ imports stdlib/net/http_macos. Both load http_macos_native.rs, now cfg-enabled
 for Linux/macOS; http.ax dispatches through net_curl_* helpers. Missing provider
 imports can fail with unresolved aoxn_http_* link symbols, not a guaranteed
 runtime error. The selfhost CLI cannot load .rs providers; Windows needs neither.
-New Linux runtime validation is pending; historical macOS 2026-11-15 CI does
+This batch is validated natively on 2026-11-16 (PR #11); historical macOS 2026-11-15 CI does
 not validate this changed bridge. Timeouts: 5 s connect / 30 s receive. Errors are values. The facade does not expose arbitrary response
 headers or redirect policy — drop to `net_http_request` /
 `net_header_value` / `net_http_no_redirects` for those. Transport detail:

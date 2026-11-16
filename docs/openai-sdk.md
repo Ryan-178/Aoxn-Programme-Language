@@ -16,12 +16,12 @@ for those native transports.
 > in this page are the v0.41.0 ones. `client.ax` — and with it this SDK's
 > entire public surface — is unchanged.
 
-## Linux native transport (unreleased, verification pending)
+## Linux native transport (snapshot 5; native CI green 2026-11-16)
 
-The compiler remains 0.55.0; these Linux changes are in progress. No native
-Linux success for this batch is claimed. Windows regressions/cross-checks do
-not establish native execution; the prior macOS 2026-11-15 CI result is historical,
-not validation of the changed shared bridge.
+The compiler remains 0.55.0; this batch ships as pre-release tag
+`v0.55.0-snapshot-5`. Linux HTTP/SDK retry and SSE coverage ran natively on
+2026-11-16 (PR #11: Ubuntu 22.04/24.04 x86_64, Ubuntu 24.04 ARM64, macOS,
+Windows). Alpine/musl and native Wayland remain unverified.
 
 Install Rust/rustc, clang and system C development tools. Debian/Ubuntu:
 

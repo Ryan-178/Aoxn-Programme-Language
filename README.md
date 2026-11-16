@@ -2,14 +2,15 @@
 
 ## English
 
-**Compiler 0.55.0 + unreleased work; no new release.** Aoxn is a statically typed
+**Compiler 0.55.0; released as pre-release tag `v0.55.0-snapshot-5`
+(2026-11-16).** Aoxn is a statically typed
 native language with Python-style indentation. The Rust compiler emits ISO C
 and invokes external clang. The compiler library has zero external Rust crate
 or LLVM library dependencies; package-manager dependencies are locked separately.
 
 The tree includes generics, value-copy structs/arrays, byte strings, dicts,
-nullable narrowing, function pointers, exceptions and namespaces. Unreleased
-work includes sizeof/addr_of, a Python re subset and the closing stdlib batch
+nullable narrowing, function pointers, exceptions and namespaces. This snapshot
+includes sizeof/addr_of, a Python re subset and the closing stdlib batch
 (27 of 31 roadmap items implemented, four explicit decisions with substitutes).
 The TS front end is a subset, not a JS runtime. TOML package management, CSS
 assets, two API SDKs and a separate Tauri/Monaco IDE are included.
@@ -17,17 +18,13 @@ assets, two API SDKs and a separate Tauri/Monaco IDE are included.
 ### Platforms and installation
 
 Windows x86_64 is first-class; Linux compiler/portable-stdlib/X11 support dates
-to 0.46.0. **New Linux HTTP, installer, socket and doctor adaptations are in
-progress and unreleased; native Linux verification of this batch is pending.**
-Windows regressions and cross-checks are not Linux runtime evidence. Prior
-macOS Apple Silicon CI success is historical evidence dated **2026-11-15**,
-not validation of this batch; Intel macOS has no separate native evidence.
-[Platform support](docs/platform-support.md) is authoritative. The new native CI
-matrix covers Ubuntu 22.04/24.04 x86_64 and Ubuntu 24.04 ARM64, including SDK
-retry/SSE, header ABI fixtures and installed HTTP/X11 probes; branch execution
-is pending after the staging-directory race fix df4c3dd (earlier native
-Linux/macOS runs exposed that failure). Other distributions, musl, and native
-Wayland remain unverified.
+to 0.46.0. **The Linux HTTP, installer, socket and doctor work is included and
+was natively validated on 2026-11-16**: PR #11 checks are green on Ubuntu
+22.04/24.04 x86_64, Ubuntu 24.04 ARM64, macOS and Windows. That run also found
+and fixed a Rust-bridge staging race (df4c3dd); a six-thread regression pins it.
+Alpine/musl, other distributions, and native Wayland remain unverified. Intel
+macOS has cross-check but no separate native evidence.
+[Platform support](docs/platform-support.md) is authoritative.
 
 Windows uses the single-file Setup.exe, clang and MSVC-compatible tools;
 -InstallClang explicitly enables toolchain downloads, disabled by default.
@@ -35,9 +32,9 @@ Linux uses dist/install-linux.sh with Rust/cargo, clang and system C development
 tools. HTTP additionally needs rustc, libcurl development files and CA certificates.
 X11 requires X11/Xft/fontconfig development libraries and a display. macOS uses
 dist/install-macos.sh with Rust and Apple Command Line Tools; Cocoa/HTTP use
-opt-in Rust bridges. Linux binary archives can now be built locally with
-`bash dist/package-linux.sh`; no archive or new release has been published.
-No native IDE package is claimed.
+opt-in Rust bridges. Linux binary archives can be built locally with
+`bash dist/package-linux.sh`; this snapshot's published artifact is the Windows
+installer. No native IDE package is claimed.
 
 From a Linux checkout (install Rust separately):
 
@@ -56,7 +53,7 @@ safely quoted PATH entry in ~/.profile. Doctor failure fails installation.
 No toolchain download is performed; cargo may fetch locked dependencies.
 See [installation](docs/install.md).
 
-### Linux HTTP and SDKs (unreleased)
+### Linux HTTP and SDKs (snapshot 5)
 
 The HTTP layer dispatches Linux/macOS to net_curl_* helpers backed by system
 libcurl through the shared stdlib/net/http_macos_native.rs Rust bridge.
@@ -121,27 +118,26 @@ is frozen historical material. License: [Apache-2.0](LICENSE).
 
 ## 中文
 
-**编译器仍为 0.55.0，加未发布工作；没有发布新版本。** Aoxn 使用 Python 风格
+**编译器 0.55.0，已发布预发布标签 `v0.55.0-snapshot-5`（2026-11-16）。**
+Aoxn 使用 Python 风格
 缩进与静态类型，Rust 编译器生成 ISO C，再调用 clang。编译器库无外部 Rust crate
 或 LLVM 库依赖。语言支持泛型、值复制结构体/数组、字节字符串、字典、可空收窄、
-函数指针、异常和命名空间。未发布工作含 sizeof/addr_of、re 子集及标准库收尾：
+函数指针、异常和命名空间。本快照含 sizeof/addr_of、re 子集及标准库收尾：
 31 项中 27 项有实现，4 项明确不做并提供替代，不是完整 Python 兼容。TS 前端为
 子集，另有 TOML 包管理、CSS、两个 SDK 和独立 IDE。
 
 Windows 为一等平台，Linux 编译器/可移植标准库/X11 自 0.46.0 起受支持。
-**本批 Linux HTTP、安装器、socket、doctor 改动仍在进行中且未发布，尚待新增
-改动的原生 Linux 验证。** Windows 回归和交叉检查不等于原生运行。macOS Apple
-Silicon 成功记录为 **2026-11-15 历史证据**，不验证本批；Intel macOS 无独立原生
-证据。[平台支持](docs/platform-support.md)为准。新增原生 CI 矩阵覆盖 Ubuntu
-22.04/24.04 x86_64 和 Ubuntu 24.04 ARM64，含 SDK 重试/SSE、ABI 头文件夹具及安装后
-HTTP/X11 探针；早期 Linux/macOS 原生运行发现暂存目录竞争，df4c3dd 已修复，
-修复后的成功结果待取得。其他发行版、musl 与原生 Wayland 尚未验证。
+**本批 Linux HTTP、安装器、socket、doctor 改动已包含，并于 2026-11-16 原生验证**：
+PR #11 的 Ubuntu 22.04/24.04 x86_64、Ubuntu 24.04 ARM64、macOS 与 Windows
+检查全绿；该轮运行还发现并修复了 Rust 桥暂存目录竞争（df4c3dd），并有六线程
+回归钉住。Alpine/musl、其他发行版与原生 Wayland 仍未验证；Intel macOS 仅有
+交叉检查，无独立原生证据。[平台支持](docs/platform-support.md)为准。
 
 Windows 安装器默认不下载工具链，-InstallClang 才启用；链接需 clang/MSVC 工具。
 Linux 自备 Rust/cargo、clang、系统 C 开发环境；HTTP 另需 rustc、libcurl 开发文件
 和 CA 证书；GUI 另需 X11/Xft/fontconfig 与显示服务。macOS 使用源码安装器、Rust
 和 Apple Command Line Tools。Linux 可执行 `bash dist/package-linux.sh` 本地构建
-二进制归档，尚未发布产物或新版本；不声明原生 IDE 包。
+二进制归档；本快照发布的产物为 Windows 安装器。不声明原生 IDE 包。
 
 执行英文节安装命令：`bash dist/install-linux.sh --prefix "$HOME/.local/aoxn"`，
 再设置 PATH 并运行 doctor。前缀须为绝对路径专用目录。复制完整标准库树/示例/文档；
