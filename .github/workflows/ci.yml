@@ -121,7 +121,7 @@ jobs:
         run: python3 -B tools/test_linux_https.py
 
       - name: Linux HTTP, SDK and socket native regressions
-        run: cargo test -p aoxn --locked --test net --test linux_sdks --test socket
+        run: cargo test -p aoxn --locked --test net --test linux_sdks --test socket --test linux_abi
         env:
           AOXN_TEST_REQUIRE_CLANG: "1"
           AOXN_TEST_REQUIRE_RUSTC: "1"
