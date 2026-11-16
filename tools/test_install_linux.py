@@ -1,6 +1,8 @@
 """Installer contracts run under Bash with mocked native tools, even on Windows."""
+import hashlib
 import os
 from pathlib import Path
+import tarfile
 import shutil
 import subprocess
 import tempfile
@@ -164,6 +166,32 @@ class LinuxInstallerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((self.base / "cargo.log").exists())
         self.assertEqual((self.prefix / "lib/stdlib/net/native.rs").read_text(), "bridge\n")
+
+    def test_packaging_contains_whole_tree_and_matching_digest(self):
+        shutil.copyfile(SCRIPT.with_name("package-linux.sh"), self.root / "dist/package-linux.sh")
+        (self.root / "SECURITY.md").write_text("security\n", encoding="utf-8")
+        self.executable(self.tools / "uname",
+                        'if [ "$1" = -m ]; then printf "x86_64\\n"; else printf "Linux\\n"; fi\n')
+        self.executable(self.root / "target/release/aoxn",
+                        'if [ "$1" = version ]; then printf "aoxn 0.55.0\\n"; exit 0; fi\nexit 91\n')
+        output = self.base / "packages with spaces"
+        command = [BASH, shell_path(self.root / "dist/package-linux.sh"),
+                   "--skip-build", "--output", shell_path(output)]
+        result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        archive = output / "Aoxn-0.55.0-linux-x86_64.tar.gz"
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        self.assertEqual(Path(str(archive) + ".sha256").read_text().split()[0], digest)
+        with tarfile.open(archive) as package:
+            names = set(package.getnames())
+            for name in ("bin/aoxn", "lib/stdlib/net/native.rs", "examples/nested/native.rs",
+                         "dist/install-linux.sh", "SECURITY.md"):
+                self.assertIn("Aoxn-0.55.0-linux-x86_64/" + name, names)
+        before = archive.read_bytes()
+        repeated = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(repeated.returncode, 0)
+        self.assertEqual(archive.read_bytes(), before)
+        self.assertFalse((self.base / "cargo.log").exists())
 
     def test_skip_build_requires_existing_compiler(self):
         (self.root / "target/release/aoxn").unlink()
