@@ -43,7 +43,13 @@ case "$PREFIX" in
     fail 'unsafe --prefix: choose a dedicated Aoxn directory' ;;
 esac
 [ "$PREFIX" != "$(realpath -m -- "$HOME")" ] || fail '--prefix must not be HOME itself'
-[ "$PREFIX" != "$(realpath -m -- "$ROOT")" ] || fail '--prefix must not be the source root'
+ROOT="$(realpath -m -- "$ROOT")"
+case "$PREFIX/" in
+  "$ROOT/"*) fail '--prefix must be outside the source or package tree' ;;
+esac
+case "$ROOT/" in
+  "$PREFIX/"*) fail '--prefix must not contain the source or package tree' ;;
+esac
 command -v clang >/dev/null 2>&1 || fail 'clang not found; install clang with your system package manager'
 
 cd "$ROOT"

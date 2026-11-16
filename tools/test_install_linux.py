@@ -86,6 +86,8 @@ class LinuxInstallerTests(unittest.TestCase):
     def test_unsafe_prefixes_rejected_before_writes(self):
         for value in ("", "/", "///", "/tmp/..", "/usr", "/usr/local",
                       "relative", shell_path(self.home), shell_path(self.root),
+                      shell_path(self.root / "stdlib/nested-install"),
+                      shell_path(self.root / "examples/nested-install"), shell_path(self.base),
                       "/tmp/bad\npath", "/tmp/bad:path"):
             with self.subTest(prefix=value):
                 self.assert_failed_without_writes(

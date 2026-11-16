@@ -52,6 +52,11 @@ described above; the macOS HTTP transport, installer and CI job below.
 
 ### Linux validation and portability follow-up
 
+- Native Linux/macOS CI exposed same-process Rust-bridge staging collisions:
+  a PID alone did not distinguish test threads. Staging now uses PID plus an
+  atomic counter and exclusive directory creation, never deleting another
+  compiler's active directory. A six-thread same-source compile pins the race.
+
 - SDK retries use the portable clock module rather than Windows `Sleep`.
   Linux loopback SDK tests cover retry, completion and SSE for both providers.
 - Linux ARM64 uses `st_mode` offset 16 and selfhost clang `-mcpu` selection;
