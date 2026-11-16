@@ -34,8 +34,12 @@ Doctor requires portable module sources plus the native backend/provider files;
 file completeness and its smoke test do not validate all HTTP/TLS/GUI behavior.
 The new CI matrix targets Ubuntu 22.04/24.04 x86_64 and Ubuntu 24.04 ARM64,
 including SDK retries/SSE, socket failures, installer contracts and installed
-HTTP/X11 probes. Those jobs have not run for this branch yet. Alpine/musl and
-other distributions remain unverified; a green Ubuntu job would not prove them.
+HTTP/X11 probes. Earlier native Linux/macOS runs failed because concurrent
+Rust bridge builds shared a PID-only staging directory. Commit df4c3dd isolates
+those directories; successful native reruns after that fix are still pending.
+Alpine/musl and other distributions remain unverified; a green Ubuntu job would
+not prove them. Local Apple Silicon/Intel workspace/test cross-checks pass,
+but are not native execution.
 
 中文：本批 Linux 原生适配仍在进行中且未发布，版本保持 0.55.0；新增改动尚待原生
 Linux 验证，Windows/交叉检查不替代原生运行。安装需 Rust/cargo、clang、C 开发环境，

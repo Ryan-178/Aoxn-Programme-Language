@@ -25,7 +25,9 @@ not validation of this batch; Intel macOS has no separate native evidence.
 [Platform support](docs/platform-support.md) is authoritative. The new native CI
 matrix covers Ubuntu 22.04/24.04 x86_64 and Ubuntu 24.04 ARM64, including SDK
 retry/SSE, header ABI fixtures and installed HTTP/X11 probes; branch execution
-is pending. Other distributions, musl, and native Wayland remain unverified.
+is pending after the staging-directory race fix df4c3dd (earlier native
+Linux/macOS runs exposed that failure). Other distributions, musl, and native
+Wayland remain unverified.
 
 Windows uses the single-file Setup.exe, clang and MSVC-compatible tools;
 -InstallClang explicitly enables toolchain downloads, disabled by default.
@@ -132,7 +134,8 @@ Windows 为一等平台，Linux 编译器/可移植标准库/X11 自 0.46.0 起�
 Silicon 成功记录为 **2026-11-15 历史证据**，不验证本批；Intel macOS 无独立原生
 证据。[平台支持](docs/platform-support.md)为准。新增原生 CI 矩阵覆盖 Ubuntu
 22.04/24.04 x86_64 和 Ubuntu 24.04 ARM64，含 SDK 重试/SSE、ABI 头文件夹具及安装后
-HTTP/X11 探针；本分支运行结果待取得。其他发行版、musl 与原生 Wayland 尚未验证。
+HTTP/X11 探针；早期 Linux/macOS 原生运行发现暂存目录竞争，df4c3dd 已修复，
+修复后的成功结果待取得。其他发行版、musl 与原生 Wayland 尚未验证。
 
 Windows 安装器默认不下载工具链，-InstallClang 才启用；链接需 clang/MSVC 工具。
 Linux 自备 Rust/cargo、clang、系统 C 开发环境；HTTP 另需 rustc、libcurl 开发文件
