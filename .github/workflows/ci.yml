@@ -117,6 +117,9 @@ jobs:
       - name: Linux installer contract tests
         run: python3 -B tools/test_install_linux.py
 
+      - name: Linux HTTPS certificate rejection
+        run: python3 -B tools/test_linux_https.py
+
       - name: Linux HTTP, SDK and socket native regressions
         run: cargo test -p aoxn --locked --test net --test linux_sdks --test socket
         env:
