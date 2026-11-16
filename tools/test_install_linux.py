@@ -58,6 +58,7 @@ class LinuxInstallerTests(unittest.TestCase):
                         CARGO_LOG=shell_path(self.base / "cargo.log"),
                         DOCTOR_LOG=shell_path(self.base / "doctor.log"),
                         MOCK_OS="Linux", DOCTOR_STATUS="0", CARGO_STATUS="0")
+        self.env.pop("AOXN_CLANG", None)
         for name in (".profile", ".bashrc", ".bash_profile", ".zshrc"):
             (self.home / name).write_text("# original\n", encoding="utf-8")
 
@@ -151,6 +152,18 @@ class LinuxInstallerTests(unittest.TestCase):
         result = self.run_installer("--modify-path", "--no-modify-path", "--skip-build")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.home / ".profile").read_text(), "# original\n")
+
+    def test_custom_clang_path_is_used_and_invalid_override_rejected(self):
+        custom = self.tools / "custom clang"
+        self.executable(custom, 'exit 0\n')
+        self.env["AOXN_CLANG"] = shell_path(custom)
+        self.executable(self.tools / "clang", 'exit 97\n')
+        result = self.run_installer("--skip-build")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.env["AOXN_CLANG"] = shell_path(self.tools / "missing clang")
+        result = self.run_installer("--skip-build")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("clang not found", result.stderr)
 
     def test_build_failure_does_not_install(self):
         self.env["CARGO_STATUS"] = "23"

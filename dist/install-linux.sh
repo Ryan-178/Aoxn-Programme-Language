@@ -50,7 +50,9 @@ esac
 case "$ROOT/" in
   "$PREFIX/"*) fail '--prefix must not contain the source or package tree' ;;
 esac
-command -v clang >/dev/null 2>&1 || fail 'clang not found; install clang with your system package manager'
+CLANG="${AOXN_CLANG:-clang}"
+command -v "$CLANG" >/dev/null 2>&1 || fail 'clang not found; set AOXN_CLANG or install clang with your system package manager'
+"$CLANG" --version >/dev/null 2>&1 || fail 'selected clang cannot run'
 
 cd "$ROOT"
 if [ -x "$ROOT/bin/aoxn" ] && [ -d "$ROOT/lib/stdlib" ]; then
