@@ -85,7 +85,11 @@ jobs:
   # linked against libX11/libXft and driven for 30 real frames under Xvfb.
   # The Windows-only surface (installer, WinHTTP) is not covered here.
   linux:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -97,18 +101,27 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-cargo-
 
       # clang compiles the generated C; the X headers are needed to LINK a
       # ui_x11 program (X11 + Xft + their fontconfig/freetype deps)
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang libx11-dev libxft-dev libfontconfig1-dev xvfb
+          sudo apt-get install -y clang libcurl4-openssl-dev libx11-dev libxft-dev libfontconfig1-dev xvfb
 
       - name: Build
         run: cargo build
+
+      - name: Linux installer contract tests
+        run: python3 -B tools/test_install_linux.py
+
+      - name: Linux HTTP, SDK and socket native regressions
+        run: cargo test -p aoxn --locked --test net --test linux_sdks --test socket
+        env:
+          AOXN_TEST_REQUIRE_CLANG: "1"
+          AOXN_TEST_REQUIRE_RUSTC: "1"
 
       # A non-virtual workspace defaults to the root package, not every member.
       - name: Test compiler (pipeline, stdlib, TS, UI)
@@ -140,6 +153,26 @@ jobs:
           cargo run -- build examples/primes.ax -o primes
           count=$(./primes)
           if [ "$count" != "9592" ]; then echo "primes returned $count, expected 9592"; exit 1; fi
+
+      - name: Linux installer and installed-toolchain smoke
+        run: |
+          PREFIX="$RUNNER_TEMP/aoxn install"
+          bash dist/package-linux.sh --output "$RUNNER_TEMP/linux-package"
+          PACKAGE="$(find "$RUNNER_TEMP/linux-package" -name '*.tar.gz' -type f)"
+          (cd "$RUNNER_TEMP/linux-package" && sha256sum -c *.sha256)
+          mkdir -p "$RUNNER_TEMP/linux-unpacked"
+          tar -xzf "$PACKAGE" -C "$RUNNER_TEMP/linux-unpacked"
+          bash "$RUNNER_TEMP/linux-unpacked/$(basename "$PACKAGE" .tar.gz)/dist/install-linux.sh" --prefix "$PREFIX" --no-modify-path
+          unset AOXN_HOME AOXN_STDLIB
+          export AOXN_CACHE_DIR="$RUNNER_TEMP/aoxn-installed-cache"
+          python3 tools/linux_installed_smoke.py "$PREFIX"
+          cd "$RUNNER_TEMP"
+          "$PREFIX/bin/aoxn" doctor
+          "$PREFIX/bin/aoxn" run "$PREFIX/examples/hello.ax"
+          "$PREFIX/bin/aoxn" run "$PREFIX/examples/stdlib_demo.ax"
+          "$PREFIX/bin/aoxn" run "$PREFIX/examples/threading_demo.ax"
+          "$PREFIX/bin/aoxn" build "$PREFIX/examples/ui_probe_x11.ax" -o "$RUNNER_TEMP/installed-ui" -l X11 -l Xft
+          xvfb-run -a "$RUNNER_TEMP/installed-ui"
 
       - name: X11 backend probe (Xvfb)
         run: |

@@ -41,6 +41,16 @@ def clang_cpu_flag(cpu: string) -> string:
         free(info)
         if arm:
             return "-mcpu=" + cpu
+    if target_os() == "linux":
+        # Linux utsname has six 65-byte fields; machine is the fifth.
+        info = malloc(390)
+        fill_zero(info, 390)
+        rc = uname(info)
+        machine = as_string(info + 260)
+        arm = rc == 0 and machine == "aarch64"
+        free(info)
+        if arm:
+            return "-mcpu=" + cpu
     return "-march=" + cpu
 
 def run_arg_needs_quote(s: string) -> int:

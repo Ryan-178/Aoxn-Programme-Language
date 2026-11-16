@@ -194,6 +194,35 @@ fn doctor_no_smoke_skips_the_compile() {
     assert!(out.contains("\"smoke\":null"), "smoke test should be skipped: {out}");
 }
 
+#[test]
+fn doctor_rejects_incomplete_stdlib_and_checks_native_backend() {
+    let scratch = Scratch::new("incomplete");
+    let custom = scratch.path().join("stdlib");
+    std::fs::create_dir_all(&custom).unwrap();
+    for name in aoxn::paths::STDLIB_FILES {
+        let path = custom.join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "").unwrap();
+    }
+    let (code, out) = run_in(
+        scratch.path(),
+        &["doctor", "--json", "--no-smoke"],
+        &[("AOXN_STDLIB", &custom.display().to_string())],
+    );
+    assert_eq!(code, Some(1), "{out}");
+    assert!(out.contains("\"name\":\"stdlib\"") && out.contains("\"ok\":false"), "{out}");
+    let backend = match std::env::consts::OS {
+        "windows" => "ui_win.ax",
+        "linux" => "ui_x11.ax",
+        "macos" => "ui_cocoa.ax",
+        _ => return,
+    };
+    assert!(out.contains(backend), "{out}");
+    std::fs::remove_file(custom.join("net/http.ax")).unwrap();
+    let missing = aoxn::paths::stdlib_status(Some(&custom));
+    assert!(missing.iter().any(|(name, present)| name == "net/http.ax" && !present));
+}
+
 /// `aoxn version` / `--version` print the manifest version.
 #[test]
 fn version_command_prints_the_manifest_version() {

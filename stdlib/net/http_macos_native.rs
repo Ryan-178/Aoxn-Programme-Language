@@ -1,4 +1,4 @@
-//! Dependency-free macOS HTTP transport bridge over the system libcurl.
+//! Dependency-free macOS/Linux HTTP transport bridge over system libcurl.
 //!
 //! macOS ships libcurl (SecureTransport-backed TLS) in libSystem's neighbourhood
 //! (`/usr/lib/libcurl.dylib`); this file binds it through the v0.55.0 Rust
@@ -20,15 +20,15 @@
 //!     `as_string(buf)`); never free them through this bridge.
 //!   * `out` slots are caller-owned, aligned `i64` arrays.
 //!
-//! Non-Apple builds are inert: every export reports a clean transport error or
-//! returns 0/-1, so the file still compiles and links into a Windows/Linux
-//! staticlib (the Aoxn scanner is not a cfg evaluator — keep exports top-level).
+//! Other platforms are inert: every export reports a clean transport error or
+//! returns 0/-1, so the file still compiles and links into a Windows staticlib
+//! (the Aoxn scanner is not a cfg evaluator — keep exports top-level).
 //! No Apple SDK/link/runtime validation is implied by a cross-target metadata
 //! check; native execution is verified by the macOS CI job.
 #![allow(unused_variables)]
 use std::os::raw::c_char;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod imp {
     use std::collections::BTreeMap;
     use std::ffi::CStr;
@@ -70,6 +70,8 @@ mod imp {
     const CURLOPT_TIMEOUT_MS: c_int = 155;
     const CURLOPT_CONNECTTIMEOUT_MS: c_int = 156;
     const CURLOPT_POSTFIELDSIZE: c_int = 60;
+    const CURLOPT_PROTOCOLS: c_int = 181;
+    const CURLOPT_SUPPRESS_CONNECT_HEADERS: c_int = 265;
     const CURL_GLOBAL_ALL: c_long = 3;
 
     static INIT: Once = Once::new();
@@ -158,6 +160,10 @@ mod imp {
         // holding the credential decides what to re-send (the WinHTTP path's
         // WINHTTP_OPTION_REDIRECT_POLICY_NEVER, mirrored here).
         curl_easy_setopt(h, CURLOPT_FOLLOWLOCATION, 0 as c_long);
+        // Only HTTP(S), with libcurl's default peer/hostname verification intact.
+        curl_easy_setopt(h, CURLOPT_PROTOCOLS, 3 as c_long);
+        // Proxy CONNECT headers are not the origin's final response headers.
+        curl_easy_setopt(h, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1 as c_long);
         if body_len > 0 && body_ptr != 0 {
             curl_easy_setopt(h, CURLOPT_POSTFIELDS, body_ptr as *const c_void);
             curl_easy_setopt(h, CURLOPT_POSTFIELDSIZE, body_len as c_long);
@@ -219,9 +225,10 @@ mod imp {
     fn parse_status(hdrs: &[u8]) -> i64 {
         let mut status = 0;
         for line in hdrs.split(|b| *b == b'\n') {
-            if line.starts_with(b"HTTP/") && line.len() >= 12 {
-                let code = &line[9..12];
-                if code.iter().all(|c| c.is_ascii_digit()) {
+            if line.starts_with(b"HTTP/") {
+                // HTTP/2 and HTTP/3 have shorter version tokens than HTTP/1.1.
+                let code = line.split(|b| b.is_ascii_whitespace()).nth(1).unwrap_or_default();
+                if code.len() == 3 && code.iter().all(|c| c.is_ascii_digit()) {
                     status = (code[0] - b'0') as i64 * 100
                         + (code[1] - b'0') as i64 * 10
                         + (code[2] - b'0') as i64;
@@ -276,17 +283,13 @@ mod imp {
         let bytes = std::slice::from_raw_parts(ptr as *const u8, n);
         let pair = &*(userdata as *const (Mutex<StreamBuf>, Condvar));
         let mut g = pair.0.lock().unwrap();
-        g.headers.extend_from_slice(bytes);
-        if bytes.starts_with(b"HTTP/") && bytes.len() >= 12 {
-            let code = &bytes[9..12];
-            if code.iter().all(|c| c.is_ascii_digit()) {
-                g.status = (code[0] - b'0') as i64 * 100
-                    + (code[1] - b'0') as i64 * 10
-                    + (code[2] - b'0') as i64;
-            }
+        if bytes.starts_with(b"HTTP/") {
+            g.headers.clear();
+            g.status = parse_status(bytes);
         }
-        // The blank line ends the header block.
-        if bytes == b"\r\n" || bytes == b"\n" {
+        g.headers.extend_from_slice(bytes);
+        // Ignore interim 1xx blocks; CONNECT blocks are suppressed by configure.
+        if (bytes == b"\r\n" || bytes == b"\n") && g.status >= 200 {
             g.headers_ready = true;
             pair.1.notify_all();
         }
@@ -327,6 +330,13 @@ mod imp {
         let url_s = cstr(url).to_string();
         let headers_s = cstr(headers).to_string();
         let ua_s = cstr(ua).to_string();
+        // The caller may free its upload as soon as open returns. The worker
+        // must own the bytes even if the server sends headers before upload ends.
+        let body = if body_ptr != 0 && body_len > 0 {
+            std::slice::from_raw_parts(body_ptr as *const u8, body_len as usize).to_vec()
+        } else {
+            Vec::new()
+        };
         let thread = std::thread::spawn(move || unsafe {
             let h = curl_easy_init();
             if h.is_null() {
@@ -340,7 +350,7 @@ mod imp {
             let u = std::ffi::CString::new(url_s).unwrap_or_default();
             let hd = std::ffi::CString::new(headers_s).unwrap_or_default();
             let a = std::ffi::CString::new(ua_s).unwrap_or_default();
-            let list = configure(h, m.as_ptr(), u.as_ptr(), hd.as_ptr(), body_ptr, body_len, a.as_ptr(), connect_ms, recv_ms);
+            let list = configure(h, m.as_ptr(), u.as_ptr(), hd.as_ptr(), body.as_ptr() as i64, body.len() as i64, a.as_ptr(), connect_ms, recv_ms);
             curl_easy_setopt(h, CURLOPT_HTTPHEADER, list);
             let ud = &*thread_pair as *const (Mutex<StreamBuf>, Condvar) as *mut c_void;
             curl_easy_setopt(h, CURLOPT_WRITEFUNCTION, stream_write_cb as *const c_void);
@@ -460,18 +470,18 @@ pub extern "C" fn aoxn_http_request(
     recv_ms: i64,
     out: i64,
 ) -> i64 {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     unsafe {
         return imp::request(method, url, headers, body_ptr, body_len, ua, connect_ms, recv_ms, out as *mut i64);
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         unsafe {
             let out = out as *mut i64;
             for i in 0..5 {
                 *out.add(i) = 0;
             }
-            *out.add(4) = b"net/http: macOS transport only\0".as_ptr() as i64;
+            *out.add(4) = b"net/http: libcurl transport requires macOS or Linux\0".as_ptr() as i64;
         }
         1
     }
@@ -489,18 +499,18 @@ pub extern "C" fn aoxn_http_stream_open(
     recv_ms: i64,
     out: i64,
 ) -> i64 {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     unsafe {
         return imp::stream_open(method, url, headers, body_ptr, body_len, ua, connect_ms, recv_ms, out as *mut i64);
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         unsafe {
             let out = out as *mut i64;
             for i in 0..3 {
                 *out.add(i) = 0;
             }
-            *out.add(2) = b"net/http: macOS transport only\0".as_ptr() as i64;
+            *out.add(2) = b"net/http: libcurl transport requires macOS or Linux\0".as_ptr() as i64;
         }
         0
     }
@@ -508,11 +518,11 @@ pub extern "C" fn aoxn_http_stream_open(
 
 #[no_mangle]
 pub extern "C" fn aoxn_http_stream_read(handle: i64, buf: i64, cap: i64) -> i64 {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     unsafe {
         return imp::stream_read(handle, buf, cap);
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         -1
     }
@@ -520,7 +530,7 @@ pub extern "C" fn aoxn_http_stream_read(handle: i64, buf: i64, cap: i64) -> i64 
 
 #[no_mangle]
 pub extern "C" fn aoxn_http_stream_close(handle: i64) {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     unsafe {
         imp::stream_close(handle);
     }
@@ -528,11 +538,11 @@ pub extern "C" fn aoxn_http_stream_close(handle: i64) {
 
 #[no_mangle]
 pub extern "C" fn aoxn_http_stream_err(handle: i64) -> *const c_char {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     unsafe {
         return imp::stream_err(handle);
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         b"\0".as_ptr() as *const c_char
     }

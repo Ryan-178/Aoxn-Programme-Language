@@ -48,7 +48,11 @@ try {
         @{ Path = "LICENSE";          Name = "LICENSE" },
         @{ Path = "README.md";        Name = "README.md" }
     )
-    Get-ChildItem "stdlib\*.ax"    | ForEach-Object { $Files += @{ Path = $_.FullName; Name = "lib/stdlib/$($_.Name)" } }
+    $StdlibRoot = (Resolve-Path "stdlib").Path
+    Get-ChildItem "stdlib" -Recurse -File | Where-Object { $_.Extension -in @(".ax", ".rs") } | ForEach-Object {
+        $Relative = $_.FullName.Substring($StdlibRoot.Length + 1) -replace '\\', '/'
+        $Files += @{ Path = $_.FullName; Name = "lib/stdlib/$Relative" }
+    }
     Get-ChildItem "examples\*.ax"  | ForEach-Object { $Files += @{ Path = $_.FullName; Name = "examples/$($_.Name)" } }
     if (Test-Path "docs\install.md") { $Files += @{ Path = "docs\install.md"; Name = "docs/install.md" } }
 

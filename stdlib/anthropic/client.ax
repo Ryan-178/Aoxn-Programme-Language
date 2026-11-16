@@ -39,6 +39,7 @@ import * from "../net/codec.ax"
 import * from "../json.ax"
 import * from "../net/http.ax"
 import * from "../net/sse.ax"
+import * from "../time.ax"
 import * from "./blocks.ax"
 import * from "./tools.ax"
 
@@ -261,7 +262,7 @@ def an_request_url(c: AnClient, method: string, url: string, body: string, accep
         if r0.err == 1:
             delay = net_retry_delay(attempt, c.max_retries, 0, 0)
             if delay >= 0:
-                Sleep(delay)
+                time_sleep_ms(delay)
                 attempt = attempt + 1
                 continue
             return AnResp(status=0, dom=jdom_new(), pok=0, pmsg="", raw="", request_id="", terr=1, tmsg=r0.errmsg, retries=attempt)
@@ -273,7 +274,7 @@ def an_request_url(c: AnClient, method: string, url: string, body: string, accep
         # Retry-After wins over our own backoff when the server sent one
         delay = net_retry_delay(attempt, c.max_retries, r0.status, r0.retry_after)
         if delay >= 0:
-            Sleep(delay)
+            time_sleep_ms(delay)
             attempt = attempt + 1
             continue
         return resp

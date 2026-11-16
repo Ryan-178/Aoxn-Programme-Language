@@ -114,7 +114,7 @@ def sk_tcp_socket() -> int:
     return fd
 
 def sk_close_fd(fd: int):
-    if fd <= 0:
+    if fd < 0:
         return
     if target_os() == "windows":
         closesocket(fd)
@@ -184,8 +184,11 @@ def socket_accept(ls: Sock) -> Sock:
 # Returns n, or -1 on error.
 def socket_send_bytes(fd: int, ptr: int, n: int) -> int:
     sent = 0
+    flags = 0
+    if target_os() == "linux":
+        flags = 16384
     while sent < n:
-        k = sk_i32(send(fd, ptr + sent, n - sent, 0))
+        k = sk_i32(send(fd, ptr + sent, n - sent, flags))
         if k <= 0:
             return -1
         sent = sent + k

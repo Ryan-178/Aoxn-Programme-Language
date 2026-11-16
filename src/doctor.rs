@@ -73,8 +73,8 @@ pub fn cmd(args: &[String]) -> i32 {
             Some(dir) => format!("{} (missing: {})", dir.display(), missing.join(", ")),
             None => "not found — set AOXN_STDLIB or AOXN_HOME".into(),
         };
-        let ok = stdlib.is_some();
-        if !ok {
+        let ok = stdlib.is_some() && missing.is_empty();
+        if stdlib.is_none() {
             problems.push("standard library sources not found (AOXN_STDLIB / AOXN_HOME)".into());
         } else {
             problems.push(format!("stdlib incomplete: missing {}", missing.join(", ")));

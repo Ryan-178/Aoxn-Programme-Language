@@ -197,14 +197,28 @@ pub fn first_existing(dirs: &[PathBuf]) -> Option<PathBuf> {
     None
 }
 
-/// Files every install is expected to provide; `doctor` lists them. The UI
-/// toolkit is Win32/GDI only since v0.30.0 dropped the X11 backend.
-pub const STDLIB_FILES: &[&str] = &["stdlib.ax", "ui.ax", "ui_draw.ax", "ui_win.ax"];
+/// Files required for a complete standard-library installation.
+pub const STDLIB_FILES: &[&str] = &[
+    "stdlib.ax", "ui.ax", "ui_draw.ax", "argparse.ax", "base64.ax", "bisect.ax",
+    "calendar.ax", "collections.ax", "csv.ax", "datetime.ax", "futures.ax",
+    "glob.ax", "hashlib.ax", "heapq.ax", "hmac.ax", "itertools.ax", "json.ax",
+    "logging.ax", "math.ax", "net.ax", "os.ax", "pathlib.ax", "random.ax",
+    "re.ax", "shutil.ax", "socket.ax", "sys.ax", "threading.ax", "time.ax",
+    "unittest.ax", "net/codec.ax", "net/http.ax", "net/sse.ax",
+    "openai/client.ax", "anthropic/client.ax", "anthropic/blocks.ax", "anthropic/tools.ax",
+];
 
 /// A stdlib file present at `dir`, as (name, present).
 pub fn stdlib_status(dir: Option<&Path>) -> Vec<(String, bool)> {
+    let platform_files: &[&str] = match std::env::consts::OS {
+        "windows" => &["ui_win.ax"],
+        "linux" => &["ui_x11.ax", "net/http_linux.ax", "net/http_macos_native.rs"],
+        "macos" => &["ui_cocoa.ax", "ui_cocoa_native.rs", "net/http_macos.ax", "net/http_macos_native.rs"],
+        _ => &[],
+    };
     STDLIB_FILES
         .iter()
+        .chain(platform_files.iter())
         .map(|name| {
             let present = dir.map(|d| d.join(name).is_file()).unwrap_or(false);
             ((*name).to_string(), present)

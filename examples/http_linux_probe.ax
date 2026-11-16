@@ -1,0 +1,12 @@
+import * from "stdlib/net"
+import * from "stdlib/net/http_linux"
+
+def main() -> int:
+    assert(net_http_linux_ready(), "Linux is required")
+    assert(argc() == 1, "pass a loopback HTTP URL")
+    r = http_get(arg(0))
+    assert(r.err == 0, r.errmsg)
+    assert(r.status == 200)
+    assert(len(r.body) > 0)
+    print("http-linux-ok")
+    return 0

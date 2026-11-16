@@ -7,13 +7,58 @@ both blocking and streaming (SSE), with the same defaults as the reference
 Python SDK: `https://api.openai.com/v1` base URL, 600 s receive timeout,
 5 s connect timeout, 2 retries after the first failure (0.5 s, then 1 s).
 
-Everything is plain Aoxn over raw memory — the self-hosted compiler can
-compile the whole package (no dict/None/fn-ptr/raise anywhere).
+The SDK logic is plain Aoxn over raw memory. The Linux/macOS HTTP provider
+adds a Rust bridge that the selfhost CLI cannot load; use the Rust compiler
+for those native transports.
 
 > **v0.41.0:** the four provider-neutral modules moved to `stdlib/net/`
 > (prefix `oa_` → `net_`) because the Anthropic SDK shares them. The names
 > in this page are the v0.41.0 ones. `client.ax` — and with it this SDK's
 > entire public surface — is unchanged.
+
+## Linux native transport (unreleased, verification pending)
+
+The compiler remains 0.55.0; these Linux changes are in progress. No native
+Linux success for this batch is claimed. Windows regressions/cross-checks do
+not establish native execution; the prior macOS 2026-11-15 CI result is historical,
+not validation of the changed shared bridge.
+
+Install Rust/rustc, clang and system C development tools. Debian/Ubuntu:
+
+```bash
+sudo apt-get install clang build-essential libcurl4-openssl-dev ca-certificates
+```
+
+Use the quick-start Aoxn program below, save it as app.ax, and add this provider
+import next to the SDK import:
+
+```ax
+import * from "stdlib/openai/client"
+import * from "stdlib/net/http_linux"
+```
+
+Then run from the checkout (or use installed `aoxn run app.ax`):
+
+```bash
+export OPENAI_API_KEY="your-key"
+cargo run -- run app.ax
+```
+
+Do **not** pass -l winhttp on Linux. The provider loads the shared
+stdlib/net/http_macos_native.rs libcurl Rust bridge, now enabled on Linux/macOS;
+http.ax dispatches requests/streams through net_curl_* helpers. rustc propagates
+-lcurl; development/link files and CA certificates must be installed. The SDK
+alone does not import the provider: omitting it can cause unresolved aoxn_http_*
+link symbols, not a guaranteed runtime transport error. macOS uses
+`import * from "stdlib/net/http_macos"` instead. Windows retains WinHTTP and
+-l winhttp unchanged, without either Rust provider. No .rs support is added to
+the selfhost CLI. See [installation](install.md) for the Linux source installer.
+
+中文：版本仍为 0.55.0，本批 Linux 改动未发布且原生验证待完成；Windows/交叉检查
+与历史 macOS 2026-11-15 成功不验证本批。应用须在 SDK 导入外显式添加
+`import * from "stdlib/net/http_linux"`，准备 rustc、clang、系统 C 工具、libcurl
+开发文件和 CA，使用上述 app.ax 命令，不传 -l winhttp。漏导入可链接失败。
+macOS 用 http_macos，Windows 不变；自举不支持 .rs，使用 Rust 编译器。
 
 ## Quick start
 
@@ -39,7 +84,7 @@ def main() -> int:
     return 0
 ```
 
-Link requirement: **`-l winhttp`** — the transport is WinHTTP, the one
+Windows link requirement: **`-l winhttp`** — its transport is WinHTTP, the one
 Windows system facility that provides TLS without a TLS stack. Azure-style
 gateways and local proxies work through `oa_client_at(key, base_url)` or
 `OPENAI_BASE_URL` (plain `http://` included, which is what the test suite's
@@ -51,7 +96,7 @@ mock server uses).
 |---|---|
 | `stdlib/net/codec.ax` | base64 (RFC 4648), percent-encoding (RFC 3986), UTF-8 ↔ UTF-16LE — everything WinHTTP and Basic auth need |
 | `stdlib/json.ax` | the JSON DOM: 40-byte nodes in one slab, recursive-descent parser, serializer, typed getters with defaults, and a builder (`jb_*`) |
-| `stdlib/net/http.ax` | WinHTTP transport (one-shot + streaming), URL split, header assembly, raw-header parsing, retry policy, error names |
+| `stdlib/net/http.ax` | WinHTTP or opt-in Linux/macOS libcurl transport (one-shot + streaming), URL split, header assembly, raw-header parsing, retry policy, error names |
 | `stdlib/net/sse.ax` | server-sent-events parser: feed bytes, pull `data:` payloads and `event:` names, `[DONE]` detection, CRLF/LF, comment lines |
 | `stdlib/openai/client.ax` | `OaClient`, OpenAI's headers and User-Agent, the request/retry core, resource functions, response accessors, `OaStream` |
 
