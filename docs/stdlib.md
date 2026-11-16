@@ -789,13 +789,23 @@ answers a CLEAN zero `Url` (`ok = 0`, all fields empty) — never a
 half-filled one; a scheme-less input keeps the WHOLE input in `path`
 (`ok = 0`), exactly like `urlsplit`.
 
-**HTTP facade** over the WinHTTP transport (`stdlib/net/http.ax`):
+**HTTP facade** over the platform transport (`stdlib/net/http.ax`):
 `http_get(url)`, `http_post(url, body, content_type)`,
 `http_request(method, url, headers, body)` → `HttpResponse{status, body,
 request_id, retry_after, location, err, errmsg}`, and `http_ok(r)`.
-Windows links `-l winhttp`; elsewhere every call answers the transport's
-`err = 1` "no transport on this platform". Timeouts: 5 s connect / 30 s
-receive. Errors are values. The facade does not expose arbitrary response
+Windows links `-l winhttp` (unchanged). Linux now uses an unreleased opt-in
+libcurl Rust bridge; macOS uses the same bridge. Linux applications must add
+`import * from "stdlib/net/http_linux"` alongside `import * from "stdlib/net"`,
+then run `aoxn run app.ax` without -l winhttp. Install rustc and libcurl
+development/link files plus CA certificates (Debian/Ubuntu:
+`sudo apt-get install libcurl4-openssl-dev ca-certificates`); clang and system C
+development tools are required as usual. rustc propagates -lcurl. macOS instead
+imports stdlib/net/http_macos. Both load http_macos_native.rs, now cfg-enabled
+for Linux/macOS; http.ax dispatches through net_curl_* helpers. Missing provider
+imports can fail with unresolved aoxn_http_* link symbols, not a guaranteed
+runtime error. The selfhost CLI cannot load .rs providers; Windows needs neither.
+New Linux runtime validation is pending; historical macOS 2026-11-15 CI does
+not validate this changed bridge. Timeouts: 5 s connect / 30 s receive. Errors are values. The facade does not expose arbitrary response
 headers or redirect policy — drop to `net_http_request` /
 `net_header_value` / `net_http_no_redirects` for those. Transport detail:
 WinHTTP rejects an EMPTY header block with error 87, so both request paths
@@ -851,3 +861,10 @@ print(r.errors, vec_get(r.values, 0))
 the cap run inline on the calling thread. A failed spawn leaves
 `Future.th.err = 1` / result 0 and counts in `FutResults.errors`. Nothing
 raises. Same platforms and link flags as threading; selfhost-compilable.
+
+### Linux HTTP 使用提示（未发布）
+
+应用同时导入 stdlib/net（或原始 http/SDK）和 stdlib/net/http_linux，使用 rustc、
+libcurl 开发文件及 CA 证书，运行 aoxn run app.ax，不传 -l winhttp。共享 libcurl
+桥自动传播 -lcurl；漏导入可能链接失败。Windows 不变，macOS 用 http_macos。
+本批新增 Linux 原生运行验证待完成，历史 macOS 成功不验证修改后的共享桥。

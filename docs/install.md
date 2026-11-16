@@ -4,7 +4,7 @@
 compiler, the standard library, the UI toolkit and the examples — and
 installing it is a double-click. The single-file installer targets
 **Windows** (x86_64), the first-class platform. **Linux** and **macOS**
-install from source — see [macOS](#macos-build-from-source) below and
+install from source — see [Linux](#linux-unreleased-source-installer) and [macOS](#macos-build-from-source) below and
 `docs/platform-support.md` for what ships where.
 
 ## Install
@@ -95,20 +95,9 @@ executable is not self-contained. The installer looks for clang in this order:
    to make the install self-contained
 4. `C:\Program Files\LLVM\bin\clang.exe`
 
-If none matches, the install still succeeds and `aoxn doctor` says so, naming
-what is missing. Pass `-InstallClang` to have the installer fetch LLVM itself.
-
-Aoxn lowers programs to ISO C and hands them to **clang**; the compiler
-executable is not self-contained. The installer looks for clang in this order:
-
-1. `$AOXN_CLANG` — an explicit path wins over everything else
-2. `PATH`
-3. `%LOCALAPPDATA%\aoxn\toolchain\bin\clang.exe` — drop a portable LLVM here
-   to make the install self-contained
-4. `C:\Program Files\LLVM\bin\clang.exe`
-
-If none matches and you did not pass `-NoClang`, the installer runs
-`winget install LLVM.LLVM`.
+If no usable clang/toolchain is found, doctor reports the missing prerequisite.
+Pass `-InstallClang` to opt into fetching LLVM on Windows; Linux installation
+fails when doctor fails and never downloads a toolchain.
 
 **Linking** on Windows also needs the **MSVC Build Tools** — clang detects
 them automatically, and the `aoxn doctor` smoke test reports them when they
@@ -185,6 +174,74 @@ powershell -ExecutionPolicy Bypass -File dist\package.ps1
 A source checkout also works in place — `cargo run -- run examples\hello.ax`
 finds `stdlib/` next to the checkout.
 
+## Linux (unreleased source installer)
+
+Version remains 0.55.0. These Linux installer/HTTP changes are in progress;
+**native Linux validation of the new batch is pending**, not implied by Windows
+regressions or cross-checks. Prior macOS CI success is historical (2026-11-15).
+
+Install Rust/cargo separately, plus clang and a system C development environment.
+Debian/Ubuntu HTTP prerequisites (rustc is also required):
+
+```bash
+sudo apt-get install clang build-essential libcurl4-openssl-dev ca-certificates
+# Optional X11 GUI development files:
+sudo apt-get install libx11-dev libxft-dev libfontconfig1-dev
+bash dist/install-linux.sh --prefix "$HOME/.local/aoxn"
+export PATH="$HOME/.local/aoxn/bin:$PATH"
+aoxn doctor
+aoxn run "$HOME/.local/aoxn/examples/hello.ax"
+```
+
+The prefix must be an absolute dedicated directory, not /, HOME itself or a
+shared system root. The default is ~/.local/aoxn. The script copies bin/aoxn,
+the **complete** lib/stdlib tree (including nested SDKs and .rs bridge sources),
+examples, docs/install.md and top-level license/readme/changelog. Reinstallation
+merges trees and overwrites matching files, without deleting unrelated entries;
+there is no transactional rollback. Doctor failure is fatal, not success with a
+warning. Doctor checks source completeness and smoke compilation, not all TLS/GUI
+functionality. The script never downloads toolchains; cargo may fetch locked
+dependencies while building `cargo build --release --locked --bin aoxn`.
+
+| Option | Behavior |
+|---|---|
+| --prefix PATH | Absolute dedicated install directory |
+| --skip-build | Reuse executable target/release/aoxn; cargo not required |
+| --no-modify-path | Leave profiles untouched (default) |
+| --modify-path | Append a safely quoted PATH entry to ~/.profile |
+
+PATH changes do not alter the parent shell; export PATH manually as above or
+start a login session that reads ~/.profile. No sudo is needed for a writable
+user prefix. GUI execution needs a display; Xvfb can supply headless X11 tests.
+
+For HTTP, add `import * from "stdlib/net/http_linux"` in your application
+alongside stdlib/net, stdlib/net/http or either SDK. Run `aoxn run app.ax` without
+-l winhttp. rustc links the shared http_macos_native.rs bridge with system libcurl;
+-lcurl propagates automatically. Missing provider imports can cause unresolved
+aoxn_http_* link symbols. The bridge requires libcurl development/link files and
+CA certificates; core programs need neither provider nor libcurl. The selfhost
+CLI cannot load .rs imports. Windows WinHTTP remains unchanged; macOS uses
+stdlib/net/http_macos. See [stdlib](stdlib.md), [OpenAI](openai-sdk.md) and
+[Anthropic](anthropic-sdk.md).
+
+## Linux binary archive (unreleased)
+
+On a native Linux x86_64 or aarch64 host, run `bash dist/package-linux.sh`.
+The script builds the release compiler and produces a `.tar.gz` plus SHA-256
+sidecar under `dist/release`; `--output DIR` chooses an empty output location,
+`--skip-build` reuses the release executable. It does not publish anything.
+Verify with `sha256sum -c *.sha256`, extract the archive, then run its
+`dist/install-linux.sh --prefix "$HOME/.local/aoxn"`. The packaged installer
+uses its bundled compiler and whole stdlib tree without cargo; clang remains
+external, and HTTP applications still require rustc and libcurl development files.
+Ubuntu CI installs from this archive and runs installed HTTP/X11 probes.
+Native results for this branch remain pending.
+
+中文：Linux 原生运行 `bash dist/package-linux.sh` 本地打包，生成 tar.gz 与 SHA-256，
+不发布版本。校验后解包，运行包内 dist/install-linux.sh；使用随包编译器，无需 cargo，
+clang 仍外置，HTTP 仍需 rustc/libcurl 开发文件。Ubuntu CI 验证打包后安装与 HTTP/X11，
+本分支原生结果待取得。
+
 ## macOS (build from source)
 
 macOS has no single-file packaged artifact yet. `dist/install-macos.sh` is the
@@ -192,7 +249,7 @@ native equivalent of the Windows installer: it builds the compiler with cargo
 and lays the toolchain out exactly the way the compiler discovers it at
 runtime (`src/paths.rs` — the install root is the parent of `bin/`).
 
-Prerequisites (the script reports them and stops; it **downloads nothing**):
+Prerequisites (the script does not install toolchains; cargo may fetch locked dependencies):
 
 - **Rust** (`cargo`) — install from <https://rustup.rs>.
 - **Apple clang** — `xcode-select --install` (the Command Line Tools). clang
@@ -226,11 +283,9 @@ when that is your shell), then runs `aoxn doctor`. Open a **new** terminal
 afterwards. `target_os()` reports `"macos"`; objects are Mach-O `.o` and
 executables have no suffix.
 
-The native Cocoa UI backend and the libcurl HTTP transport are validated by
-the `macos-latest` CI job (a Cocoa probe and a loopback HTTP probe). Until
-that job runs green on real Apple hardware, treat macOS as a port under
-validation rather than a fully supported platform — see
-`docs/platform-support.md`.
+The prior macOS Apple Silicon CI result (2026-11-15) includes Cocoa, libcurl
+and installer probes. This is historical evidence, not validation of the new
+Linux changes or the modified shared bridge; see `docs/platform-support.md`.
 
 ---
 
@@ -294,7 +349,7 @@ macOS 暂时没有单文件安装包，`dist/install-macos.sh` 是 Windows 安�
 对应物：用 cargo 编译编译器，再按编译器运行时的发现规则（`src/paths.rs`，
 安装根目录是 `bin/` 的父目录）铺好工具链。
 
-前置条件（脚本只报告并停止，**绝不下载任何东西**）：Rust（`cargo`，
+前置条件（脚本不安装工具链，但 cargo 可能获取锁定依赖）：Rust（`cargo`，
 <https://rustup.rs>）、Apple clang（`xcode-select --install`，需能解析已安装
 的 SDK）；原生 Cocoa UI 后端与 macOS libcurl HTTP 桥还需要 rustc（二者都是
 Rust `.rs` 导入），核心编译器与可移植标准库不需要它。
@@ -314,3 +369,20 @@ shell 是 bash 则写 `~/.bash_profile`）的 PATH，再跑 `aoxn doctor`。装�
 无后缀。Cocoa UI 后端与 libcurl HTTP 传输由 `macos-latest` CI job（Cocoa 探针 +
 环回 HTTP 探针）验证；在该 job 于真实 Apple 硬件上跑绿之前，macOS 仍属「验证中
 的移植」而非完全支持的平台——详见 `docs/platform-support.md`。
+
+### Linux 源码安装（未发布）
+
+版本仍为 0.55.0，本批 Linux HTTP/安装器改动尚待原生 Linux 验证；Windows 回归/
+交叉检查不替代原生执行，macOS 2026-11-15 成功为历史证据。
+自行准备 Rust/cargo、clang、C 开发环境；Debian/Ubuntu HTTP 依赖使用
+`sudo apt-get install clang build-essential libcurl4-openssl-dev ca-certificates`，
+另需 rustc。X11 可装 libx11-dev/libxft-dev/libfontconfig1-dev，运行需显示服务。
+仓库根执行 `bash dist/install-linux.sh --prefix "$HOME/.local/aoxn"`，然后
+`export PATH="$HOME/.local/aoxn/bin:$PATH"`、`aoxn doctor`。
+前缀须绝对专用目录；完整复制标准库含 SDK/.rs、示例/文档，不删除无关条目但可覆盖。
+--skip-build 复用 target/release/aoxn，无需 cargo；默认不改 profile，--modify-path
+才安全引用追加 ~/.profile，新登录或手工 export 生效。doctor 失败即失败，不回滚。
+脚本不下载工具链，cargo 可获取锁定依赖；自检不证明所有 TLS/GUI。
+HTTP 应用显式添加 `import * from "stdlib/net/http_linux"`，运行 `aoxn run app.ax`，
+不传 -l winhttp；rustc 自动传递 -lcurl，漏导入可链接报 aoxn_http_* 未定义。
+Windows 不变，macOS 用 stdlib/net/http_macos；自举不支持 .rs。

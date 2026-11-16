@@ -1,6 +1,54 @@
 # Platform support
 
-## Unreleased macOS core port (natively validated on Apple Silicon CI)
+## Unreleased Linux native adaptation (in progress)
+
+The compiler remains 0.55.0. Linux compiler/portable-stdlib/X11 support dates to
+0.46.0; this batch adds the native HTTP provider and source installer and fixes
+socket/doctor behavior. **Native Linux verification of these new changes is
+pending.** Windows regressions and Rust cross-checks are not native Linux
+execution. The macOS result below is historical evidence from 2026-11-15,
+not validation of the modified shared libcurl bridge.
+
+Linux prerequisites: Rust/cargo for building the compiler, clang and system C
+development tools for linking. HTTP additionally needs rustc, libcurl development
+files and CA certificates (Debian/Ubuntu: `sudo apt-get install clang build-essential
+libcurl4-openssl-dev ca-certificates`). X11 GUI builds need libx11-dev, libxft-dev,
+libfontconfig1-dev and a display (Xvfb for headless probes).
+
+From the checkout: `bash dist/install-linux.sh --prefix "$HOME/.local/aoxn"`,
+then `export PATH="$HOME/.local/aoxn/bin:$PATH"` and `aoxn doctor`.
+The prefix must be absolute and dedicated; --skip-build reuses target/release/aoxn.
+Profiles are untouched by default; --modify-path opts into a safely quoted PATH
+entry in ~/.profile. The installer copies the complete stdlib tree and fails if
+doctor fails. No toolchains are downloaded; cargo may fetch locked dependencies.
+
+Linux HTTP applications must add `import * from "stdlib/net/http_linux"`
+alongside stdlib/net, stdlib/net/http or either SDK, then use `aoxn run app.ax`
+without -l winhttp. http.ax dispatches to net_curl_* helpers and the shared
+http_macos_native.rs now compiles its libcurl implementation on Linux and macOS.
+rustc propagates -lcurl. Omitting the provider can cause unresolved aoxn_http_*
+link symbols, not a guaranteed runtime error. Windows WinHTTP is unchanged;
+macOS keeps stdlib/net/http_macos. The selfhost CLI cannot load these .rs providers.
+Linux socket sends use MSG_NOSIGNAL; descriptor zero is accepted for close.
+Doctor requires portable module sources plus the native backend/provider files;
+file completeness and its smoke test do not validate all HTTP/TLS/GUI behavior.
+The new CI matrix targets Ubuntu 22.04/24.04 x86_64 and Ubuntu 24.04 ARM64,
+including SDK retries/SSE, socket failures, installer contracts and installed
+HTTP/X11 probes. Earlier native Linux/macOS runs failed because concurrent
+Rust bridge builds shared a PID-only staging directory. Commit df4c3dd isolates
+those directories; successful native reruns after that fix are still pending.
+Alpine/musl and other distributions remain unverified; a green Ubuntu job would
+not prove them. Local Apple Silicon/Intel workspace/test cross-checks pass,
+but are not native execution.
+
+中文：本批 Linux 原生适配仍在进行中且未发布，版本保持 0.55.0；新增改动尚待原生
+Linux 验证，Windows/交叉检查不替代原生运行。安装需 Rust/cargo、clang、C 开发环境，
+HTTP 另需 rustc、libcurl 开发文件和 CA；应用显式导入 stdlib/net/http_linux，不传
+-l winhttp。安装命令及前缀见上，默认不改 profile，--modify-path 才追加 ~/.profile；
+完整复制标准库，doctor 失败即安装失败，不下载工具链，但 cargo 可获取锁定依赖。
+macOS 2026-11-15 成功记录是历史证据，不能验证本批共享桥变更。
+
+## Unreleased macOS core port (historical native evidence: 2026-11-15)
 
 The source tree adds macOS core compiler/CLI and portable-stdlib adaptations
 for Apple Silicon and Intel. **macOS is natively validated on the
@@ -15,14 +63,14 @@ Line Tools (`xcode-select --install`); clang must resolve an installed SDK.
 A build-from-source installer is provided (`dist/install-macos.sh`): it builds
 the compiler with cargo, lays out `<prefix>/bin/aoxn` + the whole
 `<prefix>/lib/stdlib` tree + examples, adds `<prefix>/bin` to PATH and runs
-`aoxn doctor`, downloading nothing. There is no single-file packaged macOS
+`aoxn doctor`, without installing toolchains (cargo may fetch dependencies). There is no single-file packaged macOS
 artifact and no IDE packaging. An unreleased native Cocoa backend is available
 through `stdlib/ui_cocoa`, using a single-file Rust AppKit/CoreGraphics bridge;
 it requires rustc, and a native Cocoa window probe passes on the CI job. HTTP
 transport on macOS rides
 libcurl through an opt-in Rust bridge (`stdlib/net/http_macos` +
-`http_macos_native.rs`); the WinHTTP transport stays Windows-only and Linux
-still has no HTTP transport.
+`http_macos_native.rs`); the WinHTTP implementation stays Windows-only. Linux now has the unreleased
+opt-in provider described above; new shared-bridge runtime checks are pending.
 
 `target_os()` reports `"macos"`. Native objects are Mach-O `.o`, static
 libraries `.a`, executables have no suffix, and libSystem supplies C math.
@@ -64,8 +112,8 @@ separate from Cocoa UI support; see the validation scope above.
 | | Windows (first-class) | Linux (v0.46.0) | macOS (unreleased) |
 |---|---|---|---|
 | Compiler | `aoxn.exe` | `aoxn` (ELF objects, `-lm` linked automatically) | `aoxn` (Mach-O `.o`, libSystem C math) |
-| Installer | `Aoxn-<version>-Setup.exe` | none — build from source | `dist/install-macos.sh` (build from source) |
-| Standard library | full, including `stdlib/net` (WinHTTP) | full **except** the `net/http` + `openai` transports (honest runtime error) | full; HTTP via opt-in libcurl bridge (`stdlib/net/http_macos`) |
+| Installer | `Aoxn-<version>-Setup.exe` | `dist/install-linux.sh` (unreleased source installer) | `dist/install-macos.sh` (build from source) |
+| Standard library | full, including `stdlib/net` (WinHTTP) | portable modules; HTTP/SDKs via opt-in `stdlib/net/http_linux` (unreleased) | full; HTTP via opt-in libcurl bridge (`stdlib/net/http_macos`) |
 | UI backend | Win32/GDI (`stdlib/ui_win.ax`) | Xlib + Xft (`stdlib/ui_x11.ax`) | Cocoa (`stdlib/ui_cocoa`, Rust AppKit bridge) |
 | UI link flags | `-l user32 -l gdi32` | `-l X11 -l Xft` | AppKit/CoreGraphics frameworks (via rustc) |
 | CI | `windows-latest`, whole suite | `ubuntu-latest`, whole suite + Xvfb probe | `macos-latest`, whole suite + Cocoa + libcurl + installer probes |
@@ -92,7 +140,8 @@ separate from Cocoa UI support; see the validation scope above.
   Linux passes no stack flag (RLIMIT_STACK governs) and adds `-lm`.
 - **The installer stays Windows-only.** `src/setup/` is cfg-gated: on
   Linux the `aoxn-setup` binary builds as a stub that refuses to run.
-  Linux users install from source (`cargo build`).
+  Linux users install from source with `dist/install-linux.sh`; the PE stub is not
+  the Linux installer.
 
 ## What v0.46.0 brought back
 
@@ -105,16 +154,13 @@ separate from Cocoa UI support; see the validation scope above.
 
 ## Still Windows-only (deliberately)
 
-- **The WinHTTP `net/http` + `openai` transports** — the Windows HTTP layer
-  rides WinHTTP (TLS, proxies, redirects for free). macOS has its own opt-in
-  libcurl bridge (`stdlib/net/http_macos`, a Rust `.rs` import); Linux still
-  has no TLS stack in the language to replace WinHTTP, so its entry points
-  return a clean "no transport on this platform" error instead of failing to
-  link. The SDKs import only the pure `http.ax`, so a Windows/Linux build
-  never pulls rustc or libcurl in.
+- **The WinHTTP implementation** is Windows-only. The shared HTTP facade and
+  OpenAI/Anthropic SDKs also use opt-in libcurl providers on Linux/macOS. Linux
+  applications must import stdlib/net/http_linux; Windows remains -l winhttp
+  without a Rust provider. SDK imports do not automatically select a provider.
 - **The single-file installer / `aoxn-setup`** — one PE artifact, Windows
   packaging. macOS installs from source via `dist/install-macos.sh`; Linux
-  builds with cargo.
+  installs from source via dist/install-linux.sh.
 - **The web benchmark suite's server** (`web/`) — its sockets speak
   ws2_32. `stdlib/socket.ax` now provides a portable blocking IPv4 TCP subset
   (Winsock on Windows, POSIX on Linux) with per-function `target_os()` guards;

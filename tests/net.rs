@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use std::{
     io::{Read, Write},
     net::TcpListener,
@@ -176,13 +176,21 @@ fn root() -> PathBuf {
 
 fn build(dir: &Path, name: &str, src: &str) -> PathBuf {
     let src_path = dir.join(format!("{name}.ax"));
-    // macOS: http.ax's transport dispatch is live here and references the
-    // libcurl bridge externs, so import the provider (inert on Windows/Linux).
+    // The provider is opt-in: Windows keeps WinHTTP without a Rust bridge.
     let body = if cfg!(target_os = "macos") {
         format!("import * from \"stdlib/net/http_macos\"\n{src}")
+    } else if cfg!(target_os = "linux") {
+        format!("import * from \"stdlib/net/http_linux\"\n{src}")
     } else {
         src.to_string()
     };
+    // Pin fixtures to this checkout, not an installed AOXN_HOME/AOXN_STDLIB.
+    let stdlib = root().join("stdlib").to_string_lossy().replace('\\', "/");
+    let body = body
+        .replace("\"stdlib\"", &format!("\"{stdlib}/stdlib.ax\""))
+        .replace("\"stdlib/net\"", &format!("\"{stdlib}/net.ax\""))
+        .replace("\"stdlib/net/http_macos\"", &format!("\"{stdlib}/net/http_macos.ax\""))
+        .replace("\"stdlib/net/http_linux\"", &format!("\"{stdlib}/net/http_linux.ax\""));
     fs::write(&src_path, body.as_bytes()).unwrap();
     let exe = dir.join(format!("{name}{EXE}"));
     aoxn::build_paths_opts(&[src_path.display().to_string()], &exe, true, &libs(), &[])
@@ -261,20 +269,32 @@ fn url_layer_matches_python() {
     fs::remove_dir_all(&dir).unwrap();
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 #[test]
 fn http_facade_against_local_server() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
-    // Serve FOREVER, not a fixed request count: WinHTTP may open extra
-    // connections (proxy autodiscovery, retries), and a mock that stops
-    // accepting after N turns a surplus connection into a driver hang —
-    // which then deadlocks `server.join()` below. The listener dies with
-    // the test process; the driver is bounded by the timeout instead.
-    let _server = std::thread::spawn(move || loop {
-        let Ok((mut sock, _)) = listener.accept() else {
-            return;
+    // Deadline-bounded listener and socket I/O, including probe connections.
+    listener.set_nonblocking(true).unwrap();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let server_stop = stop.clone();
+    let redirected = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let server_redirected = redirected.clone();
+    let server = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+        while !server_stop.load(std::sync::atomic::Ordering::Relaxed)
+            && std::time::Instant::now() < deadline
+        {
+        let (mut sock, _) = match listener.accept() {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                continue;
+            }
+            Err(e) => panic!("accept: {e}"),
         };
+        sock.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
+        sock.set_write_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
         let mut buf = Vec::new();
         let mut tmp = [0u8; 4096];
         // WinHTTP opens probe connections that connect and close without
@@ -315,15 +335,33 @@ fn http_facade_against_local_server() {
                         body.extend_from_slice(&tmp[..n]);
                     }
                 }
+                if head.starts_with("GET /target") {
+                    server_redirected.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                if head.starts_with("GET /redirect") {
+                    let _ = sock.write_all(b"HTTP/1.1 302 Found\r\nLocation: /target\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    break;
+                }
+                if head.starts_with("GET /truncated") {
+                    let _ = sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\nshort");
+                    break;
+                }
+                // Streaming must not return the interim response's status/headers.
+                if head.starts_with("POST /stream") {
+                    let _ = sock.write_all(b"HTTP/1.1 100 Continue\r\nrequest-id: interim\r\n\r\n");
+                }
                 let (status, payload): (&str, Vec<u8>) = if head.starts_with("GET /hello") {
                     ("200 OK", b"hello-net".to_vec())
+                } else if head.starts_with("POST /binary") || head.starts_with("POST /stream") {
+                    assert_eq!(body, b"a\0b");
+                    ("200 OK", b"data: one\n\ndata: two\n\n".to_vec())
                 } else if head.starts_with("POST /echo") {
                     ("200 OK", body)
                 } else {
                     ("404 Not Found", b"nope".to_vec())
                 };
                 let resp = format!(
-                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    "HTTP/1.1 {status}\r\nrequest-id: final\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     payload.len()
                 );
                 let _ = sock.write_all(resp.as_bytes());
@@ -331,6 +369,7 @@ fn http_facade_against_local_server() {
                 let _ = sock.flush();
                 break;
             }
+        }
         }
     });
 
@@ -346,11 +385,41 @@ def main() -> int:
     print("status", r.status)
     print("body", r.body)
     print("ok", http_ok(r))
-    p = http_post("http://127.0.0.1:__PORT__/echo", "payload=42", "application/x-www-form-urlencoded")
-    print("post-status", p.status)
-    print("post-body", p.body)
+    post = http_post("http://127.0.0.1:__PORT__/echo", "payload=42", "application/x-www-form-urlencoded")
+    print("post-status", post.status)
+    print("post-body", post.body)
     m = http_get("http://127.0.0.1:__PORT__/missing")
     print("missing", m.status, http_ok(m))
+    p = malloc(3)
+    store_u8(p, 0, 97)
+    store_u8(p, 1, 0)
+    store_u8(p, 2, 98)
+    b = net_http_request_bytes("POST", "http://127.0.0.1:__PORT__/binary", "", p, 3, "net-test", 2000, 5000)
+    print("binary", b.status, b.err, b.body == "data: one\n\ndata: two\n\n")
+    s = net_http_stream_open_bytes("POST", "http://127.0.0.1:__PORT__/stream", "", p, 3, "net-test", 2000, 5000)
+    free(p)
+    print("stream-open", s.status, s.err, s.request_id)
+    buf = malloc(5)
+    text = sb_new(32)
+    while s.err == 0:
+        s = net_http_stream_read(s, buf, 5)
+        if s.got == 0:
+            break
+        i = 0
+        while i < s.got:
+            text = sb_byte(text, load_u8(buf, i))
+            i = i + 1
+    print("stream-body", s.err, sb_text(text) == "data: one\n\ndata: two\n\n")
+    net_http_stream_close(s)
+    free(buf)
+    redir = net_http_request("GET", "http://127.0.0.1:__PORT__/redirect", "Authorization: secret\r\n", "", "net-test", 2000, 5000)
+    print("redirect", redir.status, redir.err, redir.location)
+    t = net_http_request("GET", "http://127.0.0.1:__PORT__/truncated", "", "", "net-test", 2000, 5000)
+    print("truncated", t.err, len(t.errmsg) > 0)
+    t = net_http_request("GET", "file:///not-an-http-resource", "", "", "net-test", 2000, 5000)
+    print("scheme", t.err, len(t.errmsg) > 0)
+    s = net_http_stream_open("GET", "ftp://127.0.0.1:__PORT__/", "", "", "net-test", 2000, 5000)
+    print("stream-scheme", s.err, len(s.errmsg) > 0)
     print("DONE")
     return 0
 "#
@@ -373,15 +442,19 @@ def main() -> int:
         Ok(Err(e)) => panic!("driver wait failed: {e}"),
         Err(_) => {
             // kill by pid: the Child itself lives in the waiter thread
+            #[cfg(windows)]
             let _ = Command::new("taskkill")
                 .args(["/PID", &pid.to_string(), "/F"])
                 .output();
+            #[cfg(not(windows))]
+            let _ = Command::new("kill").args(["-KILL", &pid.to_string()]).output();
             panic!("http facade driver did not finish within 90 s (transport stall)");
         }
     };
     let _ = waiter.join();
-    // the server thread is detached on purpose: it accepts forever, so
-    // joining it would hang; it dies with the test process
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    server.join().unwrap();
+    assert_eq!(redirected.load(std::sync::atomic::Ordering::Relaxed), 0, "redirect was followed");
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let expected = "\
 status 200
@@ -390,6 +463,13 @@ ok true
 post-status 200
 post-body payload=42
 missing 404 false
+binary 200 0 true
+stream-open 200 0 final
+stream-body 0 true
+redirect 302 0 /target
+truncated 1 true
+scheme 1 true
+stream-scheme 1 true
 DONE
 ";
     assert_eq!(String::from_utf8_lossy(&out.stdout), expected);

@@ -5,6 +5,24 @@ minor bumps while pre-1.0: each minor version is a language milestone.
 
 ## [Unreleased]
 
+### Native Linux libraries, compiler diagnostics and source installer (in progress)
+
+Version remains 0.55.0; no release. Adds opt-in stdlib/net/http_linux.ax,
+loading the shared http_macos_native.rs libcurl bridge now enabled on Linux and
+macOS. http.ax dispatches to net_curl_* helpers; Linux HTTP/SDK programs require
+an explicit provider import, rustc and libcurl development files. Windows
+WinHTTP remains unchanged. Bridge handling tightens HTTP(S), proxy/interim
+headers and upload-buffer ownership; new native Linux runtime evidence is pending.
+
+Adds dist/install-linux.sh with an absolute dedicated --prefix, --skip-build,
+complete stdlib tree copying, no profile changes by default and safely quoted
+.profile PATH persistence only with --modify-path. Doctor failure is fatal;
+the script downloads no toolchains (cargo may fetch locked dependencies).
+Linux socket sends use MSG_NOSIGNAL and close accepts fd zero. Doctor checks
+portable modules plus host backend/provider sources and rejects incomplete trees.
+Windows regressions/cross-checks are distinct from native Linux verification;
+the prior macOS 2026-11-15 CI result does not validate this changed shared bridge.
+
 ### Native Cocoa UI backend
 
 Adds `stdlib/ui_cocoa.ax`, reusing the portable immediate-mode widget layer
@@ -31,6 +49,23 @@ and simulated Darwin symbol checks passed locally; native macOS execution is
 supplied by the `macos-latest` CI job (Apple Silicon), where the whole suite
 runs green. No IDE package or version release. The Cocoa UI backend is
 described above; the macOS HTTP transport, installer and CI job below.
+
+### Linux validation and portability follow-up
+
+- Native Linux/macOS CI exposed same-process Rust-bridge staging collisions:
+  a PID alone did not distinguish test threads. Staging now uses PID plus an
+  atomic counter and exclusive directory creation, never deleting another
+  compiler's active directory. A six-thread same-source compile pins the race.
+
+- SDK retries use the portable clock module rather than Windows `Sleep`.
+  Linux loopback SDK tests cover retry, completion and SSE for both providers.
+- Linux ARM64 uses `st_mode` offset 16 and selfhost clang `-mcpu` selection;
+  native header fixtures check filesystem, clock and uname layouts at O0/O3.
+- Ubuntu 22.04/24.04 x86_64 and Ubuntu 24.04 ARM64 CI now include libcurl,
+  SDK/socket regressions, installer contracts and installed HTTP/X11 smoke.
+  Native execution of this branch is pending; this is not a release.
+- The Windows package now includes nested standard-library and Rust bridge
+  sources, matching the expanded doctor completeness check.
 
 ### macOS HTTP transport, installer and CI
 

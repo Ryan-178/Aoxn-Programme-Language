@@ -262,7 +262,7 @@ fn build_with_selfhost(cli: &Path, dir: &Path, name: &str, src: &str) -> PathBuf
 
 #[test]
 fn selfhost_built_socket_programs_roundtrip() {
-    let Some(clang) = aoxn::find_clang() else {
+    let Some(_) = aoxn::find_clang() else {
         assert!(
             std::env::var_os("AOXN_TEST_REQUIRE_CLANG").is_none(),
             "clang required"
@@ -316,6 +316,42 @@ fn selfhost_built_socket_programs_roundtrip() {
     handle.join().unwrap();
     assert!(out.status.success(), "selfhost client: {}", String::from_utf8_lossy(&out.stdout));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "client:pong\n");
-    let _ = clang;
     fs::remove_dir_all(&dir).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn broken_pipe_is_a_value_error_and_descriptor_zero_is_closed() {
+    let dir = root().join("target").join(format!("socket-linux-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let src = r#"
+import * from "stdlib/socket"
+extern def socketpair(domain: int, kind: int, protocol: int, pair: int) -> int
+extern def signal(sig: int, handler: int) -> int
+extern def dup2(old: int, new: int) -> int
+
+def main() -> int:
+    signal(13, 0)
+    pair = malloc(8)
+    assert(socketpair(1, 1, 0, pair) == 0)
+    left = load_u8(pair, 0) + load_u8(pair, 1) * 256 + load_u8(pair, 2) * 65536 + load_u8(pair, 3) * 16777216
+    right = load_u8(pair, 4) + load_u8(pair, 5) * 256 + load_u8(pair, 6) * 65536 + load_u8(pair, 7) * 16777216
+    sk_close_fd(right)
+    assert(socket_send_str(left, "broken") == -1)
+    assert(dup2(left, 0) == 0)
+    sk_close_fd(0)
+    buf = malloc(1)
+    assert(socket_recv(0, buf, 1) == -1)
+    assert(sk_lasterr() == 9)
+    sk_close_fd(left)
+    free(pair)
+    free(buf)
+    print("linux-socket-errors-ok")
+    return 0
+"#;
+    let exe = build(&dir, "socket_errors", src);
+    let out = run_timeout(&mut Command::new(exe), Duration::from_secs(10));
+    assert!(out.status.success(), "{:?}: {}", out.status, String::from_utf8_lossy(&out.stdout));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "linux-socket-errors-ok\n");
+    fs::remove_dir_all(dir).unwrap();
 }

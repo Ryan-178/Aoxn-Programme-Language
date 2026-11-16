@@ -26,9 +26,9 @@
 # as 4294967295 (not -1) — the same zero-extension trap the web sockets
 # module hit.
 #
-# Linux struct offsets (x86-64 glibc, decimal, verified against the ABI):
-#   struct stat: st_mode is 4 bytes at offset 24 (st_dev 0..8, st_ino 8..16,
-#     st_nlink 16..24). S_IFMT 61440, S_IFDIR 16384, S_IFREG 32768,
+# Linux struct offsets (64-bit glibc/musl, decimal):
+#   struct stat: st_mode is 4 bytes at offset 24 on x86-64, 16 on aarch64.
+#     S_IFMT 61440, S_IFDIR 16384, S_IFREG 32768,
 #     S_IFLNK 40960.
 #   struct dirent: d_name at offset 19 (d_ino 0..8, d_off 8..16,
 #     d_reclen 16..18, d_type 18).
@@ -72,6 +72,18 @@ extern def chdir(path: string) -> int
 extern def opendir(path: string) -> int
 extern def readdir(dir: int) -> int
 extern def closedir(dir: int) -> int
+extern def uname(info: int) -> int
+
+# Never call Linux uname on another platform (Darwin needs a larger buffer).
+def os_linux_is_aarch64() -> bool:
+    if target_os() == "linux":
+        info = malloc(390)     # six 65-byte utsname fields
+        fill_zero(info, 390)
+        rc = uname(info)
+        arm = rc == 0 and as_string(info + 260) == "aarch64"
+        free(info)
+        return arm
+    return False
 
 def OS_ENVVAR_NOT_FOUND() -> int:
     return 203       # ERROR_ENVVAR_NOT_FOUND
@@ -101,6 +113,8 @@ def OS_LINUX_STAT_SIZE() -> int:
 def OS_LINUX_ST_MODE() -> int:
     if target_os() == "macos":
         return 4
+    if os_linux_is_aarch64():
+        return 16
     return 24
 
 def OS_LINUX_S_IFMT() -> int:
@@ -233,8 +247,8 @@ def os_attributes(path: string) -> int:
     st = lstat(path, buf)
     a = OS_ATTR_INVALID()
     if st == 0:
-        # st_mode (4 bytes at offset 24) is the LOW half of the loaded i64
-        # (little-endian; the high half is st_uid) — mask the S_IFMT bits.
+        # Linux st_mode is the low 4 bytes at the architecture's offset
+        # (little-endian); Darwin uses the 2-byte mode at offset 4.
         # & is fine here: bitwise ops exist since v0.38.0.
         mode = 0
         if target_os() == "macos":

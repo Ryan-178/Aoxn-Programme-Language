@@ -1,0 +1,6 @@
+# Linux HTTP provider: shared libcurl bridge (requires rustc and libcurl development files).
+# Namespace import loads the bridge without re-exporting http.ax's extern names.
+import http_macos_native
+
+def net_http_linux_ready() -> bool:
+    return target_os() == "linux"

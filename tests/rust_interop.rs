@@ -12,6 +12,31 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
+#[test]
+fn concurrent_compiles_of_one_bridge_keep_staging_isolated() {
+    if toolchains().is_none() {
+        return;
+    }
+    let scratch = Scratch::new();
+    let source = scratch.0.join("parallel.rs");
+    std::fs::write(&source, "#[no_mangle]\npub extern \"C\" fn parallel_value() -> i64 { 42 }\n").unwrap();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(6));
+    let workers: Vec<_> = (0..6).map(|_| {
+        let source = source.clone();
+        let barrier = barrier.clone();
+        std::thread::spawn(move || {
+            barrier.wait();
+            let library = aoxn::rust::compile_staticlib(&source, 0)
+                .unwrap_or_else(|d| panic!("concurrent compile failed: {d:?}"));
+            assert!(library.artifact.is_file());
+            assert!(std::fs::metadata(&library.artifact).unwrap().len() > 0);
+        })
+    }).collect();
+    for worker in workers {
+        worker.join().unwrap();
+    }
+}
+
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {

@@ -897,10 +897,17 @@ pub fn compile_staticlib(rs: &Path, opt_level: u8) -> Result<RustLib, Vec<Diag>>
     // stage under a unique name, then publish by rename, so concurrent
     // invocations never link a half-written artifact (same pattern as the
     // exe cache)
-    let staging = root.join(format!("{key}.{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&staging);
-    std::fs::create_dir_all(&staging)
-        .map_err(|e| vec![Diag::at("io", u32::MAX, 0, 0, format!("cannot create '{}': {}", staging.display(), crate::io_reason_for(&e, &staging, crate::IoTarget::Dir)))])?;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static STAGING_ID: AtomicU64 = AtomicU64::new(0);
+    let staging = loop {
+        let id = STAGING_ID.fetch_add(1, Ordering::Relaxed);
+        let candidate = root.join(format!("{key}.{}.{id}", std::process::id()));
+        match std::fs::create_dir(&candidate) {
+            Ok(()) => break candidate,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(vec![Diag::at("io", u32::MAX, 0, 0, format!("cannot create '{}': {}", candidate.display(), crate::io_reason_for(&e, &candidate, crate::IoTarget::Dir)))]),
+        }
+    };
     let staged_lib = staging.join(&lib_name);
     let mut rustc_cmd = Command::new(&rustc);
     // macOS: rustc shells out to clang to assemble the staticlib; give it the

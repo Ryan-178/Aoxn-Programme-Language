@@ -2,631 +2,130 @@
 
 ## English
 
-### Supported versions and reporting
+### Scope and reporting
 
-The compiler remains **0.55.0**, supported on the **0.55.x** line. The current
-source tree adds **unreleased `sizeof(T)` / `addr_of(x)`**, the
-**`stdlib/re.ax` regular-expression module** and the **closing standard-library
-batch** (`shutil`, `collections`, `itertools`, `net`/urllib, `threading`,
-`futures`, `sys`, `argparse`, `logging`, `unittest`) after 0.55.0-snapshot-6;
-this is not a new version or release. With that batch every item of the
-31-module stdlib roadmap is dispositioned (27 shipped, 4 standing won't-do
-decisions with substitutes; `docs/stdlib-todo.md` §7). The independent
-package-manager crate remains **0.43.0**. Fixes land on main first; earlier
-minor lines are not maintained.
-Windows and Linux are supported, and macOS is natively validated on the
-`macos-latest` CI job (Apple Silicon): the whole suite, C parity/ABI, the Rust
-bridge, the package manager, a native Cocoa window probe and a loopback libcurl
-HTTP probe build and run on real macOS. Cocoa UI is an unreleased Rust-bridge
-implementation and macOS HTTP transport rides an opt-in libcurl Rust bridge
-(`stdlib/net/http_macos`). The single-file packaged installer remains
-Windows-only; macOS installs from source via `dist/install-macos.sh`, exercised
-by the same CI job. Version history is in
-[CHANGELOG.md](CHANGELOG.md).
+**Compiler 0.55.0 plus unreleased work; no new release.** Fixes target current
+0.55.x. Windows is first-class; Linux has an established compiler/stdlib/X11
+baseline. New Linux HTTP, installer, socket and doctor changes are in progress;
+native Linux validation of this batch is pending. Windows/cross-checks are not
+Linux runtime evidence. Prior macOS Apple Silicon success is historical evidence
+from 2026-11-15, not validation of the modified bridge; Intel lacks separate
+native runtime evidence. See [platform support](docs/platform-support.md).
 
-Report vulnerabilities privately to **zmjsjsg3@163.com**, before public issues
-or disclosure. Include commit/version, OS/architecture, `aoxn doctor`, minimal
-input, commands, expected/actual behavior and impact. For miscompilation include
-`aoxn c` output and whether O0 reproduces it. Redact secrets and private paths;
-state credit preference. An initial nonsensitive email can arrange encryption.
-
-Targets: acknowledgement within **3 business days**, initial assessment within
-**10 business days**, coordinated disclosure within **90 days of acknowledgement
-or when a fix ships, whichever comes first**. Confirmed critical issues target
-an urgent patch or next release. Reporters receive progress and explanations;
-credit requires consent. There is no bounty. Active exploitation may require
-earlier protective guidance.
+Report privately to **zmjsjsg3@163.com** before disclosure. Include commit,
+platform, doctor output, minimal input, commands, behavior and impact; for
+miscompilation attach generated C and O0 reproduction. Redact secrets/private
+paths and state credit preference. Encryption can be arranged by email.
+Targets: acknowledgement in 3 business days, assessment in 10, coordinated
+disclosure within 90 days of acknowledgement or when a fix ships, whichever
+comes first. Critical issues target urgent fixes; exploitation may require
+earlier guidance. Credit needs consent; no bounty.
 
 ### Trust boundaries
 
-Compiling or executing Aoxn is **not a sandbox**. Imports read files, asset
-commands write files, and clang produces native code. A `.rs` import additionally
-drives **rustc** to compile a self-contained Rust static library with the
-caller's permissions; rustc is an external toolchain like clang, invoked with an
-argument vector and never a shell. Both drivers invoke clang with argument
-vectors; the selfhost CLI's `run` spawns the compiled program with an argv vector
-(Windows CRT `_spawnvp`, POSIX `fork`/`execvp`), never a shell. Windows arguments
-are CRT-quoted so empty/spaced/special values survive; that is correctness, not
-sanitization. Package commands and CSS/Tailwind options are rejected rather than
-forwarded, and the selfhost CLI does not resolve `.rs` imports (the same boundary
-as `.css` assets). The package manifest may be TOML (`aoxn.toml`) or legacy
-JSON; dependency names are validated against the same package-name allowlist
-before they become `aox_modules/<name>` directories, and path dependencies must
-contain a readable manifest before materialization. The content-keyed build cache trusts files already present in
-a writable cache directory: a hostile cache can substitute an executable, and it
-can also substitute the compiled Rust static libraries cached under
-`<cache>/rust/`. PATH is not authenticated, output creation is not exclusive, and
-`stdlib/socket` performs real network I/O with the caller's permissions;
-`stdlib/random` is explicitly non-cryptographic; `stdlib/re` is a
-backtracking matcher with **no step budget**, so an adversarial
-pattern/subject pair can take exponential time (ReDoS) — do not match
-untrusted patterns against untrusted input without OS-level time limits.
+**Compilation/execution is not a sandbox.** Imports read files, assets write
+files, clang generates native code, .rs imports compile a whole Rust file.
+Scanning creates bindings, not confinement: ignored inline modules still compile.
+Tools/selfhost run use argv, not shell; programs/FFI/network/threads retain user
+permissions. Isolate untrusted projects using OS/container controls.
+Tool paths, PATH, environment overrides and flags are user configuration.
+Writable executable/Rust-artifact caches are trusted and can substitute native
+code; never share them with untrusted users. Zero compiler-library dependencies
+do not eliminate package-manager, IDE/JS/Tauri, toolchain or system-library risks.
 
-The closing stdlib batch adds more caller-permission surfaces, none of them
-sandboxes: **`stdlib/threading` and `stdlib/futures` create real OS threads**
-that run with the caller's full permissions (a worker is `fn(int) -> int`;
-shared state travels as a heap address, so a data race is the caller's
-responsibility — the mutex API is the only synchronization provided).
-**`stdlib/shutil` performs real filesystem copy/move/remove**; it refuses to
-follow reparse points (symlinks/junctions) and caps recursion at depth 64,
-which are traversal/resource guards, not permission checks — it can still
-delete anything the caller may delete. **`stdlib/logging` appends to files**
-with the caller's permissions; log paths are caller-controlled configuration.
-**`stdlib/net`'s HTTP facade performs real HTTP requests** through the WinHTTP
-transport on Windows and an opt-in libcurl Rust bridge on macOS
-(`stdlib/net/http_macos`; Linux still answers an error value), with
-the same redirect/credential rules as the SDK transport; its URL layer is pure
-computation. The libcurl bridge is trusted native code running with the
-caller's permissions and performs real TLS network I/O — it is not a sandbox.
-Isolate untrusted projects with
-OS/container controls over files, network and credentials. Type checking is not
-permission to execute untrusted output.
+C externs are fixed-arity; int is C long long, bool is C int. Wrong signatures
+can link yet cause UB. Rust bindings accept exact i64/f64/C character pointer/
+void pairs, not arbitrary Rust types. Strings are NUL-terminated bytes; string
+bounds clamp, arrays/raw memory do not. sizeof/addr_of add no lifetime/ownership/
+alias checks; struct parameters remain copies. Concatenation leaks; no GC or
+general memory-safety guarantee exists. Regex lacks a step budget and can take
+exponential time; use OS resource limits. Compiler recursion has stack limits.
+Random is not cryptographic; threads require synchronization. shutil link/depth
+guards are not permissions or race-free confinement. Logging writes chosen paths.
+Socket is blocking IPv4 TCP, not TLS; MSG_NOSIGNAL/fd0 fixes do not sanitize input.
 
-`AOXN_RUSTC` is caller-controlled configuration, exactly like `AOXN_CLANG`, not
-an adversarial boundary: it names the rustc executable the build will run. `src/`
-has zero external Rust crate dependencies. Package-manager dependencies
-are pinned in Cargo.lock and do not depend on the compiler library. IDE and
-benchmark JS/Tauri dependencies are separate supply-chain surfaces. Emitter/ABI
-verification does not establish sandboxing or constitute a security audit.
+### HTTP, packages and installers
 
-### Compiler and build invariants
+Windows retains WinHTTP. Linux/macOS opt into system libcurl through the shared
+http_macos_native.rs Rust bridge. Linux requires `stdlib/net/http_linux`, rustc,
+libcurl development/link files and CA certificates; macOS uses
+`stdlib/net/http_macos`. Missing providers may fail at link time. Windows needs
+neither; selfhost cannot load .rs. The bridge is trusted native code. HTTP(S)
+is enabled, certificate/hostname checking remains on, automatic redirects are
+disabled, and SDK policy handles credentials above transport. CA/proxy settings
+and endpoints remain trust inputs. Plain HTTP lacks TLS confidentiality.
+Streaming uses a worker and buffered memory, not a bounded-memory guarantee;
+uploads are copied for worker ownership. Redact keys/bodies in logs/dumps.
+No new TLS/security audit or native Linux success is claimed.
 
-- Crafted sources, imports, assets and diagnostics must not corrupt the compiler,
-  execute unintended commands or miscompile defined programs. That includes the
-  signature scan applied to an imported `.rs` file. Ordinary wrong
-  diagnostics/panics are bugs; small-input catastrophic resource amplification
-  also warrants private reporting.
-- Generated names must derive from stable source identities/counters/names,
-  never addresses. Hash iteration must not change C output. Cache keys include
-  compiler identity, options and dependencies. Do not share writable caches with
-  untrusted users.
-- The Rust bridge's signature scanner is **source analysis for binding
-  generation, not a sandbox**. rustc compiles the whole `.rs` file, so code the
-  scanner ignores still runs. "Top-level exports only" is a binding boundary, not
-  a compilation restriction, and inline `mod` contents still compile and link —
-  they merely receive no Aoxn binding. The crate must be one file (`mod name;`
-  and `include!` are rejected because the artifact cache key cannot see the files
-  they pull in).
-- Rust bindings are synthesized by the loader, before typecheck: by codegen the
-  bindings **are** ordinary `extern def` declarations. There is no codegen
-  dispatch and no self-host mirror obligation, the same construction CSS assets
-  use; the self-hosted CLI does not resolve `.rs` imports. rustc is invoked with
-  `--crate-type staticlib`, and the link step adds only its reported
-  `native-static-libs` plus the directive form (`/defaultlib:NAME` becomes
-  `-Wl,/DEFAULTLIB:NAME`). It performs no network access.
-- Direct Rust-vs-selfhost C parity and the self-host stage fixed point are
-  different checks. Equal fixture outputs do not prove every feature equivalent.
-  The selfhost front end now covers None/`T | None`, `dict[V]`, function pointers
-  and raise/try/except, but still lacks default parameters, namespace bindings
-  and selective imports; parity is a tested common subset. See
-  [C compatibility](docs/c-compatibility.md) for exact limits and validation.
-- ABI correctness requires a matching external declaration. Aoxn `int` maps to
-  `long long`, bool to C `int`; neither implies arbitrary C `int`/`_Bool`
-  interoperability. Fixed-arity externs do not implement variadic C calls.
-  A mismatched user declaration may link yet have undefined behavior; tests with
-  known C helpers are not a validator for arbitrary third-party signatures.
-  Extern names are emitted verbatim and never namespace-prefixed: the name is the
-  C symbol the program links against. The resolver collapses identical extern
-  declarations only when at most one is backed by a `.rs` definition; two `.rs`
-  definitions of one symbol still error, so dedup can never silently pick one of
-  two conflicting native implementations.
-- The Rust ABI surface is narrow and exact: `i64` to `int`, `f64` to `float`,
-  `*const`/`*mut c_char` to `string`, and no return to `void`. Rust `bool`,
-  `i32`, `u64`, `String`, `&str`, `*const i64`, generics, `where` clauses,
-  `async`, variadics, tuple parameter patterns, `#[export_name]`, raw
-  identifiers, C-keyword/`main` symbol names and non-`"C"` ABIs are diagnostics,
-  not guesses; an `extern "C" fn` without `#[no_mangle]` is rejected. Rust
-  artifacts are keyed by canonical path, content digest, the rustc **`--version`
-  string** (not binary metadata — `~/.cargo/bin/rustc` is a rustup shim) and the
-  optimization level; the executable cache key gains the rustc identity only when
-  the program has `.rs` dependencies, so pure-Aoxn keys are unchanged.
-- Graph optimizations preserve semantics and diagnostic order. Reverse exception
-  edges, borrowed module tables and reused acyclic proofs remove specific costs,
-  not all denial-of-service opportunities. Recursive passes retain host-stack
-  limits. Wrapped/array indirect struct cycles remain a known checker limitation.
-- Packages take precedence over installed stdlib. Bare imports probe siblings
-  first; quoted imports have sibling fallback. Environment paths, AOXN_CLANG,
-  AOXN_RUSTC and link flags are caller-controlled configuration, not an
-  adversarial boundary.
-- CSS emitted filenames are generated and checked against traversal/separators.
-  URLs influence content, not output roots. Tailwind does not silently fetch Node.
-- **Dual-platform stdlib modules guard every platform call INSIDE the function
-  that makes it** (`target_os()` folds before codegen), so a dead branch's
-  symbols never reach the object file. `tests/stdlib_defect_pins.rs` simulates
-  the Linux fold on Windows and scans symbol tables; the closing batch's
-  threading/futures/shutil/net modules are covered. A guard in a caller never
-  protects a callee.
+Package checksum pins unpacked content; tarball_sha256 checks served bytes when
+supplied. Missing legacy wire hashes never waive content checks. Warm reuse
+excludes only its own index.ax shim. Extraction rejects escapes/absolute paths/
+links; containment must hold across host spellings. Untrusted indexes can replace
+content and hashes. Plain HTTP registries/trust tiers are not authentication/audits.
 
-### Package, installer and application boundaries
+Linux installation requires an absolute dedicated prefix, rejects dangerous roots,
+copies the whole stdlib without deleting unrelated entries, and treats doctor
+failure as fatal. It may overwrite installed files and has no transactional
+rollback. Profiles are untouched by default; --modify-path appends safely quoted
+PATH to ~/.profile. --skip-build trusts target/release/aoxn without cargo.
+The script downloads no toolchains; cargo may fetch locked dependencies. Path
+checks do not defeat hostile filesystem races. Windows downloads are opt-in
+(-InstallClang), with post-doctor quarantine detection. macOS profile behavior
+is separate. Linux local binary archives include checksums, but checksums alone
+are not publisher authentication; no archive or release was published here.
 
-- Package checksum pins unpacked content; tarball_sha256 checks served bytes when
-  supplied. Missing legacy transport digests never waive content verification.
-  Warm reuse hashes the real tree, excluding **only its own index.ax shim**;
-  mismatches rebuild and verify. Broader exclusions or unverified reuse are flaws.
-- Extraction rejects escaping/absolute paths and links. Dependency/cache path
-  components are validated. npm-import checks integrity and Aoxn metadata.
-  "Absolute" is host-defined (`C:/x` is a drive path on Windows, a directory
-  called `C:` on POSIX), and the guard follows the host because `Path::join`
-  does; the host-independent property is that no entry writes outside its
-  destination, pinned by tests on both spellings.
-  HTTP registries are plain HTTP, not HTTPS; an untrusted index can replace data
-  and hashes. Registry tiers are claims, not independent audits.
-- Parallel workers own forked registry state, unknown schemas fail, and prod
-  pruning must retain production-reachable dependencies.
-- Windows installation stays under its selected root, updates PATH and rechecks
-  the compiler after self-test. Downloads are disabled by default; InstallClang
-  is opt-in. Quarantine is OS policy; falsely reporting install success is a bug.
-  The macOS installer (`dist/install-macos.sh`) builds from source into a
-  caller-chosen prefix, downloads nothing, and reports missing cargo/clang
-  rather than fetching them; it overwrites only its own `<prefix>/lib/stdlib`.
-- The IDE canonicalizes workspace paths, rejects link escapes/clobbering, recreates
-  outputs rather than following hard links and validates commands in Rust. File
-  read/write/create and preview commands are bounded to the opened folder.
-  **The Terminal panel is a deliberate exception**: `ide_terminal_exec` runs a
-  user-typed command through the platform shell, with the initial cwd bounded to
-  the workspace. A compromised local webview can therefore execute commands as
-  the user, including commands that leave the folder. Treat the desktop webview
-  as trusted and do not expose this command to a remotely served UI without an
-  authorization layer. The assistant proxy (`ide_ai_chat`) keeps provider keys in
-  the Rust process; `ide_read_bytes` caps preview payloads at 16 MiB.
-- JSON/UTF/SSE/URL/headers/glob/base64/regex/UI parsers must advance and respect
-  buffers. Missing slab indices are guarded; realloc helpers return live handles;
-  builder growth cannot shrink below live children. Empty/nonfinite/deep JSON
-  terminates. The regex compiler rejects malformed patterns with named errors
-  and the VM runs on an explicit backtrack stack (no host recursion), but
-  matching time is unbounded (see trust boundaries). The URL parser answers a
-  CLEAN zero `Url` (`ok = 0`, every field empty) on any invalid input — never a
-  half-filled structure. WinHTTP rejects an EMPTY header block with error 87,
-  so both request paths skip `WinHttpAddRequestHeaders` when no extra headers
-  are given; that guard is correctness, not sanitization.
-  WinHTTP must not silently leak credentials across redirects or accept truncation.
-- String bounds clamps are compiler/library safety properties, not interchangeable
-  with unchecked array semantics. SDK keys are unsanitized heap strings: use
-  environment configuration and redact dumps; the WinHTTP transport is
-  Windows-only and the macOS libcurl transport is opt-in.
-- IDE/web advisories are in scope. Exceptions require reasons and exit conditions;
-  do not drop the glib audit exception without resolving its dependency constraint.
-- JS manifests carry no known advisory as of 2026-11-01: `ide` runs `next` 16.4.3
-  and dompurify 3.4.17, `web/next-app` runs `next` 15.5.28. Re-check with
-  `pnpm --dir ide audit` and `pnpm --dir web/next-app audit`. The one accepted
-  exception stays `RUSTSEC-2024-0429` (glib, Linux-only webview backend, API
-  never called), recorded with its 2026-11-01 re-check in
-  `ide/src-tauri/audit.toml`.
-- A bot-driven lockfile regeneration **can silently revert a security pin**:
-  dependabot's `next` bump rewrote `ide/pnpm-lock.yaml` without the
-  `pnpm.overrides` field in `ide/package.json`, dropping dompurify back to
-  monaco's exact 3.4.15 while the manifest still described the pin. Overrides
-  that carry a security fix live in `pnpm-workspace.yaml`, and reviewing a
-  generated lockfile diff means checking its `overrides:` block, not only
-  version lines.
+IDE filesystem/preview commands are workspace-bounded, but Terminal deliberately
+runs a user shell with only initial cwd bounded. A compromised webview can execute
+outside the folder; do not expose remotely without authorization. Assistant keys
+stay in Rust; previews cap at 16 MiB. CSS output names are checked; URLs do not
+control roots. Tailwind does not silently install Node.
 
-### Repository checks and automation scope
+### Verification limits
 
-Main CI names both compiler and package-manager packages explicitly; default
-root Cargo testing does not imply member test execution. A separate Windows/Linux
-step requires clang for the C parity and ABI targets, so their early-return skip
-path cannot produce a green gate without the comparisons. Both jobs also run a
-named `Test Rust bridge` step with `AOXN_TEST_REQUIRE_CLANG=1` and
-`AOXN_TEST_REQUIRE_RUSTC=1`, so a runner without rustc fails rather than skipping
-the bridge tests. A `macos-latest` job runs the same suite plus a native Cocoa
-probe, a loopback libcurl HTTP probe and a from-source installer +
-installed-toolchain smoke, supplying the Apple runtime evidence
-the Windows/Linux hosts cannot. Native command exit codes gate Windows
-smoke/release steps, and installer downloads remain opt-in.
-The web-bench workflow's bash steps use forward-slash paths so Git Bash cannot
-consume a separator as an escape; the fixed invocation was rerun locally
-(server build plus 23/23 functional parity checks).
-Local workflow checks are not proof of successful hosted Actions or installer
-execution. The GitHub `main` branch is protected: a pull request is required
-(required approvals: 0 since 2026-11-13, because the solo maintainer
-cannot approve their own PR), and direct/force pushes are blocked.
-
-`tools/check_doc_links.py` is read-only and dependency-free. It reads local Git
-history, never fetches URLs or executes documented commands, and defaults to
-warning-only. Its explicit historical allowlist and command heuristics limit
-coverage; it is not a security/link-completeness guarantee. On 2026-11-14 it
-reported `missing-path=0`, `historical-path=0` and 25 heuristic command-drift
-warnings; its own test suite passed 11/11. The
-[artifact audit](docs/repository-audit.md) documents
-provenance/retention rather than deleting or certifying stored archives. No
-archive content was executed.
-
-### Deliberate limitations and evidence
-
-The unreleased Cocoa backend invokes AppKit/CoreGraphics through an unsafe,
-fixed-signature Objective-C Rust bridge on the main thread. It requires rustc;
-it is trusted native code, not a sandbox. Scalar bridge buffers and borrowed
-clipboard strings retain explicit lifetime contracts. Windows UI tests (17/17)
-and both Apple metadata checks passed, and a native Cocoa window probe
-(30 frames in an NSWindow) passes on the `macos-latest` CI job. Full
-IME composition and Retina-resolution backing are outside current coverage.
-
-The unreleased Darwin port uses the modern inode64 layout, with Intel symbol
-redirection emitted by both compilers. Raw libc calls remain subject to the
-FFI contract; Windows regressions and simulated macOS symbol checks alone do
-not validate Apple's runtime ABI. Local validation on 2026-11-11 passed 385
-Windows compiler tests, the Linux workspace/tests cross-check and 11
-documentation tests; both Apple Silicon and Intel workspace/tests cross-checks
-passed, and those do not link or execute Apple binaries. **Native Apple
-execution is supplied by the `macos-latest` CI job (2026-11-15, Apple
-Silicon)**: the whole suite, C parity/ABI, the Rust bridge, the package
-manager, the native Cocoa window probe, the loopback libcurl HTTP probe and the
-from-source installer + installed-toolchain smoke all build and run green,
-including the Darwin SDK layout and fixed-timezone tests on the native runner.
-Intel macOS is cross-checked clean; the hosted runner is Apple Silicon, so
-Intel native execution is not separately claimed. The macOS installer builds
-from source (`dist/install-macos.sh`) and no new version release is implied.
-The macOS libcurl HTTP bridge is trusted native code performing real TLS I/O
-with the caller's permissions, validated by the `macos-latest` CI probe rather
-than on this Windows host.
-
-The unreleased `addr_of` is an unchecked raw-memory escape hatch, not a
-reference type: its address is valid only while the owner lives. A struct
-parameter's address belongs to the callee's copy. Nullable-rooted lvalues are
-rejected even when narrowed because their C storage is an `ax_opt` wrapper;
-this rejection prevents representation confusion, not lifetime errors.
-`sizeof(T)` reports the C representation, including padding. Stage-2 rejects
-both forms; it does not silently implement them differently.
-
-`stdlib/re` matches BYTES, like every Aoxn string: no Unicode semantics, no
-MULTILINE/IGNORECASE/DOTALL, and a NUL byte truncates the subject because
-`len()` is `strlen`. Unsupported syntax (pattern backreferences, lookaround,
-named groups, inline flags, `\xHH`/`\uHHHH`/`\U`/`\N`) is a compile error
-with a named message, not a silent approximation; POSIX classes such as
-`[[:alpha:]]` parse as literal character classes, exactly as CPython treats
-them inside a bracket expression. Replacement expansion follows Python's
-rules (`\1`–`\9`, `\g<N>`, `\n`/`\t`/`\r`, `\\`); a `\0` in a replacement
-produces a NUL that truncates any later string builtin. Catastrophic
-backtracking is possible and unbounded — an availability consideration, not
-a memory-safety one: the VM's explicit stack and capture-undo trail grow on
-the heap, and instruction addresses come from the pattern compiler, never
-from the subject text.
-
-The closing stdlib batch ships documented degraded forms, not full Python
-equivalents: `threading` has no TLS/condvars/semaphores/cancellation, and on
-Windows a worker's return value is a DWORD (keep it within 32 bits; Linux
-preserves 64); `futures` has no process pool, callbacks, timeouts or cancel,
-and elements beyond 64 run inline; `itertools` is eager batch materialization
-(no lazy iterators, permutation guard at n>9); `collections` containers move
-8-byte slots (strings via pointer views); `argparse` has no subcommands/mutex
-groups/nargs; `logging` has no handler tree/filters/rotation; `unittest` has
-no classes/fixtures/discovery and there is still no `aoxn test` runner;
-`sys` has no stdin object or module registry; `shutil` errors are boolean
-values, not exception objects. None of these modules is imported into
-`stdlib/stdlib.ax` (the self-host critical path, which has zero imports);
-threading/futures are additionally compiled and run by the selfhost CLI in
-tests.
-
-User-program signed overflow, unchecked array indexing, invalid raw-memory/FFI
-use remain undefined behavior. `as_string` aliases memory that must remain live.
-Strings are NUL-terminated bytes; concatenation leaks by design. There is no GC
-or universal runtime memory safety. Corruption in libraries processing external
-data is distinct from caller-authored unsafe operations. The window server and
-registry trust tiers do not sandbox or certify programs. Rust code linked through
-`.rs` imports is trusted code: it runs in the same process with the same
-permissions, and the bridge checks its declarations, not its behavior.
-
-The thirteen findings from the 2026-10-17 audit were fixed in 0.51.0/0.51.1;
-that is history, not absence of new defects. Baseline **8f90aca** recorded
-343 root + 104 package tests on Windows with explicit clang 23.1.2. Current-tree
-validation passed **405 root + 116 package tests (521), 0 failed/ignored** on
-Windows (2026-11-15, clang 23.1.2 at `E:\llvm\bin\clang.exe` on this machine —
-`C:\Program Files\LLVM` does not exist here, an earlier note claiming the
-opposite was corrected — rustc from rustup), with `AOXN_TEST_REQUIRE_CLANG=1`
-and `AOXN_TEST_REQUIRE_RUSTC=1`. Package tests ran via
-`bash run_pkg_tests.sh`; the root suite grew 399→405 with the macOS work —
-the Rust bridge's twelfth test pins the provenance-aware extern dedup
-(`http_macos.ax` declares the `aoxn_http_*` externs, the `.rs` bridge defines
-them) plus the Cocoa bridge/contract tests. The closing batch's 14 driver
-suites (sys, argparse, logging, unittest ×2, collections, itertools ×2 incl.
-the CPython order differential, shutil over real temp trees, net ×3 incl. the
-`urllib.parse` differential and the HTTP facade against a local mock server,
-threading ×2 incl. the selfhost-CLI pin), the `re` differential/selfhost pins
-and the eight sizeof/addr_of pins remain in the suite.
-IDE validation below is historical, not rerun for this batch: IDE
-Rust tests passed 46/46. The IDE frontend ran 62/63: `theme.test.ts` could not
-load `react` because `node_modules` is absent in this checkout, while the
-package-manager frontend tests passed; `pnpm typecheck` could not run for the
-same reason. The root suite includes all four ABI and two parity targets.
-Nineteen full-C inputs, 22 rejection fixtures and three known gaps are distinct
-categories. Native ABI cases ran at O0/O3; the original fixed point, both CLI
-stages, real socket loopback (Rust and selfhost builds), random cross-process
-vectors and the Python CSV differential are part of the suite. The manifest v2
-flows were exercised end to end (init, path install, directory-registry
-publish/install, migrate with round-trip verification). Linux Rust
-workspace/tests cross-check passed, and both Apple targets
-(`aarch64-apple-darwin`, `x86_64-apple-darwin`) cross-checked clean — these
-are cross-checks, not native runtime. Native macOS evidence comes from the
-`macos-latest` CI job (2026-11-15, Apple Silicon, green): the whole suite,
-Cocoa + libcurl HTTP probes, libcurl loopback against a local server and the
-from-source installer + installed-toolchain smoke; it is not a claim of local
-Apple execution on this Windows host. See
-[verification evidence](docs/c-compatibility.md). No fresh
-security audit, IDE validation, Linux native runtime or full installer release is
-implied. The P2 maintenance follow-up reran the explicit locked compiler/package
-commands; results and the Python checker tests are recorded in
-[repository maintenance evidence](docs/repository-audit.md). Hosted CI was not
-triggered for that follow-up; workflow syntax validation is local only.
-The 2026-11-01 tarball-test fix was landed on `main` and its hosted run passed on
-**both** jobs. Linux extraction containment is now executed by CI, not only
-cross-checked, and the steps the red run had blocked (`Smoke test`, X11 under
-Xvfb) ran again.
-
----
+Doctor checks portable modules and native backend/provider source completeness
+and runs a smoke program, not every library/TLS/GUI. Optional rustc discovery
+does not prove bridge linking. Deterministic C, parity and fixed points cover
+finite subsets, not full equivalence or security. CI configuration does not
+prove this changed tree ran. No fresh audit results/test totals are asserted.
+Review lockfiles and rerun audits. The existing IDE glib exception stays in
+ide/src-tauri/audit.toml, not newly endorsed by this update.
 
 ## 中文
 
-### 支持版本与报告
+编译器仍为 **0.55.0 + 未发布工作**，修复当前 0.55.x，不是新发行。Windows 为
+一等平台，Linux 已有编译器/库/X11 基线；本批 HTTP/安装器/socket/doctor 尚待
+新增改动原生 Linux 验证。Windows/交叉检查不是原生运行；macOS Apple Silicon
+成功为 2026-11-15 历史记录，不验证修改桥；Intel 无独立原生证据。
+漏洞先私信 **zmjsjsg3@163.com**，附提交/平台/doctor/最小输入/命令/影响，误编译
+附 C/O0 复现，脱敏并说明署名，可协商加密。目标 3 工作日确认、10 工作日初评，
+确认后 90 天或修复时披露（先到者）；紧急问题优先，利用中可提前提示，署名须同意，无奖金。
 
-编译器保持 **0.55.0**，支持系列 **0.55.x**；当前源码在 snapshot-6 后加入
-**未发布的 `sizeof(T)` / `addr_of(x)`**、**`stdlib/re.ax` 正则模块**以及
-**标准库收官批次**（`shutil`、`collections`、`itertools`、`net`/urllib、
-`threading`、`futures`、`sys`、`argparse`、`logging`、`unittest`），
-不代表新版本或发布。至此 31 项标准库路线图全部处置完毕（27 项交付、
-4 项长期不做并给出替代；见 `docs/stdlib-todo.md` §7）。
-独立包管理器 crate 保持 **0.43.0**。修复先落 main，旧小版本不维护；
-支持 Windows/Linux；macOS 已在 `macos-latest` CI 任务（Apple Silicon）上
-原生验证通过：整套测试、C parity/ABI、Rust 桥、包管理器、原生 Cocoa 窗口
-探针与环回 libcurl HTTP 探针都在真实 macOS 上构建运行。Cocoa UI 为未发布
-Rust 桥实现，macOS HTTP 传输经可选启用的 libcurl Rust 桥
-（`stdlib/net/http_macos`）提供。单文件打包安装器仍仅 Windows；macOS 经
-`dist/install-macos.sh` 从源码安装，并由同一 CI 任务实测。见
-[CHANGELOG](CHANGELOG.md)。
+**编译执行不是沙箱**。导入读文件、资源写文件，clang/rustc 编译原生代码；扫描器
+只生成绑定，被忽略模块仍编译。工具用 argv 非 shell，但程序/FFI/网络/线程有用户权限，
+请用系统/容器隔离。路径/环境/链接配置由用户控制；缓存可信可替换原生代码，不可与
+不可信用户共享。零编译器依赖不消除其他供应链风险。C extern 固定参数，int=C long long、
+bool=C int，错误声明可产生 UB；Rust 只支持精确标量 ABI。字符串 NUL 结尾且边界 clamp，
+数组/裸内存不检查。sizeof/addr_of 无生命周期/所有权检查，结构体参数是副本，拼接泄漏，
+无 GC/通用内存安全保证。re 无预算可指数耗时、编译递归有栈限，需资源限制；random 非
+密码学，线程自己同步，shutil 守卫不是权限/消除竞态，logging 写指定路径，socket 非 TLS。
 
-漏洞先私报 **zmjsjsg3@163.com**，不要先发公开 issue。提供 commit/版本、系统架构、
-aoxn doctor、最小输入、命令、预期/实际行为与影响。误编译附 aoxn c 与 O0 复现情况。
-去除密钥/私有路径并注明署名意愿；可用无敏感内容邮件协商加密。
+Windows 保留 WinHTTP；Linux/macOS 显式启用共享 libcurl Rust 桥。Linux 导入
+`stdlib/net/http_linux`，需 rustc/libcurl 开发文件/CA；macOS 用
+`stdlib/net/http_macos`。漏导入可链接失败，Windows 无需 provider，自举不支持 .rs。
+桥为可信原生代码；仅 HTTP(S)，保留证书/主机名校验、禁自动重定向，SDK 管凭据。CA/
+代理/端点是信任输入，HTTP 无 TLS。流式线程/缓冲非有界保证，上传复制持有；日志须脱敏。
+不声明新安全审计或 Linux 原生成果。包内容与传输摘要分离，旧索引不免内容验证；热复用
+只排除自有 shim，解包须内含。不可信索引可改内容与哈希；明文 HTTP/信任层级非认证审计。
 
-目标为 **3 个工作日确认、10 个工作日初评、确认后90天或修复发布两者较早时协调披露**。
-严重问题安排紧急补丁/下一版本；提供进度与解释，署名须同意，无赏金。
-主动利用时可能提前发布保护建议。
+Linux 须绝对专用目录，拒危险根，完整复制且不删无关条目；可覆盖且失败不回滚，doctor
+失败即失败。默认不改配置，--modify-path 才安全引用追加 ~/.profile；--skip-build 信任
+现有 release 程序，无需 cargo。脚本不下载工具链，cargo 可获取锁定依赖；路径检查不防
+竞态。Windows 下载 opt-in、自检后检测隔离；macOS 配置行为独立。Linux 本地归档带摘要，
+但摘要本身不认证发布者；本次未发布归档或版本。
+IDE 文件/预览受限，但 Terminal shell 仅初始 cwd 受限，不可无授权远程暴露；助手密钥留
+Rust，预览限 16 MiB。CSS 检查输出名，URL 不控制根；Tailwind 不偷偷装 Node。
 
-### 信任边界
-
-编译/执行**不是沙箱**：导入读文件、资源命令写文件、clang 产出原生代码。
-`.rs` 导入还会以调用者权限驱动 **rustc** 编译自包含的 Rust 静态库；rustc 与
-clang 一样是外部工具链，只用参数向量调用，绝不经过 shell。
-Rust 与自举驱动都用参数向量调用 clang；自举 CLI 的 run 也用 argv 向量启动编译产物
-（Windows CRT `_spawnvp`、POSIX `fork`/`execvp`），绝不经过 shell。Windows 参数按
-CRT 规则引用，保证空串/空格/特殊字符原样到达，这不是消毒。包管理器命令与
-CSS/Tailwind 选项明确拒绝而非转发，自举 CLI 也不解析 `.rs` 导入（与 `.css`
-资源同一边界）。包清单可以是 TOML（`aoxn.toml`）或旧 JSON；依赖名在成为
-`aox_modules/<name>` 目录之前仍按同一包名白名单校验，路径依赖物化前必须含可读
-清单。内容键构建缓存信任可写缓存目录中已存在的文件：恶意缓存既可替换
-可执行文件，也可替换缓存于 `<cache>/rust/` 下的 Rust 静态库；PATH 未经认证，
-输出不是独占创建；`stdlib/socket` 以调用者权限进行真实网络 I/O；
-`stdlib/random` 明确非密码学安全；`stdlib/re` 是**没有步数预算**的回溯
-匹配器，对抗性的模式/输入对可能耗时指数级（ReDoS）——不要在无系统级
-时限的情况下用不可信模式匹配不可信输入。
-
-收官批次新增的调用方权限面同样都不是沙箱：**`stdlib/threading` 与
-`stdlib/futures` 创建真实 OS 线程**，以调用者完整权限运行（工作函数为
-`fn(int) -> int`；共享状态经堆地址传递，数据竞争由调用方负责——互斥量
-API 是唯一提供的同步手段）。**`stdlib/shutil` 执行真实文件复制/移动/
-删除**；它拒绝跟随重解析点（符号链接/junction）并把递归限制在深度 64，
-这是遍历/资源守卫而非权限检查——调用者能删的它仍能删。
-**`stdlib/logging` 以调用者权限追加写文件**；日志路径是调用方配置。
-**`stdlib/net` 的 HTTP 门面发起真实 HTTP 请求**：Windows 经 WinHTTP 传输，
-macOS 经可选启用的 libcurl Rust 桥（`stdlib/net/http_macos`；Linux 仍返回
-值错误），重定向/凭据规则与 SDK 传输一致；其 URL 层是纯计算。libcurl 桥是
-以调用者权限运行的可信原生代码，进行真实 TLS 网络 I/O——不是沙箱。
-对不可信项目使用系统/容器文件、网络和凭据隔离；类型检查通过不代表可以安全执行。
-
-`AOXN_RUSTC` 与 `AOXN_CLANG` 一样是调用方配置，而不是对攻击者的安全边界：
-它只是指定构建要运行的 rustc 可执行文件。src/ 无外部 Rust crate 依赖；
-包管理器独立依赖固定在 Cargo.lock，不依赖编译器库。IDE/Web 的 JS/Tauri 为另一
-供应链边界。发射器/ABI 验证不是安全审计，也不提供沙箱。
-
-### 编译器与构建不变量
-
-- 特制源码/导入/资源/诊断不得损坏编译器、执行非预期命令或误编译定义良好程序；
-  这包括对导入 `.rs` 文件所做的签名扫描。普通错误诊断/panic 是 bug；
-  小输入灾难性资源放大值得私报。
-- 生成标识来自稳定源码/计数器/名字，不能用地址；hash 迭代不应改变 C。
-  缓存包含编译器、选项、依赖；勿共享不可信可写缓存。
-- Rust 桥的签名扫描器是**为生成绑定而做的源码分析，不是沙箱**。rustc 编译整个
-  `.rs` 文件，扫描器忽略的代码照样会运行。“只绑定顶层导出”是绑定边界，不是编译
-  限制；内联 `mod` 内的函数仍会编译链接，只是不产生 Aoxn 绑定。crate 必须是单文件
-  （`mod name;` 与 `include!` 被拒绝，因为它们引入的文件不在产物缓存键的视野内）。
-- Rust 绑定由加载器在 typecheck 之前合成：到 codegen 时绑定**就是**普通
-  `extern def`。因此没有 codegen 分支，也没有自举镜像义务——与 CSS 资源相同的构造；
-  自举 CLI 不解析 `.rs` 导入。rustc 以 `--crate-type staticlib` 调用，链接步骤只
-  加入它报告的 `native-static-libs` 及指令形式（`/defaultlib:NAME` 变成
-  `-Wl,/DEFAULTLIB:NAME`），不进行任何网络访问。
-- Rust-vs-selfhost 直接 C 比较和自举跨阶段不动点是不同检查；有限 fixture
-  不证明全特性等价。自举已覆盖 None/`T | None`、`dict[V]`、函数指针与
-  raise/try/except，但仍缺默认参数、命名空间绑定与选择性导入；parity 是已测试
-  的共同子集，见[C 边界](docs/c-compatibility.md)。
-- 外部 ABI 依赖正确声明。Aoxn int 对应 long long，bool 对应 C int，不能推为
-  任意 C int/_Bool 兼容；固定参数 extern 不支持 C 可变参数。错误声明可能链接
-  成功却产生 UB；已知签名 C helper 测试不能校验任意第三方声明。extern 名称逐字
-  发射、绝不加命名空间前缀：该名字就是程序链接的 C 符号。解析器只在「至多一个
-  声明由 `.rs` 定义提供」时合并相同 extern 声明；同名两份 `.rs` 定义仍报错，
-  因此合并绝不能在两个冲突的原生实现之间静默择一。
-- Rust ABI 面窄而精确：`i64` 对应 `int`，`f64` 对应 `float`，
-  `*const`/`*mut c_char` 对应 `string`，无返回值对应 `void`。Rust `bool`、
-  `i32`、`u64`、`String`、`&str`、`*const i64`、泛型、`where` 子句、`async`、
-  可变参数、元组参数模式、`#[export_name]`、原始标识符、C 关键字/`main` 符号名、
-  非 `"C"` ABI 都是诊断而非猜测；没有 `#[no_mangle]` 的 `extern "C" fn` 被拒绝。
-  Rust 产物键由规范路径、内容摘要、rustc 的 **`--version` 字符串**（不是二进制
-  元数据——`~/.cargo/bin/rustc` 是 rustup shim）与优化级别组成；只有程序带 `.rs`
-  依赖时可执行文件缓存键才加入 rustc 身份，纯 Aoxn 程序的键保持不变。
-- 图优化保留语义与诊断顺序；反向边、借用模块表、无环证明复用只消除特定开销，
-  不是消除所有 DoS。递归仍有宿主栈限制；数组等包装间接结构体环为既有缺口。
-- 包优先安装 stdlib，裸导入先同目录，引号导入有同目录兜底；环境路径、clang、
-  rustc 和链接选项是调用方配置，不对控制环境者构成安全边界。
-- CSS 输出名由编译器生成并防路径逃逸；URL 只影响内容，Tailwind 不静默下载 Node。
-- **双平台 stdlib 模块把每个平台调用守卫在发起调用的函数内部**
-  （`target_os()` 在 codegen 前折叠），死分支的符号不会进入目标文件。
-  `tests/stdlib_defect_pins.rs` 在 Windows 上模拟 Linux 折叠并扫描符号表；
-  收官批次的 threading/futures/shutil/net 均被覆盖。调用方的守卫保护不了被调方。
-
-### 包、安装器与应用边界
-
-- checksum 锚定内容树，tarball_sha256 校验传输字节；旧索引缺摘要不豁免内容验证。
-  热复用重算真实树，**只排除自身 index.ax shim**，不符则重建校验。
-- 解包拒绝逃逸/绝对路径/链接，校验依赖和缓存路径；npm-import 验完整性与元数据。
-  “绝对”由宿主定义（`C:/x` 在 Windows 是驱动器路径，在 POSIX 只是名为 `C:` 的
-  目录），守卫跟随宿主是因为 `Path::join` 跟随宿主；与宿主无关的性质是**任何条目
-  都不得写到目标目录之外**，两种拼法各有测试钉住。
-  注册表 HTTP 为明文，恶意索引可同时替换数据和摘要；信任等级是声明而非审计。
-- 并行 worker 各有 registry state；未知 schema 失败；生产剪枝保留生产可达包。
-- 安装器限制在选定根、更新 PATH、自检后再确认二进制。默认不下载，InstallClang
-  显式启用；系统隔离不是编译器漏洞，假报成功是 bug。macOS 安装器
-  （`dist/install-macos.sh`）从源码构建到调用方选定的前缀，不下载任何东西，
-  缺 cargo/clang 时报告而非自行获取；只覆盖自己的 `<prefix>/lib/stdlib`。
-- IDE Rust 层限制工作区路径、防链接逃逸/覆盖、重建输出防硬链接，并验证命令。
-  文件读写/创建与预览命令限制在已打开目录内。**终端面板是有意的例外**：
-  `ide_terminal_exec` 通过平台 shell 执行用户输入的命令，初始 cwd 限制在工作区，
-  但命令本身可离开该目录。因此本地 webview 必须视为可信；不要把该命令暴露给
-  远程提供的 UI，除非另有授权层。助手代理（`ide_ai_chat`）把供应商密钥留在
-  Rust 进程；`ide_read_bytes` 将预览载荷限制在 16 MiB。
-- JSON/UTF/SSE/URL/头/glob/base64/正则/UI 解析必须推进且不越界；缺失 slab 索引守卫、
-  realloc 活句柄写回、builder 不缩到 live count 以下；空/非有限/深 JSON 终止。
-  正则编译器对非法模式报具名错误，VM 用显式回溯栈运行（不占宿主递归），
-  但匹配时间无上限（见信任边界）。URL 解析器对任何非法输入返回**干净的全零
-  Url**（`ok = 0`、各字段为空），绝不返回半填充结构。WinHTTP 拒绝空头块
-  （错误 87），因此两条请求路径在无额外头时跳过 `WinHttpAddRequestHeaders`；
-  该守卫是正确性而非消毒。
-  WinHTTP 不静默跨重定向泄密、不把截断当成功。
-- 字符串 clamp 属安全属性，不得借数组不检查取消。SDK key 不清零，优先环境配置，
-  转储脱敏；WinHTTP 为 Windows-only，macOS libcurl 传输为可选启用。IDE/Web 公告在范围内，例外需要理由与退出条件，
-  未解决依赖约束前不得删除 glib audit 例外。
-- 2026-11-01 起 JS 清单无已知公告：`ide` 为 `next` 16.4.3、dompurify 3.4.17
-  （monaco 锁死精确版本，只能靠 override），`web/next-app` 为 `next`
-  15.5.28。复核命令 `pnpm --dir ide audit`、`pnpm --dir web/next-app audit`。
-  唯一保留的例外仍是 `RUSTSEC-2024-0429`（glib，仅 Linux webview 后端传递依赖，
-  本项目不调用受影响 API），理由与退出条件连同本次复核写在
-  `ide/src-tauri/audit.toml`。
-- 机器人重新生成 lockfile **会静默回退安全 pin**：dependabot 升 `next` 那次重写
-  `ide/pnpm-lock.yaml`，丢掉了 `ide/package.json` 里的 `pnpm.overrides`，
-  dompurify 退回 monaco 锁定的 3.4.15，而清单正文仍在描述这个 pin。承载安全
-  修复的 override 一律放在 `pnpm-workspace.yaml`；审查生成的 lockfile diff 要
-  看 `overrides:` 段，不能只看版本号行。
-
-### 仓库检查与自动化范围
-
-主 CI 显式指定编译器和包管理器，不能把默认根包测试当成员测试已执行。
-Windows/Linux 另有独立步骤强制 C parity/ABI 目标使用 clang，提前返回的跳过路径
-不能让未实际比较的门禁变绿。两个平台还各有一个命名步骤 `Test Rust bridge`，
-设置 `AOXN_TEST_REQUIRE_CLANG=1` 与 `AOXN_TEST_REQUIRE_RUSTC=1`：缺少 rustc 的
-runner 会失败而不是跳过桥测试。`macos-latest` job 运行同一套测试，外加原生
-Cocoa 探针、环回 libcurl HTTP 探针与从源码安装器 + 已安装工具链冒烟，提供
-Windows/Linux 主机无法给出的 Apple 运行时证据。Windows 冒烟/发布逐条检查原生命令退出码，
-安装器下载仍为显式启用。web-bench 工作流的 bash 步骤使用正斜杠路径，Git Bash
-不会再把分隔符当转义吞掉；修复后的调用已在本地重跑（服务器构建 + 23/23 项
-功能 parity 检查通过）。本地 workflow 检查不证明托管 Actions 或安装器运行成功。
-GitHub `main` 分支受保护：必须经 pull request（2026-11-13 起批准数要求
-为 0，因为单人维护者无法批准自己的 PR），禁止直推与强推。
-
-文档检查器只读、无外部依赖，仅读本地 Git 历史，不访问 URL 或执行文档命令，
-默认仅警告。历史白名单与命令启发式限制其覆盖，不是安全/链接完整性保证。
-2026-11-14 它的报告为 `missing-path=0`、`historical-path=0` 和 25 条启发式命令
-漂移警告，其自身测试 11/11 通过。[产物审计](docs/repository-audit.md)记录来源与
-保留决定，不删除或认证归档，没有执行归档内容。
-
-### 有意限制与证据
-
-未发布 Cocoa 后端以主线程上的 unsafe 固定签名 Objective-C Rust 桥调用
-AppKit/CoreGraphics，需要 rustc，是可信原生代码而非沙箱；缓冲区与剪贴板
-借用字符串仍有显式生命周期契约。Windows UI 17/17 与双 Apple 元数据检查通过，
-原生 Cocoa 窗口探针（NSWindow 中 30 帧）也在 `macos-latest` CI 任务上通过。
-完整 IME 与 Retina 分辨率缓冲区不在当前覆盖内。
-
-未发布 Darwin 移植采用现代 inode64 布局，两套编译器同步发射 Intel 符号重定向。
-原始 libc 调用仍受 FFI 契约限制；仅凭 Windows 回归和模拟 macOS 符号检查不能
-证明 Apple 运行期 ABI 正确。2026-11-11 本地通过 385 项 Windows 编译器测试、
-Linux workspace/tests 交叉检查及 11 项文档测试；Apple Silicon 与 Intel
-workspace/tests 交叉检查均通过，这些不链接或执行 Apple 二进制。**Apple 原生
-执行由 `macos-latest` CI 任务提供（2026-11-15，Apple Silicon）**：整套测试、
-C parity/ABI、Rust 桥、包管理器、原生 Cocoa 窗口探针、环回 libcurl HTTP 探针
-与从源码安装器 + 已安装工具链冒烟都构建运行通过，含原生 runner 上的 Darwin SDK
-布局与固定时区测试。Intel macOS 交叉检查干净；托管 runner 为 Apple Silicon，
-故不单独声明 Intel 原生执行。macOS 安装器从源码构建（`dist/install-macos.sh`），
-不代表发布新版本。macOS libcurl HTTP 桥是以调用者权限进行真实 TLS I/O 的
-可信原生代码，由 `macos-latest` CI 探针验证，而非本 Windows 主机。
-
-未发布的 `addr_of` 是不检查生命周期的原始内存逃生通道，不是引用类型；地址只在
-所有者存活期间有效。结构体参数地址属于被调方副本。nullable 为根的左值即使收窄
-也拒绝取址，因为其 C 存储仍是 `ax_opt` 包装；这是防表示混淆，不是生命周期保证。
-`sizeof(T)` 报告包含填充的 C 表示大小。stage-2 明确拒绝两种形式，不静默采用另一套语义。
-
-`stdlib/re` 与所有 Aoxn 字符串一样按**字节**匹配：没有 Unicode 语义，没有
-MULTILINE/IGNORECASE/DOTALL，NUL 字节会因 `len()` 是 `strlen` 而截断 subject。
-不支持的语法（模式反向引用、环视、命名分组、内联标志、`\xHH`/`\uHHHH`/
-`\U`/`\N`）是带具名消息的编译错误，不是静默近似；`[[:alpha:]]` 这类 POSIX
-类按字面字符类解析，与 CPython 在括号表达式内的处理完全一致。替换展开遵循
-Python 规则（`\1`–`\9`、`\g<N>`、`\n`/`\t`/`\r`、`\\`）；替换中的 `\0`
-产生 NUL，会截断其后任何字符串内建。灾难性回溯可能存在且无上限——这是
-可用性问题而非内存安全问题：VM 的显式栈与捕获撤销 trail 在堆上增长，
-指令地址来自模式编译器，绝不来自 subject 文本。
-
-收官批次交付的是**有文档的降级形态**，不是完整 Python 等价物：
-`threading` 没有 TLS/条件变量/信号量/取消，Windows 上工作函数返回值是
-DWORD（请保持在 32 位内；Linux 保留 64 位）；`futures` 没有进程池、回调、
-超时、取消，超过 64 的元素内联执行；`itertools` 是急切批量物化（没有惰性
-迭代器，n>9 排列守卫）；`collections` 容器搬运 8 字节槽（字符串经指针
-视图）；`argparse` 没有子命令/互斥组/nargs；`logging` 没有处理器树/过滤器/
-轮转；`unittest` 没有类/fixture/发现，且仍没有 `aoxn test` 运行器；
-`sys` 没有 stdin 对象或模块注册表；`shutil` 的错误是布尔值而非异常对象。
-这些模块都不导入 `stdlib/stdlib.ax`（自举关键路径，零导入）；
-threading/futures 另在测试中由自举 CLI 编译运行。
-
-用户数组越界、带符号溢出、无效原始内存/FFI 是 UB。as_string 别名存储必须存活；
-字符串 NUL 结束、拼接故意泄漏，没有 GC/通用运行时内存安全。库处理外部数据损坏
-与调用方主动不安全操作有别；窗口服务和注册表等级不沙箱或认证程序。通过 `.rs`
-导入链接的 Rust 代码是可信代码：它与程序同进程、同权限运行，桥只检查其声明，
-不检查其行为。
-
-2026-10-17 审计13项已在0.51.0/0.51.1修复，不保证没有新缺陷。
-历史基线 **8f90aca** 在 Windows 显式 clang 23.1.2 记录343根+104包；当前树最终
-**405根+116包=521项通过，0失败/忽略**（2026-11-15，本机 clang 23.1.2 位于
-`E:\llvm\bin\clang.exe`——`C:\Program Files\LLVM` 在本机并不存在，早前声称
-相反情况的说明已更正——rustc 来自 rustup），设置了
-`AOXN_TEST_REQUIRE_CLANG=1` 与 `AOXN_TEST_REQUIRE_RUSTC=1`。包测试通过
-`bash run_pkg_tests.sh` 执行；根套件从 399 增至 405，新增 macOS 工作的测试——
-Rust 桥第 12 项钉住按来源去重 extern（`http_macos.ax` 声明 `aoxn_http_*`
-extern，由 `.rs` 桥定义它们）以及 Cocoa 桥/契约测试。收官批次的 14 项驱动套件
-（sys、argparse、logging、unittest ×2、collections、itertools ×2 含 CPython
-顺序差分、shutil 真实临时树、net ×3 含 `urllib.parse` 差分与对本地 mock
-服务器的 HTTP 门面、threading ×2 含自举 CLI 钉测试）、`re` 差分/自举钉与
-8 项 sizeof/addr_of 钉测试仍在套件内。
-以下 IDE 证据为历史记录，本批未重跑：IDE Rust 测试 46/46 通过；IDE 前端 62/63，
-`theme.test.ts` 因本检出缺少 `node_modules` 无法加载 `react`，包管理器前端测试
-通过，缺少 `node_modules` 也使 `pnpm typecheck` 无法运行。根套件包含全部4项
-ABI 与2项 parity。
-19个完整 C 输入、22个拒绝样例、3个 known gaps 分别计证；ABI 实际执行 O0/O3，
-原不动点、两阶段 CLI、真实 socket 回环（Rust 与 selfhost 构建）、随机数跨进程向量
-与 Python CSV 差分都在套件内。清单 v2 流程已端到端跑过（init、路径安装、
-目录注册表发布/安装、带往返校验的 migrate）。Linux Rust workspace/tests
-cross-check 通过，两个 Apple 目标（`aarch64-apple-darwin`、`x86_64-apple-darwin`）
-交叉检查也均干净——这些是交叉检查，不是原生运行。macOS 原生证据来自
-`macos-latest` CI 任务（2026-11-15，Apple Silicon，全绿）：整套测试、Cocoa 与
-libcurl HTTP 探针、对本地服务器的 libcurl 回环，以及从源码安装器 + 已安装
-工具链冒烟；并非本 Windows 主机 Apple 执行的声明。
-见[C 兼容证据](docs/c-compatibility.md)。不暗示新安全审计、IDE 验证、Linux 原生运行
-或完整安装器发布。P2维护后又执行显式locked编译器/包测试，结果与Python检查器
-测试见[仓库维护证据](docs/repository-audit.md)。该次维护未触发托管CI，
-workflow仅本地语法校验。2026-11-01 的 tarball 测试修复已落 main，其托管 CI
-**两个平台均通过**：Linux 解包内含性由 CI 实测而不只是交叉编译校验，曾被红跑的
-`Smoke test` 与 Xvfb X11 探测也重新执行并通过。
+doctor 检查源文件并跑小程序，不证明全部库/TLS/GUI；rustc 行不证明可链接。parity/
+固定点仅有限子集，非安全审计；CI 配置不证明修改树执行。不声明新审计/测试数，须重审
+锁文件。glib 例外仍在 ide/src-tauri/audit.toml，本次不重新背书。
