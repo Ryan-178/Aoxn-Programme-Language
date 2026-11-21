@@ -1016,8 +1016,8 @@ Ordered by how much they cost the language's Python parity.
    and none is coming — `len(s)` is `strlen`, so the language is byte-wise
    end to end. ~~f-string format specifiers~~ — **shipped (unreleased)**
    for `int`/`float` (`{x:.2f}`, `{n:08x}`, `{n:b}`), mirrored in the
-   selfhost compiler with byte-identical C. Still open: multi-line
-   f-strings.
+   selfhost compiler with byte-identical C. Raw newlines are accepted inside
+   string literals, so multi-line f-strings work in both front ends.
 6. Memory: string interning or arena freeing (currently concatenation leaks);
    dict values are never freed either (a dict lives as long as the program,
    like every other heap block in the language).

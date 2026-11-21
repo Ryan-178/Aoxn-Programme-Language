@@ -1094,6 +1094,7 @@ fn f_string_format_specifiers() {
             print(f"{n:d} {n:08d} {n:x} {n:X} {n:o} {n:b} {n:08b}")
             print(f"{-n:d} {n:+d} {n: d}")
             print(f"{x:.2f}", f"{x}")
+            print(f"x={n:03d} y={x:.2f} z={n:08x}")
             return 0
         "#,
     );
@@ -1102,7 +1103,8 @@ fn f_string_format_specifiers() {
         "3.14 3 3.142e+00 3.14159 3.14159\n\
          255 00000255 ff FF 377 11111111 11111111\n\
          -255 +255  255\n\
-         3.14 3.141590\n"
+         3.14 3.141590\n\
+         x=255 y=3.14 z=000000ff\n"
     );
 }
 

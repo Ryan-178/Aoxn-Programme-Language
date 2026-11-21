@@ -232,6 +232,20 @@ def main() -> int:
     print(f"{x:.0f}")
     print(f"{n:05b}")
     print(f"{x:}")
+    print(f"x={n:03d}")
+    print(f"v={x:.2f} end")
+    print(f"{n} then {n:08x}")
+    return 0
+"#,
+    ),
+    (
+        "fstring_multiline",
+        r#"def main() -> int:
+    n = 7
+    x = 3.5
+    print(f"line1
+line2 {n:03d} {x:.2f}
+end")
     return 0
 "#,
     ),

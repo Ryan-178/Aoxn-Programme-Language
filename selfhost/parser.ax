@@ -1804,6 +1804,7 @@ def desugar_fstring(p: PState, raw: string) -> PState:
     # build the expression chain
     acc = -1
     i = 0
+    si = 0  # pparts_spec holds one entry per kind-2 part, not one per part
     while i < pparts_kind.len:
         if vec_get(pparts_kind, i) == 0:
             t = as_string(vec_get(pparts_text, i))
@@ -1824,7 +1825,8 @@ def desugar_fstring(p: PState, raw: string) -> PState:
             call = -1
             if vec_get(pparts_kind, i) == 2:
                 # f"{x:.2f}" -> str_fmt(x, ".2f") for the checker/codegen
-                p = mk_lit_str(p, as_string(vec_get(pparts_spec, i)))
+                p = mk_lit_str(p, as_string(vec_get(pparts_spec, si)))
+                si = si + 1
                 spec_node = p.res_node
                 p = mk_call_str2(p, "str_fmt", value, spec_node)
                 call = p.res_node

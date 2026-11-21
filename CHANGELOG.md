@@ -19,9 +19,14 @@ is a named compile error. Plain spellings (`{x:}`, `{x:d}`, `{x:f}`) reuse
 Mirrored in the selfhost compiler (parser splits at the first depth-0 `:`,
 `fmt_parse_*` shared from `typecheck.ax`, `ax_fmt_N` helpers emitted sorted
 by key). C byte-identical between the Rust and Aoxn emitters, pinned by
-`tests/c_emitter_parity.rs` case `fstring_format_specs`; front-end tests
+`tests/c_emitter_parity.rs` case `fstring_format_specs` (now including
+literal-prefixed spellings such as `f"x={n:03d}"`); front-end tests
 `f_string_format_specifiers` and `rejects_bad_format_specifiers` cover the
-accept/reject surface. Multi-line f-strings remain open.
+accept/reject surface. Raw newlines are accepted inside string literals, so
+multi-line f-strings work in both front ends; the selfhost `desugar_fstring`
+also indexed its spec list by the part index, which read past the end
+whenever a literal prefix preceded a spec — fixed and pinned by that same
+parity case.
 
 ## [0.55.0-snapshot-5] - 2026-11-16
 
