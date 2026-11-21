@@ -5,6 +5,63 @@ minor bumps while pre-1.0: each minor version is a language milestone.
 
 ## [Unreleased]
 
+### Comprehensions (`[e for v in a]` / `{k: v for v in src if p}`)
+
+Closes E6 of `docs/language-gaps.md`. Two forms, each with a type that is a
+pure function of its inputs:
+
+- **List comprehension** `[expr for v in arr]` over a fixed array yields
+  `[U; N]` — the SOURCE's length is part of the result's type, so it takes
+  **no filter** (a filtered length has no type to return; the diagnostic
+  says so and points at the dict form).
+- **Dict comprehension** `{key: value for v in src if cond}` may iterate an
+  array, a dict (its keys, insertion order) or a string (its bytes, as
+  one-byte strings), filters with a `bool`, requires **string keys**, and
+  lets a repeated key overwrite the earlier value.
+
+The loop variable must be a **fresh name** in the function (the enclosing
+name would be shadowed, and Aoxn has no shadowing). A comprehension body
+may read any local of the enclosing function — captured by value into the
+generated helper, including a function pointer (callee as a value) and a
+NARROWED nullable (captured as its payload). Sources are limited to things
+whose length is in a type: `range(...)` is a named parse error, and so is a
+second `for` clause (nest a comprehension instead).
+
+In the generated C a comprehension is an expression, and C has no
+statement-expression, so each SITE becomes one `static` helper
+(`ax_comp_<n>`, numbered by a first-use counter) that takes the source BY
+VALUE plus its captured locals (sorted by name) and returns the array or
+the dict handle. The CALL is emitted where the comprehension appears, so
+evaluation order, short-circuiting and untaken branches behave exactly as
+written, and the source expression is evaluated once. Every prototype is
+emitted before every definition, which is what makes a nested comprehension
+(whose outer body calls the inner helper) compile. A raise inside the body
+or filter stops the helper at the pending error; the enclosing statement's
+existing check performs the hop. The check is emitted on the same condition
+the error slot is, so a program with no raiser still compiles.
+
+Names come from a counter and captured locals are name-sorted, so the C
+text is byte-identical across processes (pinned by
+`comprehension_c_text_is_stable_across_processes`). No new C text reaches a
+program without a comprehension, so the selfhost fixed point is unchanged;
+`selfhost/` does not parse `for` inside a display and rejects it cleanly
+(see `docs/selfhost.md`).
+
+Grammar: `[expr for NAME in expr]` (no filter) and
+`{key: expr for NAME in expr [if expr]}`. Pins in `tests/pipeline.rs`
+(`comprehension_maps_an_array`,
+`comprehension_captures_locals_fn_pointers_and_narrowed_values`,
+`comprehension_elements_may_be_structs_strings_and_arrays`,
+`comprehension_inside_a_generic_function`,
+`dict_comprehension_over_array_dict_and_string`,
+`comprehension_result_flows_into_stdlib_calls`,
+`comprehension_body_raise_is_caught`,
+`comprehensions_reject_unsupported_shapes`).
+
+Also fixes a W001 false positive: calling a function-pointer LOCAL counts as
+reading it, so `f: fn(int) -> int = twice` followed by `f(x)` no longer
+warns "unused variable".
+
 ### Tuples and multiple return values (`(a, b)` / `a, b = f()`)
 
 A function can now return more than one value, and a binding can destructure

@@ -954,6 +954,81 @@ impl<'a> Tc<'a> {
                 }
                 Ok(Type::Tuple(tys))
             }
+            Expr::Comp { dict, key, expr, var, iter, cond, pos } => {
+                // `[e for v in a]` / `{k: v for v in src [if p]}` (unreleased)
+                let st = self.check_expr(iter, scopes)?;
+                let (elem_ty, len) = match &st {
+                    Type::Array { elem, len } => ((**elem).clone(), Some(*len)),
+                    Type::Dict(_) | Type::Str if *dict => (Type::Str, None),
+                    other => {
+                        let what = if *dict { "an array, a dict or a string" } else { "an array" };
+                        return Err(self.err(pos.line, pos.col, format!("a comprehension iterates {what}, found {other}")));
+                    }
+                };
+                if cond.is_some() && !*dict {
+                    return Err(self.err(
+                        pos.line,
+                        pos.col,
+                        "a list comprehension cannot filter: an array's length is part of its type, so `[x for x in a if p]` has no type to return (use a dict comprehension or an explicit loop)",
+                    ));
+                }
+                if scopes.contains_key(var) {
+                    return Err(self.err(
+                        pos.line,
+                        pos.col,
+                        format!("the comprehension variable '{var}' is already declared in this function; give it a fresh name"),
+                    ));
+                }
+                scopes.insert(var.clone(), elem_ty.clone());
+                let body_ty: Result<Type, Diag> = if *dict {
+                    match key.as_deref() {
+                        Some(k) => match self.check_expr(k, scopes) {
+                            Err(e) => Err(e),
+                            Ok(kt) if kt != Type::Str => Err(self.err(
+                                k.pos().line,
+                                k.pos().col,
+                                format!("dict comprehension keys must be strings, found {kt}"),
+                            )),
+                            Ok(_) => match self.check_expr(expr, scopes) {
+                                Err(e) => Err(e),
+                                Ok(vt) if vt == Type::Void || vt == Type::None => Err(self.err(
+                                    expr.pos().line,
+                                    expr.pos().col,
+                                    format!("a dict cannot hold a {vt} value"),
+                                )),
+                                Ok(vt) => Ok(Type::Dict(Box::new(vt))),
+                            },
+                        },
+                        None => Err(self.err(pos.line, pos.col, "internal: dict comprehension without a key")),
+                    }
+                } else {
+                    match self.check_expr(expr, scopes) {
+                        Err(e) => Err(e),
+                        Ok(t) if t == Type::Void || t == Type::None => Err(self.err(
+                            expr.pos().line,
+                            expr.pos().col,
+                            format!("a {t} cannot be a list element"),
+                        )),
+                        Ok(t) => Ok(Type::Array { elem: Box::new(t), len: len.expect("array source") }),
+                    }
+                };
+                let cond_ok = match (body_ty.is_ok(), cond.as_deref()) {
+                    (true, Some(c)) => match self.check_expr(c, scopes) {
+                        Err(e) => Err(e),
+                        Ok(t) if t != Type::Bool => Err(self.err(
+                            c.pos().line,
+                            c.pos().col,
+                            format!("a comprehension filter must be bool, found {t}"),
+                        )),
+                        Ok(_) => Ok(()),
+                    },
+                    _ => Ok(()),
+                };
+                scopes.remove(var);
+                let ty = body_ty?;
+                cond_ok?;
+                Ok(ty)
+            }
             Expr::ArrayRep { elem, count, pos, .. } => {
                 if *count == 0 {
                     return Err(self.err(pos.line, pos.col, "array replication count must be positive"));
@@ -1324,6 +1399,10 @@ impl<'a> Tc<'a> {
                     }
                     // indirect call through a function pointer (v0.40.0)
                     if let Some(Type::FnPtr { ret, params }) = scopes.get(name).cloned() {
+                        // W001: calling through the local READS it (a call
+                        // spells the callee as a bare name, so the `Var` arm
+                        // never sees it)
+                        self.local_reads.insert(name.clone());
                         if args.iter().any(|a| a.name.is_some()) {
                             return Err(self.err(pos.line, pos.col, format!("function pointer '{name}' takes positional arguments only")));
                         }
@@ -1831,6 +1910,10 @@ fn first_var_naming(e: &Expr, is_forbidden: &dyn Fn(&str) -> bool) -> Option<Str
         Expr::Field { obj, .. } => first_var_naming(obj, is_forbidden),
         Expr::ArrayLit { elems, .. } => elems.iter().find_map(|x| first_var_naming(x, is_forbidden)),
         Expr::TupleLit { elems, .. } => elems.iter().find_map(|x| first_var_naming(x, is_forbidden)),
+        Expr::Comp { key, expr, iter, cond, .. } => first_var_naming(iter, is_forbidden)
+            .or_else(|| key.as_deref().and_then(|k| first_var_naming(k, is_forbidden)))
+            .or_else(|| first_var_naming(expr, is_forbidden))
+            .or_else(|| cond.as_deref().and_then(|c| first_var_naming(c, is_forbidden))),
         Expr::ArrayRep { elem, .. } => first_var_naming(elem, is_forbidden),
         Expr::DictLit { entries, .. } => entries
             .iter()
@@ -1935,6 +2018,16 @@ fn subst_expr(e: &mut Expr, subst_t: &HashMap<String, Type>, n: Option<usize>, l
             }
         }
         Expr::ArrayRep { elem, .. } => subst_expr(elem, subst_t, n, len_param)?,
+        Expr::Comp { key, expr, iter, cond, .. } => {
+            subst_expr(iter, subst_t, n, len_param)?;
+            if let Some(k) = key {
+                subst_expr(k, subst_t, n, len_param)?;
+            }
+            subst_expr(expr, subst_t, n, len_param)?;
+            if let Some(c) = cond {
+                subst_expr(c, subst_t, n, len_param)?;
+            }
+        }
         Expr::DictLit { entries, .. } => {
             for (k, v) in entries {
                 subst_expr(k, subst_t, n, len_param)?;

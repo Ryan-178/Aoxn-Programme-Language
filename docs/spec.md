@@ -1,4 +1,4 @@
-# Aoxn Language Specification (v0.55.0, plus unreleased sizeof/addr_of and tuples)
+# Aoxn Language Specification (v0.55.0, plus unreleased sizeof/addr_of, tuples and comprehensions)
 
 Aoxn is an AI-native, statically typed, ahead-of-time compiled language with a
 Python-style syntax. Design goals: minimal syntax, explicit semantics, native
@@ -484,6 +484,8 @@ primary := INT | FLOAT | STRING | True | False | FSTRING
          | IDENT ("(" args ")")? | "(" expr ")"
          | "(" expr "," [expr ("," expr)* [","]] ")"   # tuple literal (unreleased)
          | "[" expr ("," expr)* "]" | "[" "]"      # array literal / index
+         | "[" expr "for" IDENT "in" expr "]"      # list comprehension (unreleased)
+         | "{" expr ":" expr "for" IDENT "in" expr ["if" expr] "}"  # dict comprehension
 postfix := primary ("(" args ")" | "[" expr "]" | "[" expr? ":" expr? "]" | "." IDENT)*
 ```
 
@@ -926,6 +928,48 @@ def main() -> int:
   reports a clean parse error); tuple-free programs emit unchanged C, so the
   fixed point is unaffected.
 
+## Comprehensions (unreleased)
+
+A list comprehension maps a fixed array into a new array of the same length;
+a dict comprehension collects entries into a fresh dict. Neither form
+introduces a new type: the result is an ordinary `[U; N]` or `dict[V]`.
+
+```Aoxn
+a = [1, 2, 3]
+squares = [x * x for x in a]              # [int; 3]
+d = {str(x): x * x for x in a if x > 1}   # dict[int] with keys "2", "3"
+ks = {k: 1 for k in d}                    # a dict iterates its KEYS
+```
+
+- **List form**: `[expr for v in arr]`. The source must be a fixed array, and
+  the result keeps its **length**, so the list form takes **no filter** —
+  a filtered length is not in any type. Filtering a list is a named error
+  that points at the dict form or an explicit loop.
+- **Dict form**: `{key: expr for v in src [if cond]}`. The source may be an
+  array (elements), a dict (keys, insertion order) or a string (bytes, each
+  a one-byte string). Keys must be `string`; the filter must be `bool`; a
+  repeated key overwrites the earlier value. Output order is source order.
+- **The loop variable must be a fresh name** in the function: Aoxn has no
+  shadowing, so rebinding an existing local is a named error.
+- The body may read any local of the enclosing function. The generated
+  helper takes each captured local **by value** — including a function
+  pointer (the callee is a captured value) and a **narrowed** nullable
+  (captured as its payload). The source expression is evaluated **once**.
+- **Sources whose length is not in a type are rejected by name**:
+  `range(...)` is a parse error, and so is a second `for` clause (nest a
+  comprehension instead).
+- Lowering: one `static` helper per SITE (`ax_comp_<n>`, first-use counter),
+  whose CALL is emitted where the comprehension appears, so evaluation
+  order, short-circuiting and untaken branches behave as written. Prototypes
+  are all emitted before definitions, which is what makes nesting work. A
+  raise in the body or filter stops the helper at the pending error; the
+  enclosing statement's check hops to the handler.
+- The helper names derive from a counter and captured locals are sorted by
+  name, so the C text is reproducible across processes (no addresses).
+- The self-hosted compiler does not parse `for` inside a display and reports
+  a clean parse error; programs without comprehensions emit unchanged C, so
+  the fixed point is unaffected.
+
 ## Platform query
 
 - `target_os() -> string` - compile-time platform query, folded to a
@@ -1066,11 +1110,13 @@ the program: math (`abs/min/max/clamp/pow_i/gcd/lcm/isqrt/is_prime/hypot`
 Ordered by how much they cost the language's Python parity.
 1. ~~Remaining Python operators and forms~~ — **`**` shipped in v0.51.0**
    (right-associative power; `-2 ** 2` is `-4`); **`in` / `not in` shipped in
-   v0.51.2** (array element, string substring, dict key).
+   v0.51.2** (array element, string substring, dict key); **list/dict
+   comprehensions** shipped (unreleased) — the list form keeps the source's
+   length (so no filter), the dict form takes `if` and string keys.
 2. ~~Conditional expressions~~ — **`a if c else b` shipped in v0.51.0** (both
-   branches must have the same type). Still open: multiple assignment /
-   unpacking (`a, b = f()`), which needs tuple or multi-target support in the
-   AST.
+   branches must have the same type). ~~Multiple assignment / unpacking~~
+   **`a, b = f()` shipped (unreleased)** on tuple types `(A, B)`, which are
+   also return/parameter types; element reads take a literal index.
 3. ~~Default parameter values~~ — **`def f(x: int = 3)` shipped in v0.51.0**
    (materialized at the call site).
 4. Package layout (`aoxn.toml` / legacy `aoxn.json` `exports` conventions are already honoured;

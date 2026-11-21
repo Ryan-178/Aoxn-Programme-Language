@@ -15,7 +15,7 @@ repo IS the
 compiler (Rust workspace: root `aoxn` crate + `crates/aoxn-pkg`).
 Language sources use the `.ax` extension. Language rules live in
 `docs/spec.md` (platform policy: `docs/platform-support.md`) 鈥?keep it in sync with `src/parser.rs` + `src/typecheck.rs`
-when the grammar changes. **v0.55.0 snapshot 5 adds a Rust bridge**: `import "./x.rs"` compiles a self-contained Rust file with rustc and binds its `#[no_mangle] extern "C"` functions as ordinary externs (`src/rust.rs`, `docs/rust-interop.md`); rustc is an optional external toolchain like clang. **The unreleased batch adds `sizeof(T)` + `addr_of(x)`** (gap A2): compile-time type sizes and live lvalue addresses, the prerequisite for struct containers; Rust-compiler-only, stage-2 rejects both forms (see the language card's Builtins and `docs/selfhost.md`). **The same batch adds tuples + multiple assignment** (`(A, B)` types, `a, b = f()`), also Rust-compiler-only (stage-2 has no tuple syntax and rejects it cleanly); see the language card's Types/Statements/Expressions and `docs/spec.md` §Tuples. **Writing or editing `.ax` code: start from the
+when the grammar changes. **v0.55.0 snapshot 5 adds a Rust bridge**: `import "./x.rs"` compiles a self-contained Rust file with rustc and binds its `#[no_mangle] extern "C"` functions as ordinary externs (`src/rust.rs`, `docs/rust-interop.md`); rustc is an optional external toolchain like clang. **The unreleased batch adds `sizeof(T)` + `addr_of(x)`** (gap A2): compile-time type sizes and live lvalue addresses, the prerequisite for struct containers; Rust-compiler-only, stage-2 rejects both forms (see the language card's Builtins and `docs/selfhost.md`). **The same batch adds tuples + multiple assignment** (`(A, B)` types, `a, b = f()`), also Rust-compiler-only (stage-2 has no tuple syntax and rejects it cleanly); see the language card's Types/Statements/Expressions and `docs/spec.md` §Tuples. **The same batch adds list/dict comprehensions** (`[e for v in a]`, `{k: v for v in src if p}`), also Rust-compiler-only (stage-2 rejects `for` inside a display cleanly); see the language card's Expressions and `docs/spec.md` §Comprehensions. **Writing or editing `.ax` code: start from the
 language card below** (`## Aoxn language card`) -- the whole surface,
 condensed from `docs/spec.md` + the stdlib sources, so a correct program can
 be written first-shot WITHOUT probe files. Update `CHANGELOG.md` on every version bump.
@@ -399,6 +399,16 @@ def main() -> int:            # FIXED shape: no parameters, -> int or -> void
   `t[0]` (`t[-1]` is the last). There is NO tuple equality/print/iteration/
   slicing, and `t[0] = v` is rejected -- a tuple carries values, it is not
   a mutable record.
+- Comprehensions (unreleased): `[expr for v in arr]` maps a FIXED array and
+  keeps its LENGTH, so the list form takes NO filter (a filtered length is
+  not in any type); `{key: expr for v in src [if cond]}` builds a dict from
+  an array (elements), a dict (its KEYS) or a string (bytes), needs STRING
+  keys and a `bool` filter, and a repeated key overwrites the earlier value.
+  The loop variable must be a FRESH name (no shadowing); the source is
+  evaluated ONCE; `range(...)` and a second `for` clause are named errors
+  (nest a comprehension instead). The body may read enclosing locals
+  (captured BY VALUE -- fn pointers and narrowed nullables included), and a
+  raise in it unwinds normally.
 - f-strings: `f"n={n}"` embeds int/float/bool/string; `{{`/`}}` are literal
   braces. **Format specifiers (unreleased)** on int/float:
   `f"{x:.2f}"`, `f"{x:+10.2f}"`, `f"{x:g}"`,
@@ -585,7 +595,7 @@ if target_os() == "windows":
 Closures/lambdas; classes/methods/inheritance; enums, tagged unions, `Any`
 (the only union is `T | None`); tuple PACKING/star-args (`f(*(a, b))`,
 `a, *rest = t`), nested destructuring (`(a, b), c = t`), tuple equality;
-set literals; comprehensions; generators/`yield`; `with`;
+set literals; generators/`yield`; `with`;
 decorators; a `char` type; implicit numeric conversions; truthiness
 (conditions must be `bool`); `??`; augmented
 bitwise assignment; unsigned ints; keyword
@@ -1288,7 +1298,8 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   `--tailwind`, Rust `.rs` imports (same loader-level boundary as CSS),
   namespace/selective imports, tuples (the stage-2 parser has no tuple
   syntax and rejects it cleanly, so stage-2 never emits different C for a
-  tuple program), build-command caching (run only),
+  tuple program), comprehensions (stage-2 rejects `for` inside a display the
+  same way), build-command caching (run only),
   and full doctor parity (no installed-root/examples rows, no arch in
   `platform`, smoke compiles but does not capture child output). Imported
   symbols are reported against the entry path because the loader has no file

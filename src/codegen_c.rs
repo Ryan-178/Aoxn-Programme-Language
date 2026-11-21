@@ -27,7 +27,7 @@
 //! mangled generic names (`sort.i.8` -> `sort_i_8`) can theoretically collide
 //! with a user function of the same spelling.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 use crate::ast::*;
@@ -126,6 +126,7 @@ fn scan_fn_body(f: &FnDecl) -> (bool, Vec<String>) {
     fn walk_stmt(s: &Stmt, raised: &mut bool, calls: &mut Vec<String>) {
         match s {
             Stmt::Let { expr, .. } | Stmt::Assign { expr, .. } => walk_expr(expr, raised, calls),
+            Stmt::MultiLet { expr, .. } => walk_expr(expr, raised, calls),
             Stmt::ExprStmt { expr } => walk_expr(expr, raised, calls),
             Stmt::Return { expr: Some(e), .. } => walk_expr(e, raised, calls),
             Stmt::Raise { .. } => *raised = true,
@@ -192,9 +193,43 @@ fn scan_fn_body(f: &FnDecl) -> (bool, Vec<String>) {
                 walk_expr(else_expr, raised, calls);
             }
             Expr::Field { obj, .. } => walk_expr(obj, raised, calls),
-            Expr::ArrayLit { elems, .. } => {
+            Expr::ArrayLit { elems, .. } | Expr::TupleLit { elems, .. } => {
                 for e in elems {
                     walk_expr(e, raised, calls);
+                }
+            }
+            Expr::ArrayRep { elem, .. } => walk_expr(elem, raised, calls),
+            Expr::DictLit { entries, .. } => {
+                for (k, v) in entries {
+                    walk_expr(k, raised, calls);
+                    walk_expr(v, raised, calls);
+                }
+            }
+            Expr::StructLit { fields, .. } => {
+                for (_, v) in fields {
+                    walk_expr(v, raised, calls);
+                }
+            }
+            // A comprehension lowers to a generated helper, so a raise in its
+            // body unwinds THROUGH the enclosing function just like an inline
+            // call. Calls named in the body are recorded as usual; a call
+            // through the loop variable names an unknown function (it can be a
+            // function pointer carried by the source array), so it counts as a
+            // direct raise.
+            Expr::Comp { key, expr, iter, cond, var, .. } => {
+                walk_expr(iter, raised, calls);
+                if let Some(k) = key {
+                    walk_expr(k, raised, calls);
+                }
+                walk_expr(expr, raised, calls);
+                if let Some(c) = cond {
+                    walk_expr(c, raised, calls);
+                }
+                if expr_calls_name(key.as_deref(), var)
+                    || expr_calls_name(Some(expr), var)
+                    || expr_calls_name(cond.as_deref(), var)
+                {
+                    *raised = true;
                 }
             }
             _ => {}
@@ -216,6 +251,174 @@ fn scan_fn_body(f: &FnDecl) -> (bool, Vec<String>) {
         }
     }
     (raised, calls)
+}
+
+/// Pre-order walk over every expression node, descending into all of them.
+/// Used by the raise analysis for the two questions it cannot answer from
+/// names alone (`expr_calls_name` / `expr_has_call`).
+fn visit_expr(e: &Expr, f: &mut impl FnMut(&Expr)) {
+    f(e);
+    match e {
+        Expr::Call { args, .. } => {
+            for a in args {
+                visit_expr(&a.value, f);
+            }
+        }
+        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => visit_expr(expr, f),
+        Expr::Binary { lhs, rhs, .. } => {
+            visit_expr(lhs, f);
+            visit_expr(rhs, f);
+        }
+        Expr::Index { arr, idx, .. } => {
+            visit_expr(arr, f);
+            visit_expr(idx, f);
+        }
+        Expr::Slice { base, from, to, .. } => {
+            visit_expr(base, f);
+            if let Some(x) = from {
+                visit_expr(x, f);
+            }
+            if let Some(x) = to {
+                visit_expr(x, f);
+            }
+        }
+        Expr::IfExp { then_expr, cond, else_expr, .. } => {
+            visit_expr(then_expr, f);
+            visit_expr(cond, f);
+            visit_expr(else_expr, f);
+        }
+        Expr::Field { obj, .. } => visit_expr(obj, f),
+        Expr::ArrayLit { elems, .. } | Expr::TupleLit { elems, .. } => {
+            for x in elems {
+                visit_expr(x, f);
+            }
+        }
+        Expr::ArrayRep { elem, .. } => visit_expr(elem, f),
+        Expr::DictLit { entries, .. } => {
+            for (k, v) in entries {
+                visit_expr(k, f);
+                visit_expr(v, f);
+            }
+        }
+        Expr::StructLit { fields, .. } => {
+            for (_, v) in fields {
+                visit_expr(v, f);
+            }
+        }
+        Expr::Comp { key, expr, iter, cond, .. } => {
+            visit_expr(iter, f);
+            if let Some(k) = key {
+                visit_expr(k, f);
+            }
+            visit_expr(expr, f);
+            if let Some(c) = cond {
+                visit_expr(c, f);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// does `e` (or anything inside it) call `name`?
+fn expr_calls_name(e: Option<&Expr>, name: &str) -> bool {
+    let mut hit = false;
+    if let Some(e) = e {
+        visit_expr(e, &mut |x| {
+            if matches!(x, Expr::Call { name: n, .. } if n == name) {
+                hit = true;
+            }
+        });
+    }
+    hit
+}
+
+/// does any expression inside `e` make a call at all?
+fn expr_has_call(e: &Expr) -> bool {
+    let mut hit = false;
+    visit_expr(e, &mut |x| {
+        if matches!(x, Expr::Call { .. }) {
+            hit = true;
+        }
+    });
+    hit
+}
+
+/// The local names an expression reads without binding them. A comprehension
+/// helper takes exactly these as parameters (sorted, so two runs of the same
+/// compiler emit the same signature). Nested comprehensions bind their own
+/// loop variable, which is why the traversal threads a `bound` stack.
+fn collect_free(e: &Expr, bound: &mut Vec<String>, locals: &Locals, out: &mut BTreeSet<String>) {
+    match e {
+        Expr::Var { name, .. } => {
+            if !bound.iter().any(|b| b == name) && locals.contains_key(name) {
+                out.insert(name.clone());
+            }
+        }
+        Expr::Call { name, args, .. } => {
+            // an indirect call spells a LOCAL function pointer as the callee,
+            // so that name is a free variable unless the comprehension binds it
+            if !bound.iter().any(|b| b == name) && locals.contains_key(name) {
+                out.insert(name.clone());
+            }
+            for a in args {
+                collect_free(&a.value, bound, locals, out);
+            }
+        }
+        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => collect_free(expr, bound, locals, out),
+        Expr::Binary { lhs, rhs, .. } => {
+            collect_free(lhs, bound, locals, out);
+            collect_free(rhs, bound, locals, out);
+        }
+        Expr::Index { arr, idx, .. } => {
+            collect_free(arr, bound, locals, out);
+            collect_free(idx, bound, locals, out);
+        }
+        Expr::Slice { base, from, to, .. } => {
+            collect_free(base, bound, locals, out);
+            if let Some(x) = from {
+                collect_free(x, bound, locals, out);
+            }
+            if let Some(x) = to {
+                collect_free(x, bound, locals, out);
+            }
+        }
+        Expr::IfExp { then_expr, cond, else_expr, .. } => {
+            collect_free(then_expr, bound, locals, out);
+            collect_free(cond, bound, locals, out);
+            collect_free(else_expr, bound, locals, out);
+        }
+        Expr::Field { obj, .. } => collect_free(obj, bound, locals, out),
+        Expr::ArrayLit { elems, .. } | Expr::TupleLit { elems, .. } => {
+            for x in elems {
+                collect_free(x, bound, locals, out);
+            }
+        }
+        Expr::ArrayRep { elem, .. } => collect_free(elem, bound, locals, out),
+        Expr::DictLit { entries, .. } => {
+            for (k, v) in entries {
+                collect_free(k, bound, locals, out);
+                collect_free(v, bound, locals, out);
+            }
+        }
+        Expr::StructLit { fields, .. } => {
+            for (_, v) in fields {
+                collect_free(v, bound, locals, out);
+            }
+        }
+        Expr::Comp { key, expr, iter, cond, var, .. } => {
+            collect_free(iter, bound, locals, out);
+            if let Some(k) = key {
+                collect_free(k, bound, locals, out);
+            }
+            bound.push(var.clone());
+            collect_free(expr, bound, locals, out);
+            if let Some(c) = cond {
+                collect_free(c, bound, locals, out);
+            }
+            bound.pop();
+        }
+        _ => {}
+    }
 }
 
 /// Compile the typechecked program to a native object file through C text +
@@ -340,6 +543,13 @@ struct GenC<'a> {
     rep_sites: BTreeMap<usize, usize>,
     /// next replication helper number (`ax_rep_0`, `ax_rep_1`, ...)
     rep_count: usize,
+    /// one helper per comprehension SITE (unreleased): first-use number ->
+    /// (prototype, definition). A comprehension is an expression and C has no
+    /// statement-expression, so each site becomes a static function taking
+    /// the source BY VALUE plus its captured locals. Numbered from a counter
+    /// and iterated in numeric order, so the text is reproducible.
+    comp_helpers: BTreeMap<usize, (String, String)>,
+    comp_count: usize,
     reserved: HashSet<String>,
     /// variables narrowed by `is None` (v0.40.0): name -> the type the CURRENT
     /// branch sees. Latched while a branch is emitted, popped after it.
@@ -407,6 +617,8 @@ impl<'a> GenC<'a> {
             rep_helpers: BTreeMap::new(),
             rep_sites: BTreeMap::new(),
             rep_count: 0,
+            comp_helpers: BTreeMap::new(),
+            comp_count: 0,
             narrowed: HashMap::default(),
             fn_raises: compute_fn_raises(program),
             catch_labels: Vec::new(),
@@ -917,6 +1129,22 @@ impl<'a> GenC<'a> {
             s.push_str(";\n");
         }
         s.push('\n');
+        // comprehension helpers (unreleased) go after the program prototypes
+        // (their bodies call user functions) and before the bodies. Every
+        // PROTOTYPE is emitted before every DEFINITION: a nested comprehension
+        // registers its own helper while the outer one is being built, so the
+        // outer body may name a helper defined after it.
+        for (_, (proto, _)) in &self.comp_helpers {
+            s.push_str(proto);
+            s.push('\n');
+        }
+        if !self.comp_helpers.is_empty() {
+            s.push('\n');
+        }
+        for (_, (_, body)) in &self.comp_helpers {
+            s.push_str(body);
+            s.push('\n');
+        }
         for b in &bodies {
             s.push_str(b);
             s.push('\n');
@@ -1290,7 +1518,7 @@ impl<'a> GenC<'a> {
 
 /// the element type of an array literal, mirroring the checker's join:
 /// `[1, None, 3]` is `[int | None; 3]` (v0.40.0)
-    fn array_elem_type(g: &GenC, elems: &[Expr]) -> Result<Type, String> {
+    fn array_elem_type(g: &mut GenC, elems: &[Expr]) -> Result<Type, String> {
         let first = g.hint(&elems[0])?;
         if elems.len() == 1 {
             return Ok(first);
@@ -1421,6 +1649,26 @@ fn block_returns_all(block: &Block) -> bool {
             Expr::Field { obj, .. } => self.expr_may_raise(obj),
             Expr::ArrayLit { elems, .. } => elems.iter().any(|e| self.expr_may_raise(e)),
             Expr::TupleLit { elems, .. } => elems.iter().any(|e| self.expr_may_raise(e)),
+            Expr::ArrayRep { elem, .. } => self.expr_may_raise(elem),
+            Expr::DictLit { entries, .. } => entries
+                .iter()
+                .any(|(k, v)| self.expr_may_raise(k) || self.expr_may_raise(v)),
+            Expr::StructLit { fields, .. } => fields.iter().any(|(_, v)| self.expr_may_raise(v)),
+            // A comprehension becomes a helper CALL. Any call inside its body
+            // is treated as raising: the loop variable is bound only inside
+            // the helper, so a call spelled with it (`[f(x) for f in fs]`) is
+            // invisible to this scan and could target any function pointer.
+            // Over-approximating only adds a `if (ax_err_pending) goto` after
+            // such a statement, which is always safe.
+            Expr::Comp { key, expr, iter, cond, .. } => {
+                self.expr_may_raise(iter)
+                    || key.as_deref().is_some_and(|k| self.expr_may_raise(k))
+                    || self.expr_may_raise(expr)
+                    || cond.as_deref().is_some_and(|c| self.expr_may_raise(c))
+                    || expr_has_call(expr)
+                    || key.as_deref().is_some_and(expr_has_call)
+                    || cond.as_deref().is_some_and(expr_has_call)
+            }
             _ => false,
         }
     }
@@ -1449,6 +1697,173 @@ fn block_returns_all(block: &Block) -> bool {
             self.line(indent, &format!("{into} = {tmp};"));
         }
         Ok(())
+    }
+
+    /// `[e for v in src]` / `{k: e for v in src [if c]}` (unreleased).
+    ///
+    /// A comprehension is an EXPRESSION and C has no statement-expression, so
+    /// the loop becomes a generated static helper: the source is taken BY
+    /// VALUE (an array copy is the language's own contract) plus one
+    /// parameter per captured local, sorted by name so the C text is
+    /// reproducible across processes. The CALL is emitted where the
+    /// comprehension appears, so evaluation order, short-circuiting and
+    /// untaken conditional branches behave exactly as written -- hoisting the
+    /// loop above the statement would run it under branches that were not
+    /// taken.
+    fn build_comp(
+        &mut self,
+        dict: bool,
+        key: Option<&Expr>,
+        val: &Expr,
+        var: &str,
+        iter: &Expr,
+        cond: Option<&Expr>,
+    ) -> Result<Type, String> {
+        // 1. source type and text, both resolved in the ENCLOSING scope
+        let src_ty = self.hint(iter)?;
+        let elem_ty = match &src_ty {
+            Type::Array { elem, .. } => (**elem).clone(),
+            Type::Dict(_) | Type::Str if dict => Type::Str,
+            other => return Err(format!("internal error: a comprehension iterates {other} at codegen")),
+        };
+        let (src_text, _) = self.emit_expr(iter)?;
+
+        // 2. captured locals: the free names of the body, minus the loop variable
+        let mut free = BTreeSet::new();
+        let mut bound: Vec<String> = vec![var.to_string()];
+        if let Some(k) = key {
+            collect_free(k, &mut bound, &self.locals, &mut free);
+        }
+        collect_free(val, &mut bound, &self.locals, &mut free);
+        if let Some(c) = cond {
+            collect_free(c, &mut bound, &self.locals, &mut free);
+        }
+        let mut caps: Vec<(String, Type, String)> = Vec::new();
+        for name in &free {
+            let t = self
+                .locals
+                .get(name)
+                .cloned()
+                .ok_or_else(|| format!("internal error: comprehension capture '{name}' is not a local"))?;
+            // a narrowed Opt is captured as the value the branch SEES
+            let (cap_ty, arg) = match (self.narrowed.get(name), &t) {
+                (Some(nt), Type::Opt(_)) if *nt == Type::None => (Type::None, "0LL".to_string()),
+                (Some(nt), Type::Opt(_)) => (nt.clone(), format!("{}.value", self.c_ident(name))),
+                _ => (t, self.c_ident(name)),
+            };
+            caps.push((name.clone(), cap_ty, arg));
+        }
+
+        // 3. emit the body in the helper's scope: captures + loop variable
+        let mut helper_locals: Locals = HashMap::default();
+        for (name, ty, _) in &caps {
+            helper_locals.insert(name.clone(), ty.clone());
+        }
+        helper_locals.insert(var.to_string(), elem_ty.clone());
+        let saved_locals = std::mem::replace(&mut self.locals, helper_locals);
+        let saved_narrow = std::mem::take(&mut self.narrowed);
+        let built = (|| -> Result<(String, String, String, Type, bool, bool), String> {
+            let key_text = match key {
+                Some(k) => {
+                    let (t, kt) = self.emit_expr(k)?;
+                    if kt != Type::Str {
+                        return Err(format!("internal error: dict comprehension key is {kt} at codegen"));
+                    }
+                    t
+                }
+                None => String::new(),
+            };
+            let (val_text, vt) = self.emit_expr(val)?;
+            let cond_text = match cond {
+                Some(c) => self.emit_expr(c)?.0,
+                None => String::new(),
+            };
+            // The pending-error early return reads `ax_err_pending`, which
+            // exists only when the program can raise (a raise statement, a
+            // dict read, or a call to a raiser). A program with none of those
+            // has no slot to test, so the check follows the slot's own
+            // condition instead of the (conservative) may-raise scan.
+            let slot = self.used_err
+                || !self.fn_raises.is_empty()
+                || !self.dict_structs.is_empty();
+            let cond_raise = cond.is_some_and(|c| self.expr_may_raise(c)) && slot;
+            let body_raise = cond_raise
+                || (self.expr_may_raise(val) || key.is_some_and(|k| self.expr_may_raise(k))) && slot;
+            let ret_ty = if dict {
+                Type::Dict(Box::new(vt))
+            } else {
+                match &src_ty {
+                    Type::Array { len, .. } => Type::Array { elem: Box::new(vt), len: *len },
+                    _ => return Err("internal error: list comprehension over a non-array at codegen".into()),
+                }
+            };
+            Ok((key_text, val_text, cond_text, ret_ty, body_raise, cond_raise))
+        })();
+        self.locals = saved_locals;
+        self.narrowed = saved_narrow;
+        let (key_text, val_text, cond_text, ret_ty, body_raise, cond_raise) = built?;
+
+        // 4. the helper itself
+        let n = self.comp_count;
+        self.comp_count = n + 1;
+        let fname = format!("ax_comp_{n}");
+        let mut params = vec![self.c_decl(&src_ty, "ax_src")];
+        for (name, ty, _) in &caps {
+            let ident = self.c_ident(name);
+            params.push(self.c_decl(ty, &ident));
+        }
+        let decl = self.c_decl(&ret_ty, &fname);
+        let rdecl = self.c_decl(&ret_ty, "ax_r");
+        let vident = self.c_ident(var);
+        let vdecl = self.c_decl(&elem_ty, &vident);
+        let tok = match &ret_ty {
+            Type::Dict(v) => Self::type_token(v),
+            _ => String::new(),
+        };
+        let mut body = format!("static {decl}({}) {{\n    {rdecl};\n", params.join(", "));
+        if dict {
+            body.push_str(&format!("    ax_r = ax_dict_new_{tok}();\n"));
+        }
+        body.push_str(&format!("    long long ax_i;\n    {vdecl};\n"));
+        let (bound_expr, elem_text) = match &src_ty {
+            Type::Array { len, .. } => (format!("{len}LL"), "ax_src.data[ax_i]".to_string()),
+            Type::Dict(_) => ("ax_src->len".to_string(), "ax_src->keys[ax_i]".to_string()),
+            Type::Str => {
+                self.used_str_seq = true;
+                body.push_str("    long long ax_n = (long long)__builtin_strlen(ax_src);\n");
+                ("ax_n".to_string(), "ax_str_at(ax_src, ax_i)".to_string())
+            }
+            other => return Err(format!("internal error: iterating {other} in a comprehension")),
+        };
+        body.push_str(&format!("    for (ax_i = 0; ax_i < {bound_expr}; ax_i++) {{\n"));
+        body.push_str(&format!("        {vident} = {elem_text};\n"));
+        if cond.is_some() {
+            body.push_str(&format!("        int ax_ok = {cond_text};\n"));
+            if cond_raise {
+                body.push_str("        if (ax_err_pending) { return ax_r; }\n");
+            }
+            body.push_str("        if (!ax_ok) { continue; }\n");
+        }
+        if dict {
+            body.push_str(&format!("        ax_dict_set_{tok}(ax_r, {key_text}, {val_text});\n"));
+        } else {
+            body.push_str(&format!("        ax_r.data[ax_i] = {val_text};\n"));
+        }
+        if body_raise {
+            body.push_str("        if (ax_err_pending) { return ax_r; }\n");
+        }
+        body.push_str("    }\n    return ax_r;\n}\n");
+        let proto = format!("static {decl}({});", params.join(", "));
+        self.comp_helpers.insert(n, (proto, body));
+
+        // 5. the CALL, at the expression's own position
+        self.out.push_str(&format!("{fname}({src_text}"));
+        for (_, _, arg) in &caps {
+            self.out.push_str(", ");
+            self.out.push_str(arg);
+        }
+        self.out.push(')');
+        Ok(ret_ty)
     }
 
     fn emit_stmt_inner(&mut self, stmt: &Stmt, indent: usize) -> Result<(), String> {
@@ -2230,6 +2645,9 @@ fn block_returns_all(block: &Block) -> bool {
                 Ok(arr_ty)
             }
             Expr::DictLit { .. } => Err("internal error: dict literal outside a statement".into()),
+            Expr::Comp { dict, key, expr, var, iter, cond, .. } => {
+                self.build_comp(*dict, key.as_deref(), expr, var, iter, cond.as_deref())
+            }
             Expr::StructLit { name, fields, .. } => {
                 let iter = fields.iter().map(|(n, e)| (n, e));
                 self.emit_struct_construction(name, iter)
@@ -2995,7 +3413,49 @@ if matches!(op, Is | IsNot) {
 
     // ---- static type hint (mirror of codegen::Gen::type_hint) ----
 
-    fn hint(&self, expr: &Expr) -> Result<Type, String> {
+    /// Resolve the type of a comprehension (unreleased) by checking its body
+    /// with the loop variable bound. Used by `hint`; the emission itself goes
+    /// through `build_comp`.
+    fn comp_type(&mut self, dict: bool, key: Option<&Expr>, expr: &Expr, var: &str, iter: &Expr) -> Result<Type, String> {
+        let src = self.hint(iter)?;
+        let prev = self.locals.remove(var);
+        let saved_narrow = self.narrowed.remove(var);
+        let result = (|| {
+            let elem_ty = match &src {
+                Type::Array { elem, .. } => (**elem).clone(),
+                Type::Dict(_) | Type::Str if dict => Type::Str,
+                other => return Err(format!("internal error: a comprehension iterates {other} at codegen")),
+            };
+            // bind WITHOUT declaring: the loop variable is a field of the
+            // generated helper, never a local of the enclosing function
+            self.locals.insert(var.to_string(), elem_ty);
+            if let Some(k) = key {
+                let kt = self.hint(k)?;
+                if kt != Type::Str {
+                    return Err(format!("internal error: dict comprehension key is {kt} at codegen"));
+                }
+            }
+            let vt = self.hint(expr)?;
+            if dict {
+                Ok(Type::Dict(Box::new(vt)))
+            } else {
+                let Type::Array { len, .. } = src else {
+                    return Err("internal error: list comprehension over a non-array at codegen".into());
+                };
+                Ok(Type::Array { elem: Box::new(vt), len })
+            }
+        })();
+        self.locals.remove(var);
+        if let Some(t) = prev {
+            self.locals.insert(var.to_string(), t);
+        }
+        if let Some(t) = saved_narrow {
+            self.narrowed.insert(var.to_string(), t);
+        }
+        result
+    }
+
+    fn hint(&mut self, expr: &Expr) -> Result<Type, String> {
         match expr {
             Expr::Cast { to, .. } => Ok(to.clone()),
             Expr::SizeOf { .. } => Ok(Type::Int),
@@ -3138,6 +3598,9 @@ if matches!(op, Is | IsNot) {
                 Ok(Type::Array { elem: Box::new(elem), len: *count })
             }
             Expr::StructLit { name, .. } => Ok(Type::Struct(name.clone())),
+            Expr::Comp { dict, key, expr, var, iter, .. } => {
+                self.comp_type(*dict, key.as_deref(), expr, var, iter)
+            }
         }
     }
 }

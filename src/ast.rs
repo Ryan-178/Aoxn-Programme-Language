@@ -372,6 +372,26 @@ pub enum Expr {
     /// one-element parenthesised expression stays a plain expression. The
     /// type is structural (`Type::Tuple`), so no name is ever written.
     TupleLit { elems: Vec<Expr>, pos: Pos },
+    /// `[elem for v in src]` or `{key: value for v in src [if cond]}` — a
+    /// comprehension (unreleased). A list comprehension's length is part of
+    /// its TYPE, so it iterates a fixed array and takes no filter; a dict
+    /// comprehension is a heap handle and may iterate an array, a dict (its
+    /// keys, insertion order) or a string (its bytes), optionally filtered.
+    Comp {
+        /// `{...}` rather than `[...]`
+        dict: bool,
+        /// the dict KEY expression (dict form only); must be a string
+        key: Option<Box<Expr>>,
+        /// the element (list form) / value (dict form) expression
+        expr: Box<Expr>,
+        /// the loop variable, bound inside the comprehension only
+        var: String,
+        /// the source: an array (both forms), a dict or a string (dict form)
+        iter: Box<Expr>,
+        /// `if cond` — the optional filter (dict form only)
+        cond: Option<Box<Expr>>,
+        pos: Pos,
+    },
 }
 
 impl Expr {
@@ -393,7 +413,8 @@ impl Expr {
             | Expr::StructLit { pos, .. }
             | Expr::Cast { pos, .. }
             | Expr::SizeOf { pos, .. }
-            | Expr::TupleLit { pos, .. } => *pos,
+            | Expr::TupleLit { pos, .. }
+            | Expr::Comp { pos, .. } => *pos,
         }
     }
 

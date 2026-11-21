@@ -568,23 +568,42 @@ struct Ctx<'a> {
 fn collect_locals(blk: &Block, out: &mut HashSet<String>) {
     for s in &blk.stmts {
         match s {
-            Stmt::Let { name, .. } => {
+            Stmt::Let { name, expr, .. } => {
                 out.insert(name.clone());
+                collect_comp_vars(expr, out);
             }
-            Stmt::MultiLet { names, .. } => {
+            Stmt::MultiLet { names, expr, .. } => {
                 for n in names {
                     out.insert(n.clone());
                 }
+                collect_comp_vars(expr, out);
             }
-            Stmt::If { then_block, else_block, .. } => {
+            Stmt::Assign { target, expr, .. } => {
+                collect_comp_vars(target, out);
+                collect_comp_vars(expr, out);
+            }
+            Stmt::ExprStmt { expr } => collect_comp_vars(expr, out),
+            Stmt::If { cond, then_block, else_block, .. } => {
+                collect_comp_vars(cond, out);
                 collect_locals(then_block, out);
                 if let Some(b) = else_block {
                     collect_locals(b, out);
                 }
             }
-            Stmt::While { body, .. } => collect_locals(body, out),
-            Stmt::For { var, body, .. } => {
+            Stmt::While { cond, body, .. } => {
+                collect_comp_vars(cond, out);
+                collect_locals(body, out);
+            }
+            Stmt::For { var, iter, body, .. } => {
                 out.insert(var.clone());
+                match iter {
+                    ForIter::Range(args) => {
+                        for a in args {
+                            collect_comp_vars(a, out);
+                        }
+                    }
+                    ForIter::Array(e) | ForIter::Dict(e) => collect_comp_vars(e, out),
+                }
                 collect_locals(body, out);
             }
             Stmt::Try { body, err_name, handler, .. } => {
@@ -594,8 +613,75 @@ fn collect_locals(blk: &Block, out: &mut HashSet<String>) {
                 }
                 collect_locals(handler, out);
             }
+            Stmt::Return { expr: Some(e), .. } => collect_comp_vars(e, out),
+            Stmt::Raise { expr, .. } => collect_comp_vars(expr, out),
             _ => {}
         }
+    }
+}
+
+/// Comprehension loop variables (unreleased) are function-scoped for this
+/// walk: the binding layer only needs to know that a name is LOCAL, so that a
+/// `[x for x in a]` body does not rewrite `x` to a module member.
+fn collect_comp_vars(e: &Expr, out: &mut HashSet<String>) {
+    match e {
+        Expr::Comp { key, expr, iter, cond, var, .. } => {
+            out.insert(var.clone());
+            collect_comp_vars(iter, out);
+            if let Some(k) = key {
+                collect_comp_vars(k, out);
+            }
+            collect_comp_vars(expr, out);
+            if let Some(c) = cond {
+                collect_comp_vars(c, out);
+            }
+        }
+        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } | Expr::Field { obj: expr, .. } => collect_comp_vars(expr, out),
+        Expr::Binary { lhs, rhs, .. } => {
+            collect_comp_vars(lhs, out);
+            collect_comp_vars(rhs, out);
+        }
+        Expr::Index { arr, idx, .. } => {
+            collect_comp_vars(arr, out);
+            collect_comp_vars(idx, out);
+        }
+        Expr::Slice { base, from, to, .. } => {
+            collect_comp_vars(base, out);
+            if let Some(f) = from {
+                collect_comp_vars(f, out);
+            }
+            if let Some(t) = to {
+                collect_comp_vars(t, out);
+            }
+        }
+        Expr::IfExp { then_expr, cond, else_expr, .. } => {
+            collect_comp_vars(cond, out);
+            collect_comp_vars(then_expr, out);
+            collect_comp_vars(else_expr, out);
+        }
+        Expr::ArrayLit { elems, .. } | Expr::TupleLit { elems, .. } => {
+            for x in elems {
+                collect_comp_vars(x, out);
+            }
+        }
+        Expr::ArrayRep { elem, .. } => collect_comp_vars(elem, out),
+        Expr::DictLit { entries, .. } => {
+            for (k, v) in entries {
+                collect_comp_vars(k, out);
+                collect_comp_vars(v, out);
+            }
+        }
+        Expr::StructLit { fields, .. } => {
+            for (_, v) in fields {
+                collect_comp_vars(v, out);
+            }
+        }
+        Expr::Call { args, .. } => {
+            for a in args {
+                collect_comp_vars(&a.value, out);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -806,6 +892,19 @@ impl<'a> Ctx<'a> {
             Expr::TupleLit { elems, .. } => {
                 for el in elems.iter_mut() {
                     self.expr(el);
+                }
+            }
+            Expr::Comp { key, expr, iter, cond, .. } => {
+                // the source is evaluated in the ENCLOSING scope; `var` is a
+                // binding, not a reference, and it is in `locals` (see
+                // collect_comp_vars), so the body's reads of it stay bare
+                self.expr(iter);
+                if let Some(k) = key {
+                    self.expr(k);
+                }
+                self.expr(expr);
+                if let Some(c) = cond {
+                    self.expr(c);
                 }
             }
             Expr::DictLit { entries, .. } => {
