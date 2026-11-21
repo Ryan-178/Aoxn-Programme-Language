@@ -16,6 +16,7 @@ pub mod resolve;
 pub mod rust;
 pub mod symbols;
 pub mod tailwind;
+pub mod testcmd;
 pub mod ts;
 pub mod typecheck;
 
@@ -344,6 +345,27 @@ pub fn program_symbols(paths: &[String]) -> Result<Vec<symbols::Symbol>, Vec<Dia
     let (flat, _assets, _rust) = load_flattened(paths)?;
     let (structs, funcs) = flat.with_source_names();
     Ok(symbols::collect(&Program { imports: vec![], structs, funcs, assets: Default::default(), rust_sources: Vec::new() }))
+}
+
+/// `aoxn test`: the top-level `def test_*` functions of the ENTRY file.
+///
+/// The whole program is loaded (imports resolve, the file registry fills the
+/// way a compile fills it), but only the entry's own declarations are
+/// collected — an imported helper that exports a `test_`-looking name is not
+/// a test of the file under test. Signature problems are diagnostics, so a
+/// function the driver could not call never gets silently skipped.
+pub fn discover_tests(entries: &[String]) -> Result<Vec<testcmd::TestFn>, Vec<Diag>> {
+    let (flat, _assets, _rust) = load_flattened(entries)?;
+    let (_, funcs) = flat.with_source_names();
+    // the registry stores the canonical, verbatim-stripped path (see
+    // `load_file`), so the entry has to be spelled the same way to match
+    let mut entry_names = Vec::new();
+    for e in entries {
+        if let Ok(p) = std::fs::canonicalize(e) {
+            entry_names.push(pretty(p).display().to_string());
+        }
+    }
+    testcmd::collect(&funcs, &entry_names)
 }
 
 /// file-path based entry: resolve imports recursively

@@ -28,6 +28,39 @@ also indexed its spec list by the part index, which read past the end
 whenever a literal prefix preceded a spec — fixed and pinned by that same
 parity case.
 
+### `aoxn test <file.ax>` — the missing test runner
+
+`aoxn test` closes the gap `docs/stdlib-todo.md` §0.7 described: a file can
+now carry its own tests and one command discovers, runs and summarizes them.
+Discovery is a filter over the AST the loader already builds
+(`src/testcmd.rs`, entry file only): a collectible test is a non-extern
+top-level `def test_*` with no parameters, no generics and a `void` return —
+a test that cannot be called is a named diagnostic (`bad.ax:1:1: test
+'name' must take no parameters...`), never a silent skip. The runner then
+generates a driver in the cache directory that imports the entry
+**selectively by absolute path** (`from "D:/…/suite.ax" import test_a, …`),
+registers each test with `stdlib/unittest`, and returns `r.failed` as the
+exit code; the driver's `main` is the C entry, so a test file may still
+declare its own `main` without colliding. No clang is needed at discovery
+time, no language feature was added, and the C emitter is untouched, so
+there is no selfhost mirror obligation (`aoxn test` is Rust-CLI only — the
+selfhost loader refuses selective imports). Example:
+`examples/test_demo.ax`; CLI pins in `tests/aoxn_test.rs`; unit pins for
+the filter and driver text in `src/testcmd.rs`.
+
+### Fix: an import no longer steals the entry's `main`
+
+v0.43.0's rule ("a name keeps its bare spelling unless two modules provide
+it") mangled BOTH owners when the entry and an import declared the same
+name — `import lib` with a `def main` in `lib.ax` produced "program has no
+'main' function", and the star-import spelling reported "name 'main' comes
+from two modules". The first ENTRY owner now keeps the bare spelling
+(`src/resolve.rs`); the other still mangles, so flat names stay unique.
+Star-import collisions still error at the binding table, so only
+namespace-qualified programs change and no compiling program's C moves —
+pinned by `namespace_import_does_not_steal_the_entry_main` in
+`tests/pipeline.rs`.
+
 ## [0.55.0-snapshot-5] - 2026-11-16
 
 **Snapshot 5** is a pre-release tag; the compiler version stays 0.55.0. It

@@ -1,0 +1,17 @@
+# `aoxn test examples/test_demo.ax` discovers and runs every `def test_*`.
+# No main and no suite boilerplate: the runner registers the functions with
+# stdlib/unittest itself and exits 1 if any of them fails.
+
+import * from "stdlib/unittest"
+
+def test_math():
+    ut_assert_eq_i(6 * 7, 42, "multiplication")
+
+def test_strings():
+    ut_assert_eq_s("ao" + "xn", "aoxn", "concatenation")
+
+def test_raises():
+    ut_assert_raises(fail_hard, "must raise")
+
+def fail_hard():
+    raise "expected failure"

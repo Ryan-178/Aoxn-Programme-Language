@@ -90,6 +90,7 @@ cargo build --release --locked --bin aoxn
 cargo run -- check examples/fib.ax
 cargo run -- c examples/fib.ax
 cargo run -- build examples/fib.ax -o fib
+cargo run -- test examples/test_demo.ax
 cargo run -- doctor --json
 cargo test -p aoxn --locked
 cargo test -p aoxn-pkg --locked
@@ -101,7 +102,8 @@ new security audit results are claimed. Windows package tests use
 `pnpm --dir ide test`, `pnpm --dir ide typecheck`, and
 `cargo test --manifest-path ide/src-tauri/Cargo.toml`.
 
-check/c/symbols do not invoke clang/rustc; build/run need clang, .rs additionally
+check/c/symbols do not invoke clang/rustc; test discovers tests without clang,
+then builds and runs them like build. build/run need clang, .rs additionally
 needs rustc. --O0 through --O3 select clang optimization (default O3).
 AOXN_CLANG/AOXN_RUSTC select tools; AOXN_HOME/AOXN_STDLIB select paths;
 AOXN_NO_CACHE=1 disables the build/run cache and AOXN_CACHE_DIR relocates it.
@@ -127,7 +129,8 @@ Aoxn 使用 Python 风格
 或 LLVM 库依赖。语言支持泛型、值复制结构体/数组、字节字符串、字典、可空收窄、
 函数指针、异常和命名空间。本快照含 sizeof/addr_of、re 子集及标准库收尾：
 31 项中 27 项有实现，4 项明确不做并提供替代，不是完整 Python 兼容。当前树另含
-**未发布**的 f-string 格式化说明符（`f"{x:.2f}"`、`f"{n:08x}"`、`f"{n:b}"`），
+**未发布**的 f-string 格式化说明符（`f"{x:.2f}"`、`f"{n:08x}"`、`f"{n:b}"`）
+与 `aoxn test` 测试运行器（发现并运行文件内全部 `def test_*`，失败退出 1），
 记录在 CHANGELOG 的 `[Unreleased]` 中，不代表发布。TS 前端为
 子集，另有 TOML 包管理、CSS、两个 SDK 和独立 IDE。
 
@@ -159,13 +162,14 @@ http_macos_native.rs 的系统 libcurl Rust 桥，需要 rustc 和 libcurl 开�
 
 英文节列出开发命令，不是本批执行结果；不声明实时测试总数或新安全审计。根包、包
 管理器和 IDE 分别测试，Windows 包测试用 bash run_pkg_tests.sh。check/c/symbols
-不调用工具链；build/run 需 clang，.rs 另需 rustc。--O0 至 --O3 默认 O3；
+不调用工具链；test 的发现阶段不需要 clang，随后像 build 一样编译并运行；build/run
+需 clang，.rs 另需 rustc。--O0 至 --O3 默认 O3；
 AOXN_CLANG/AOXN_RUSTC 指定工具，AOXN_HOME/AOXN_STDLIB 指定路径，AOXN_NO_CACHE=1
 禁用缓存，AOXN_CACHE_DIR 迁移缓存。C extern 固定参数，int 对应 C long long，bool
 对应 C int；Rust 桥只接受精确标量 ABI。字符串是 NUL 结尾字节，字符串边界 clamp，
 数组/裸内存不检查；拼接泄漏，无 GC、无沙箱，addr_of 无生命周期检查。自举固定点
 与直接 C 比较只覆盖测试子集；命名空间/选择性导入、默认参数、sizeof/addr_of、
-.rs/CSS 导入和包命令在其范围外，生产入口仍为 Rust CLI。
+.rs/CSS 导入、`test` 和包命令在其范围外，生产入口仍为 Rust CLI。
 
 参阅[规范](docs/spec.md)、[标准库](docs/stdlib.md)、[安全政策](SECURITY.md)、
 [变更记录](CHANGELOG.md)。docs/ 持续维护，wiki/ 冻结；[Apache-2.0](LICENSE)。

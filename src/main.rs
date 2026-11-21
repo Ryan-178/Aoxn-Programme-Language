@@ -205,6 +205,7 @@ match args[0].as_str() {
         "run" => cmd_run(&args[1..]),
         "c" => cmd_c(&args[1..]),
         "check" => cmd_check(&args[1..]),
+        "test" => cmd_test(&args[1..]),
         "symbols" => cmd_symbols(&args[1..]),
         // `ir` was the LLVM-IR dump until v0.28.0; it now forwards to `c`
         "ir" => cmd_c(&args[1..]),
@@ -229,6 +230,8 @@ fn print_help() {
          Aoxn c <file.ax> [--json]                            print the generated C\n  \
          Aoxn check <file.ax> [--json]                        type-check: run the pipeline, print only\n  \
                                                            diagnostics (no C text, no clang)\n  \
+         Aoxn test <file.ax> [--O0|--O1] [--json] [-l lib]    run every top-level `def test_*` in the file\n  \
+                                                           through stdlib/unittest; exit 1 if any fails\n  \
          Aoxn symbols <file.ax> [--json]                      list top-level declarations with positions\n  \
                                                            (the editor's language service: no clang)\n  \
          Aoxn doctor [--json] [--no-smoke]                   check the installed toolchain\n  \
@@ -490,6 +493,82 @@ fn cmd_run(args: &[String]) {
         let _ = std::fs::remove_file(&exe); // temp copy, no cache entry
     }
     std::process::exit(status);
+}
+
+/// `Aoxn test`: run the entry file's top-level `def test_*` functions.
+///
+/// Discovery reads the loaded program's AST (so imports must resolve), then
+/// a driver is generated that imports exactly those functions and registers
+/// them with `stdlib/unittest`. The driver lives in the build-cache
+/// directory (the entry is imported by its absolute path), and the compiled
+/// test binary is removed after the run: the product is the PASS/FAIL text
+/// and the exit code, not an artifact.
+fn cmd_test(args: &[String]) {
+    let opts = parse_opts(args);
+    if opts.positional.is_empty() {
+        eprintln!("error: 'Aoxn test' needs an input file (.ax)");
+        std::process::exit(2);
+    }
+    if opts.positional.len() > 1 {
+        eprintln!("error: 'Aoxn test' takes one input file (got {})", opts.positional.len());
+        std::process::exit(2);
+    }
+    let tests = match aoxn::discover_tests(&opts.positional) {
+        Ok(t) => t,
+        Err(diags) => {
+            report(&diags, opts.json);
+            std::process::exit(1);
+        }
+    };
+    if tests.is_empty() {
+        eprintln!(
+            "error: no top-level `def test_*(...)` functions in {}",
+            opts.positional[0]
+        );
+        std::process::exit(1);
+    }
+    let entry = PathBuf::from(&opts.positional[0]);
+    let source = match aoxn::testcmd::driver_source(&entry, &tests) {
+        Ok(s) => s,
+        Err(msg) => {
+            eprintln!("error: {msg}");
+            std::process::exit(1);
+        }
+    };
+    let stem: String = entry
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "tests".into())
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .collect();
+    let driver = cache_dir().join(format!("aoxn_test_{stem}_{}.ax", std::process::id()));
+    let exe = cache_dir().join(format!("aoxn_test_{stem}_{}{}", std::process::id(), exe_suffix()));
+    if let Err(e) = std::fs::write(&driver, &source) {
+        eprintln!(
+            "error: cannot write the test driver {}: {}",
+            driver.display(),
+            aoxn::io_reason_for(&e, &driver, aoxn::IoTarget::File)
+        );
+        std::process::exit(1);
+    }
+    let built = aoxn::build_paths_opts_lvl(
+        &[driver.display().to_string()],
+        &exe,
+        opts.opt_level,
+        &opts.libs,
+        &opts.lib_paths,
+    );
+    let _ = std::fs::remove_file(&driver);
+    if let Err(diags) = built {
+        let _ = std::fs::remove_file(&exe);
+        report(&diags, opts.json);
+        std::process::exit(1);
+    }
+    report_ok(opts.json);
+    let code = run_exe(&exe, &opts.passthrough);
+    let _ = std::fs::remove_file(&exe);
+    std::process::exit(code);
 }
 
 fn cmd_c(args: &[String]) {
