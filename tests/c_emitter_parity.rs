@@ -214,6 +214,27 @@ def main() -> int:
     return 0
 "#,
     ),
+    (
+        "fstring_format_specs",
+        r#"def main() -> int:
+    x = 3.14159
+    n = 255
+    print(f"{x:.2f}")
+    print(f"{x:.3e}")
+    print(f"{x:g}")
+    print(f"{n:08x}")
+    print(f"{n:X}")
+    print(f"{5:b}")
+    print(f"{-7:b}")
+    print(f"{n:o}")
+    print(f"{x:+10.2f}|")
+    print(f"{n: d}")
+    print(f"{x:.0f}")
+    print(f"{n:05b}")
+    print(f"{x:}")
+    return 0
+"#,
+    ),
 ];
 
 #[test]

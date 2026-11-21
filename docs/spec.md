@@ -147,6 +147,17 @@ print(f"braces: {{literal}}")             # braces: {literal}
 - f-strings desugar to string concatenation via the `str()` builtin:
   ints format as decimal, floats as `%f` (6 decimals), bools as
   `true`/`false`.
+- `{expr:spec}` sets a format specifier (unreleased). The spec is literal
+  text and applies to `int` and `float` values only:
+  - float: `[sign][0][width][.precision](f|e|E|g|G)` — `{x:.2f}`,
+    `{x:+10.2f}`, `{x:g}` (the default precision is 6, the default kind `f`);
+  - int: `[sign][0][width](d|x|X|o|b)` — `{n:08x}`, `{n:X}`, `{n:o}`,
+    `{n:05b}` (the default base is `d`).
+  `+` / space are sign flags and are rejected on `x`/`X`/`o`/`b` (the value
+  is unsigned there); an int takes no `.precision`. `{x:}` is plain `str`.
+  Anything else (`%`, `,`, alignment, nested fields, a non-literal spec) is
+  a compile error. The spec is parsed and the C format is REBUILT from the
+  parsed fields, so a spec can never inject text into the generated C.
 
 ## Generic functions
 
@@ -1003,8 +1014,10 @@ Ordered by how much they cost the language's Python parity.
 5. ~~String indexing / iteration~~ — **shipped in v0.51.2**: `s[i]` yields a
    **one-byte** string and `for c in s` walks bytes. There is no `char` type
    and none is coming — `len(s)` is `strlen`, so the language is byte-wise
-   end to end. Still open: f-string format specifiers (`{x:.2f}`) and
-   multi-line f-strings.
+   end to end. ~~f-string format specifiers~~ — **shipped (unreleased)**
+   for `int`/`float` (`{x:.2f}`, `{n:08x}`, `{n:b}`), mirrored in the
+   selfhost compiler with byte-identical C. Still open: multi-line
+   f-strings.
 6. Memory: string interning or arena freeing (currently concatenation leaks);
    dict values are never freed either (a dict lives as long as the program,
    like every other heap block in the language).

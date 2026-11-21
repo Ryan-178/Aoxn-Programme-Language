@@ -1039,6 +1039,40 @@ impl<'a> Tc<'a> {
                     }
                     return Ok(Type::Str);
                 }
+                // f-string format specifiers (unreleased): the parser lowers
+                // `f"{x:.2f}"` to `str_fmt(x, ".2f")`. The spec is a
+                // COMPILE-TIME string literal, validated against the value's
+                // type here and re-parsed by codegen into a C format it
+                // builds itself (never the literal spec text).
+                if name == "str_fmt" {
+                    if args.len() != 2 || args.iter().any(|a| a.name.is_some()) {
+                        return Err(self.err(pos.line, pos.col, "str_fmt expects (value, spec)"));
+                    }
+                    let t = self.check_expr(&args[0].value, scopes)?;
+                    let spec = match &args[1].value {
+                        Expr::Str(s, _) => s.as_str(),
+                        other => {
+                            let p = other.pos();
+                            return Err(self.err(p.line, p.col, "an f-string format specifier must be literal text"));
+                        }
+                    };
+                    match t {
+                        Type::Float => {
+                            crate::fmt_spec::parse_float(spec).map_err(|m| self.err(pos.line, pos.col, m))?;
+                        }
+                        Type::Int => {
+                            crate::fmt_spec::parse_int(spec).map_err(|m| self.err(pos.line, pos.col, m))?;
+                        }
+                        other => {
+                            return Err(self.err(
+                                pos.line,
+                                pos.col,
+                                format!("a format specifier needs an int or float, found {other}"),
+                            ))
+                        }
+                    }
+                    return Ok(Type::Str);
+                }
                 // explicit scalar conversions (lowered to Expr::Cast semantics
                 // at codegen): to_int(x) truncates toward zero, to_float(x)
                 // widens (int/float are type keywords, so the builtins carry

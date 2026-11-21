@@ -1084,6 +1084,49 @@ fn f_string_with_function_calls() {
 }
 
 #[test]
+fn f_string_format_specifiers() {
+    let out = build_and_run(
+        r#"
+        def main() -> int:
+            x = 3.14159
+            n = 255
+            print(f"{x:.2f} {x:.0f} {x:.3e} {x:g} {x:.10g}")
+            print(f"{n:d} {n:08d} {n:x} {n:X} {n:o} {n:b} {n:08b}")
+            print(f"{-n:d} {n:+d} {n: d}")
+            print(f"{x:.2f}", f"{x}")
+            return 0
+        "#,
+    );
+    assert_eq!(
+        out,
+        "3.14 3 3.142e+00 3.14159 3.14159\n\
+         255 00000255 ff FF 377 11111111 11111111\n\
+         -255 +255  255\n\
+         3.14 3.141590\n"
+    );
+}
+
+#[test]
+fn rejects_bad_format_specifiers() {
+    let msg = expect_compile_error(
+        "def main() -> int:\n    x = 1.5\n    print(f\"{x:q}\")\n    return 0",
+    );
+    assert!(msg.contains("unsupported format specifier"), "{msg}");
+
+    // the spec is validated against the VALUE's type
+    let msg = expect_compile_error(
+        "def main() -> int:\n    s = \"x\"\n    print(f\"{s:.2f}\")\n    return 0",
+    );
+    assert!(msg.contains("needs an int or float"), "{msg}");
+
+    // a sign flag has no meaning on an unsigned base
+    let msg = expect_compile_error(
+        "def main() -> int:\n    n = 3\n    print(f\"{n:+x}\")\n    return 0",
+    );
+    assert!(msg.contains("sign flag is not supported"), "{msg}");
+}
+
+#[test]
 fn str_builtin() {
     let out = build_and_run(
         r#"

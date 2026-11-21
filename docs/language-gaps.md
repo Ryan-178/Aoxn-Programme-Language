@@ -35,7 +35,7 @@
 | **D2** 没有线程/同步原语 | 见 §3，线程本身可行 | 线程池、锁、条件变量 |
 | **D3** 浮点与整数除零都是 UB，无检查 | 原生崩溃 | 所有数值库 |
 | **D4** 没有 `inf`/`nan` 字面量，位运算 int-only | 戳不进 float 的 IEEE 位 | 所有数值库 |
-| **D5** float 只能 `%f` 6 位小数 | | 科学计数法、刻度标签 |
+| **D5** ~~float 只能 `%f` 6 位小数~~ **unreleased 已闭合** | f-string 格式说明符 `{x:.2f}` / `{x:g}` / `{n:08x}` / `{n:b}`，selfhost 同步 | 科学计数法、刻度标签已可用 |
 | **E1–E8** 语法糖 | 见 §5 | 零散但面广 |
 
 ---
@@ -418,23 +418,17 @@ def main():
 
 **代价　小**（加）或**零**（用绕法）。
 
-### D5 float 只能按 `%f` 打印 6 位小数
+### D5 float 只能按 `%f` 打印 6 位小数 — **unreleased 已闭合**
 
-**缺什么**　`docs/spec.md:396`：「Floats print with `%f` (6 decimals)」，
-f-string 同样（`docs/spec.md:136`）。**没有格式说明符、没有 `%g`、
-没有有效数字控制**。
+f-string 现在接受格式说明符：float 用 `[sign][0][width][.precision](f|e|E|g|G)`
+（`{x:.2f}`、`{x:+10.2f}`、`{x:g}`），int 用 `[sign][0][width](d|x|X|o|b)`
+（`{n:08x}`、`{n:o}`、`{n:05b}`）。说明符必须是字面量，解析成结构化字段后
+**由编译器重建 C 格式**（说明符文本永不进入生成的 C，见 `src/fmt_spec.rs`）。
+`selfhost/`（`parser.ax` 按 depth-0 `:` 切分、`typecheck.ax` 里的
+`fmt_parse_*` 与格式化表、`codegen.ax` 的 `ax_fmt_N` 助手）已同步，
+`tests/c_emitter_parity.rs` 的 `fstring_format_specs` 钉住逐字节一致。
 
-**挡住了什么**
-
-- matplotlib 的刻度标签（`0.00005` 与 `5e-05` 要手写判断）
-- 任何科学计算输出
-- f-string 的 `{x:.2f}`（roadmap 第 5 条已列）
-
-**要动哪里**　`src/codegen_c.rs` 与 `selfhost/codegen.ax` 的 float→string
-发射。可参考 `stdlib/json.ax` 的 `j_fmt_f`（手写 `~%.15g`），但它目前
-不是语言 print/f-string 的格式说明符支持。
-
-**代价　小。**
+仍未做：`print` 本身没有格式说明符（只有 f-string 有），多行 f-string 也没有。
 
 ---
 
@@ -575,7 +569,7 @@ docs/spec.md  tests/pipeline.rs
 |---|---|---|---|
 | ~~**1**~~ | ~~命名空间 / 模块限定~~（B4）—— **v0.43.0 已落地** | ~~中～大~~ | 已解锁；手工前缀从此可选 |
 | ~~**2**~~ | ~~**`sizeof` + 结构体取址**（A2）~~ —— **unreleased 已落地** | ~~小~~ | 语言阻塞已解除；结构体容器是下一步的库工作 |
-| **3** | **float 格式说明符 + `%g`**（D5） | 小 | 所有数值输出（现成实现已在 json.ax 里） |
+| ~~**3**~~ | ~~**float 格式说明符 + `%g`**（D5）~~ —— **unreleased 已落地**（含 selfhost 镜像与逐字节 parity 钉） | ~~小~~ | 数值输出；parity corpus 已覆盖 |
 | **4** | **元组 / 多返回值**（B3） | 中 | 大量库的 API 形态；sret ABI 已存在 |
 | ~~**5**~~ | ~~**argv**（D1）~~ **v0.42.0 已闭合** | 小 | `argc()` / `arg(i)` 落地；sys / argparse 解除阻塞（pytest 还差运行器） |
 | **6** | **E6 推导式**（E1–E4 已在 v0.51.0/v0.51.2 落地） | 小 | 整个生态的可读性 |

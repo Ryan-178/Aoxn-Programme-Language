@@ -138,11 +138,13 @@ because it keeps no file registry.
 
 ## Implemented regression coverage
 
-`tests/c_emitter_parity.rs` has a full-byte parity test over nineteen comparison
+`tests/c_emitter_parity.rs` has a full-byte parity test over twenty comparison
 inputs: nullable widening/narrowing and mixed array literals, dict aliasing /
 iteration / missing-key helper text, function-pointer values and fn-pointer
 returns, raise/try/except propagation, numeric conversions, argv, exit,
-assertions, a shared-arena f-string growth regression; plus the original
+assertions, a shared-arena f-string growth regression, and f-string format
+specifiers (`{x:.2f}`, `{n:08x}`, `{n:b}` — one distinct `ax_fmt_N` helper per
+spec, definitions sorted by key, names in first-use order); plus the original
 field-augmented-assignment, reverse-order extern, recursive/control-flow,
 struct/array/repetition, strings/float/f-string and stdlib/generic/Vec fixtures.
 Selfhost orders extern, struct roots and array typedef roots like the Rust

@@ -5,6 +5,7 @@ pub mod ast;
 pub mod assets;
 pub mod codegen_c;
 pub mod files;
+pub mod fmt_spec;
 pub mod hashing;
 pub mod lexer;
 pub mod parser;
