@@ -381,6 +381,11 @@ struct GenC<'a> {
     /// identical across processes (see docs — `c_text_is_stable_across_
     /// processes`), and hash iteration order is not.
     in_helpers: BTreeMap<String, String>,
+    /// f-string format specifiers (`f"{x:.2f}"`): one small formatter per
+    /// distinct spec, keyed by the reconstructed spec so the preamble is
+    /// deterministic and a repeated spec reuses its helper.
+    fmt_helpers: BTreeMap<String, (String, String)>,
+    fmt_count: usize,
 }
 
 impl<'a> GenC<'a> {
@@ -417,6 +422,8 @@ impl<'a> GenC<'a> {
             used_pow_i: false,
             used_str_seq: false,
             in_helpers: BTreeMap::new(),
+            fmt_helpers: BTreeMap::new(),
+            fmt_count: 0,
         };
         for s in &program.structs {
             g.struct_names.insert(s.name.clone());
@@ -656,6 +663,21 @@ impl<'a> GenC<'a> {
         format!("ax_t{}", self.tmpn)
     }
 
+    /// Register (once) a formatter for one distinct format spec and answer
+    /// its function name. Names follow FIRST-USE order and the definitions are
+    /// emitted in BTreeMap (spec) order; both are content-derived, which is
+    /// what keeps the emitted C byte-identical across processes.
+    fn fmt_helper(&mut self, key: &str, make: impl FnOnce(&str) -> String) -> String {
+        if let Some((name, _)) = self.fmt_helpers.get(key) {
+            return name.clone();
+        }
+        let name = format!("ax_fmt_{}", self.fmt_count);
+        self.fmt_count += 1;
+        let body = make(&name);
+        self.fmt_helpers.insert(key.to_string(), (name.clone(), body));
+        name
+    }
+
     // ---- module assembly ----
 
     fn assemble(mut self, protos: Vec<String>, bodies: Vec<String>) -> Result<String, String> {
@@ -721,6 +743,14 @@ impl<'a> GenC<'a> {
                  __builtin_snprintf(buf, 64, \"%f\", v);\n    \
                  return buf;\n}\n\n",
             );
+        }
+        // f-string format specifiers: one formatter per distinct spec, in
+        // BTreeMap order (content-derived, so the text is reproducible
+        // across processes). The C format inside each body was REBUILT from
+        // the parsed spec, never copied from the program.
+        for (_, (_, body)) in &self.fmt_helpers {
+            s.push_str(body);
+            s.push('\n');
         }
         // exact integer power for `**` on two ints (v0.51.0). Exponentiation
         // by squaring with a sign-correct tail loop: Python returns a float
@@ -2329,6 +2359,94 @@ fn block_returns_all(block: &Block) -> bool {
                 other => Err(format!("internal error: str on {other} at codegen")),
             };
         }
+        if name == "str_fmt" {
+            if args.len() != 2 {
+                return Err("internal error: str_fmt expects 2 arguments".into());
+            }
+            let t = self.hint(&args[0].value)?;
+            let spec_text = match &args[1].value {
+                Expr::Str(s, _) => s.clone(),
+                _ => return Err("internal error: a non-literal str_fmt spec reached codegen".into()),
+            };
+            let start = self.out.len();
+            self.emit_expr_inner(&args[0].value)?;
+            let val = self.out.split_off(start);
+            match t {
+                Type::Float => {
+                    let spec = crate::fmt_spec::parse_float(&spec_text)
+                        .map_err(|m| format!("internal error: {m}"))?;
+                    if spec.is_plain() {
+                        self.used_str_f = true;
+                        self.out.push_str(&format!("ax_str_f({val})"));
+                    } else {
+                        let cfmt = spec.c_format().expect("a float spec always has a printf form");
+                        let size = spec.buf_size();
+                        let lit = Self::c_string_lit(&cfmt);
+                        let helper = self.fmt_helper(&format!("f:{cfmt}"), |name| {
+                            format!(
+                                "static char* {name}(double v) {{\n    \
+                                 char* buf = (char*)__builtin_malloc({size});\n    \
+                                 __builtin_snprintf(buf, {size}, {lit}, v);\n    \
+                                 return buf;\n}}\n"
+                            )
+                        });
+                        self.out.push_str(&format!("{helper}({val})"));
+                    }
+                }
+                Type::Int => {
+                    let spec = crate::fmt_spec::parse_int(&spec_text)
+                        .map_err(|m| format!("internal error: {m}"))?;
+                    if spec.is_plain() {
+                        self.used_str_i = true;
+                        self.out.push_str(&format!("ax_str_i({val})"));
+                    } else if let Some(cfmt) = spec.c_format() {
+                        let size = spec.buf_size();
+                        let lit = Self::c_string_lit(&cfmt);
+                        let helper = self.fmt_helper(&format!("i:{cfmt}"), |name| {
+                            format!(
+                                "static char* {name}(long long v) {{\n    \
+                                 char* buf = (char*)__builtin_malloc({size});\n    \
+                                 __builtin_snprintf(buf, {size}, {lit}, v);\n    \
+                                 return buf;\n}}\n"
+                            )
+                        });
+                        self.out.push_str(&format!("{helper}({val})"));
+                    } else {
+                        // Binary has no printf conversion: spell the bits out.
+                        // The width/zero flags are baked into the body, and
+                        // this is the only helper that pads by hand.
+                        let (width, zero) = match &spec {
+                            crate::fmt_spec::FmtSpec::Int { width, zero, .. } => (*width, *zero),
+                            _ => (0, false),
+                        };
+                        let padc = if zero { "'0'" } else { "' '" };
+                        let helper = self.fmt_helper(&format!("b:{width}:{zero}"), |name| {
+                            format!(
+                                "static char* {name}(long long v) {{\n    \
+                                 unsigned long long u = v < 0 ? (0ULL - (unsigned long long)v) : (unsigned long long)v;\n    \
+                                 int neg = v < 0;\n    \
+                                 char tmp[65];\n    \
+                                 int n = 0;\n    \
+                                 if (u == 0) tmp[n++] = '0';\n    \
+                                 while (u > 0) {{ tmp[n++] = (char)(48 + (int)(u & 1ULL)); u >>= 1; }}\n    \
+                                 int pad = {width} - n - (neg ? 1 : 0);\n    \
+                                 if (pad < 0) pad = 0;\n    \
+                                 char* buf = (char*)__builtin_malloc((unsigned long long)(n + pad + (neg ? 1 : 0) + 1));\n    \
+                                 int p = 0;\n    \
+                                 if (neg) buf[p++] = '-';\n    \
+                                 while (pad-- > 0) buf[p++] = {padc};\n    \
+                                 while (n > 0) buf[p++] = tmp[--n];\n    \
+                                 buf[p] = 0;\n    \
+                                 return buf;\n}}\n"
+                            )
+                        });
+                        self.out.push_str(&format!("{helper}({val})"));
+                    }
+                }
+                other => return Err(format!("internal error: str_fmt on {other} at codegen")),
+            }
+            return Ok(Type::Str);
+        }
         // raw memory primitives
         if name == "load_i64" || name == "load_f64" || name == "load_u8" {
             self.used_raw = true;
@@ -2776,6 +2894,9 @@ if matches!(op, Is | IsNot) {
                     return Ok(if eff == "len" { Type::Int } else { Type::Bool });
                 }
                 if eff == "str" {
+                    return Ok(Type::Str);
+                }
+                if eff == "str_fmt" {
                     return Ok(Type::Str);
                 }
                 if eff == "to_int" {

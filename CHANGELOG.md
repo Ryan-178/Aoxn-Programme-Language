@@ -3,6 +3,31 @@
 Notable changes to the Aoxn compiler and language. Aoxn follows semver-ish
 minor bumps while pre-1.0: each minor version is a language milestone.
 
+## [Unreleased]
+
+### f-string format specifiers (`{x:.2f}`, `{n:08x}`, `{n:b}`)
+
+`f"{value:spec}"` now formats `int` and `float` values. Supported specs:
+float `[sign][0][width][.precision](f|e|E|g|G)` and int
+`[sign][0][width](d|x|X|o|b)`. The spec must be literal text; it is parsed
+into structured fields (`src/fmt_spec.rs`) and the C format is REBUILT from
+them, so the spec never reaches the generated C verbatim. `+`/space are
+rejected on the unsigned bases, int takes no precision, and anything else
+is a named compile error. Plain spellings (`{x:}`, `{x:d}`, `{x:f}`) reuse
+`ax_str_i`/`ax_str_f`, so programs without specs emit unchanged C.
+
+Mirrored in the selfhost compiler (parser splits at the first depth-0 `:`,
+`fmt_parse_*` shared from `typecheck.ax`, `ax_fmt_N` helpers emitted sorted
+by key). C byte-identical between the Rust and Aoxn emitters, pinned by
+`tests/c_emitter_parity.rs` case `fstring_format_specs` (now including
+literal-prefixed spellings such as `f"x={n:03d}"`); front-end tests
+`f_string_format_specifiers` and `rejects_bad_format_specifiers` cover the
+accept/reject surface. Raw newlines are accepted inside string literals, so
+multi-line f-strings work in both front ends; the selfhost `desugar_fstring`
+also indexed its spec list by the part index, which read past the end
+whenever a literal prefix preceded a spec — fixed and pinned by that same
+parity case.
+
 ## [0.55.0-snapshot-5] - 2026-11-16
 
 **Snapshot 5** is a pre-release tag; the compiler version stays 0.55.0. It

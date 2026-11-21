@@ -392,6 +392,157 @@ def is_compound(c: CState, ty: int) -> int:
         return 1
     return 0
 
+# ---- f-string format specifiers ----
+# Shared by the checker (validation) and codegen (C format construction).
+# The spec text never reaches the emitted C verbatim: it is parsed into
+# these fields and the C format is rebuilt from them, mirroring the Rust
+# front end's src/fmt_spec.rs.
+
+struct FmtSpec:
+    ok: int          # 1 parsed, 0 error
+    msg: string
+    sign: int        # 0 none, 1 '+', 2 ' '
+    zero: int
+    width: int
+    prec: int        # float only
+    kind: int        # float: 'f'/'F'/'e'/'E'/'g'/'G'; int: 'd'/'x'/'X'/'o'/'b'
+
+def fmt_spec_err(what: string) -> FmtSpec:
+    return FmtSpec(ok=0, msg=what, sign=0, zero=0, width=0, prec=0, kind=0)
+
+def fmt_is_digit(c: int) -> int:
+    if c >= 48 and c <= 57:
+        return 1
+    return 0
+
+def fmt_unsupported(text: string, forms: string) -> string:
+    return "unsupported format specifier '" + text + "' (supported forms: " + forms + ")"
+
+def fmt_parse_float(text: string) -> FmtSpec:
+    n = len(text)
+    i = 0
+    sign = 0
+    if i < n and str_get(text, i) == 43:
+        sign = 1
+        i = i + 1
+    elif i < n and str_get(text, i) == 32:
+        sign = 2
+        i = i + 1
+    zero = 0
+    if i < n and str_get(text, i) == 48:
+        zero = 1
+        i = i + 1
+    width = 0
+    while i < n and fmt_is_digit(str_get(text, i)) == 1:
+        if width <= 1024:
+            width = width * 10 + (str_get(text, i) - 48)
+        i = i + 1
+    if width > 1024:
+        return fmt_spec_err("format specifier width is limited to 1024")
+    prec = 6
+    if i < n and str_get(text, i) == 46:
+        i = i + 1
+        if i >= n:
+            return fmt_spec_err(fmt_unsupported(text, "'.<digits>' after the decimal point"))
+        if fmt_is_digit(str_get(text, i)) == 0:
+            return fmt_spec_err(fmt_unsupported(text, "'.<digits>' after the decimal point"))
+        prec = 0
+        while i < n and fmt_is_digit(str_get(text, i)) == 1:
+            if prec <= 512:
+                prec = prec * 10 + (str_get(text, i) - 48)
+            i = i + 1
+        if prec > 512:
+            return fmt_spec_err("format specifier precision is limited to 512")
+    kind = 102
+    if i < n:
+        c = str_get(text, i)
+        if c == 102 or c == 70 or c == 101 or c == 69 or c == 103 or c == 71:
+            kind = c
+            i = i + 1
+    if i != n:
+        return fmt_spec_err(fmt_unsupported(text, "[sign][0][width][.precision](f|e|E|g|G), e.g. '.2f' or '+10.3e'"))
+    return FmtSpec(ok=1, msg="", sign=sign, zero=zero, width=width, prec=prec, kind=kind)
+
+def fmt_parse_int(text: string) -> FmtSpec:
+    n = len(text)
+    i = 0
+    sign = 0
+    if i < n and str_get(text, i) == 43:
+        sign = 1
+        i = i + 1
+    elif i < n and str_get(text, i) == 32:
+        sign = 2
+        i = i + 1
+    zero = 0
+    if i < n and str_get(text, i) == 48:
+        zero = 1
+        i = i + 1
+    width = 0
+    while i < n and fmt_is_digit(str_get(text, i)) == 1:
+        if width <= 1024:
+            width = width * 10 + (str_get(text, i) - 48)
+        i = i + 1
+    if width > 1024:
+        return fmt_spec_err("format specifier width is limited to 1024")
+    base = 100
+    if i < n:
+        c = str_get(text, i)
+        if c == 100 or c == 120 or c == 88 or c == 111 or c == 98:
+            base = c
+            i = i + 1
+        elif c == 46:
+            return fmt_spec_err("an int takes no precision ('.N') in its format specifier")
+    if i != n:
+        return fmt_spec_err(fmt_unsupported(text, "[sign][0][width](d|x|X|o|b), e.g. '08x' or 'b'"))
+    if sign != 0 and base != 100:
+        return fmt_spec_err("a sign flag is not supported with base '" + chr_str(base) + "' — the value is unsigned there")
+    return FmtSpec(ok=1, msg="", sign=sign, zero=zero, width=width, prec=0, kind=base)
+
+def fmt_spec_is_plain(sp: FmtSpec) -> int:
+    if sp.sign != 0 or sp.zero != 0 or sp.width != 0:
+        return 0
+    if sp.kind == 102:
+        if sp.prec == 6:
+            return 1
+    if sp.kind == 100:
+        return 1
+    return 0
+
+def fmt_float_c(sp: FmtSpec) -> string:
+    s = "%"
+    if sp.sign == 1:
+        s = s + "+"
+    elif sp.sign == 2:
+        s = s + " "
+    if sp.zero == 1:
+        s = s + "0"
+    if sp.width > 0:
+        s = s + str(sp.width)
+    return s + "." + str(sp.prec) + chr_str(sp.kind)
+
+def fmt_int_c(sp: FmtSpec) -> string:
+    conv = ""
+    if sp.kind == 100:
+        conv = "lld"
+    elif sp.kind == 120:
+        conv = "llx"
+    elif sp.kind == 88:
+        conv = "llX"
+    elif sp.kind == 111:
+        conv = "llo"
+    else:
+        return ""
+    s = "%"
+    if sp.sign == 1:
+        s = s + "+"
+    elif sp.sign == 2:
+        s = s + " "
+    if sp.zero == 1:
+        s = s + "0"
+    if sp.width > 0:
+        s = s + str(sp.width)
+    return s + conv
+
 # ---- scope ----
 
 def scope_push(c: CState, name: string, ty: int) -> CState:
@@ -1752,6 +1903,32 @@ def check_call(c: CState, e: int) -> CState:
             return c
         if is_printable(c, c.r_ty) == 0:
             return cerr(c, "cannot convert " + ty_display(c, c.r_ty) + " to string")
+        c.r_ty = c.t_str
+        return c
+    if name == "str_fmt":
+        # `f"{x:.2f}"` lowered by the parser; the spec is COMPILE-TIME text,
+        # validated here and re-parsed by codegen into a C format it builds
+        # itself (never the literal spec text).
+        if nargs != 2:
+            return cerr(c, "str_fmt expects (value, spec)")
+        c = check_expr(c, node_child(c.p, arg))
+        if c.err == 1:
+            return c
+        vt = c.r_ty
+        spec_node = node_child(c.p, node_next(c.p, arg))
+        if node_tag(c.p, spec_node) != N_STR():
+            return cerr(c, "an f-string format specifier must be literal text")
+        spec = node_sval(c.p, spec_node)
+        if ty_tag(c, vt) == TY_FLOAT():
+            sp = fmt_parse_float(spec)
+            if sp.ok == 0:
+                return cerr(c, sp.msg)
+        elif ty_tag(c, vt) == TY_INT():
+            spi = fmt_parse_int(spec)
+            if spi.ok == 0:
+                return cerr(c, spi.msg)
+        else:
+            return cerr(c, "a format specifier needs an int or float, found " + ty_display(c, vt))
         c.r_ty = c.t_str
         return c
     if name == "load_i64" or name == "load_f64":

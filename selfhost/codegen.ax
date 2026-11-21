@@ -188,6 +188,13 @@ struct Gen:
     rep_name: Vec         # helper name (as_ptr string)
     rep_text: Vec         # full helper definition (as_ptr string)
     repn: int             # next rep helper number
+    # f-string format helpers (one per distinct spec). Names are assigned in
+    # first-use order; the DEFINITIONS are emitted sorted by key, like the
+    # Rust emitter's BTreeMap, so the C text never depends on hash order.
+    fmt_key: Vec          # spec key (as_ptr string)
+    fmt_name: Vec         # helper name (as_ptr string)
+    fmt_text: Vec         # full helper definition (as_ptr string)
+    fmtn: int
     # reserved identifiers (C keywords + runtime + entry + externs)
     reserved: Vec         # as_ptr string
     # type-definition emission done-sets
@@ -273,6 +280,10 @@ def gen_new(c: CState) -> Gen:
         rep_name=vec_new(),
         rep_text=vec_new(),
         repn=0,
+        fmt_key=vec_new(),
+        fmt_name=vec_new(),
+        fmt_text=vec_new(),
+        fmtn=0,
         reserved=vec_new(),
         td_done=vec_new(),
         st_done=vec_new(),
@@ -2222,6 +2233,8 @@ def emit_call(g: Gen, e: int) -> Gen:
         return emit_len(g, e)
     if name == "str":
         return emit_str(g, e)
+    if name == "str_fmt":
+        return emit_str_fmt(g, e)
     if name == "load_i64" or name == "load_f64":
         return emit_mem_load(g, e)
     if name == "load_u8":
@@ -2422,6 +2435,92 @@ def emit_str(g: Gen, e: int) -> Gen:
         g.rk = RK_STR()
         return g
     return gerr(g, "codegen: str supports int/float/bool/string")
+
+# ---- f-string format specifiers ----
+
+def fmt_register(g: Gen, key: string, sig: string, body: string) -> Gen:
+    site = -1
+    i = 0
+    while i < g.fmt_key.len:
+        if as_string(vec_get(g.fmt_key, i)) == key:
+            site = i
+        i = i + 1
+    if site == -1:
+        name = "ax_fmt_" + str(g.fmtn)
+        g.fmtn = g.fmtn + 1
+        g.fmt_key = vec_push(g.fmt_key, as_ptr(key))
+        g.fmt_name = vec_push(g.fmt_name, as_ptr(name))
+        helper = "static char* " + name + "(" + sig + ") {\n" + body + "\n}"
+        g.fmt_text = vec_push(g.fmt_text, as_ptr(helper))
+        site = g.fmt_key.len - 1
+    g.text = as_string(vec_get(g.fmt_name, site))
+    return g
+
+def emit_str_fmt(g: Gen, e: int) -> Gen:
+    a = node_child(g.c.p, e)
+    if a == -1 or node_next(g.c.p, a) == -1:
+        return gerr(g, "codegen: str_fmt expects (value, spec)")
+    spec_node = node_child(g.c.p, node_next(g.c.p, a))
+    if node_next(g.c.p, spec_node) != -1:
+        return gerr(g, "codegen: str_fmt expects (value, spec)")
+    if node_tag(g.c.p, spec_node) != N_STR():
+        return gerr(g, "codegen: a non-literal str_fmt spec reached codegen")
+    spec_text = node_sval(g.c.p, spec_node)
+    # emit the value first: registering its own helpers must keep first-use
+    # order, exactly like the Rust emitter
+    g = emit_expr(g, node_child(g.c.p, a))
+    if g.err == 1:
+        return g
+    val = g.text
+    vk = g.rk
+    if vk == RK_FLOAT():
+        sp = fmt_parse_float(spec_text)
+        if sp.ok == 0:
+            return gerr(g, "codegen: " + sp.msg)
+        if fmt_spec_is_plain(sp) == 1:
+            g.used_str_f = 1
+            g.text = "ax_str_f(" + val + ")"
+            g.rk = RK_STR()
+            return g
+        cfmt = fmt_float_c(sp)
+        size = 64 + 320 + sp.prec + sp.width
+        lit = c_string_lit(cfmt)
+        body = "    char* buf = (char*)__builtin_malloc(" + str(size) + ");\n    __builtin_snprintf(buf, " + str(size) + ", " + lit + ", v);\n    return buf;"
+        g = fmt_register(g, "f:" + cfmt, "double v", body)
+        g.text = g.text + "(" + val + ")"
+        g.rk = RK_STR()
+        return g
+    if vk == RK_INT():
+        sp = fmt_parse_int(spec_text)
+        if sp.ok == 0:
+            return gerr(g, "codegen: " + sp.msg)
+        if fmt_spec_is_plain(sp) == 1:
+            g.used_str_i = 1
+            g.text = "ax_str_i(" + val + ")"
+            g.rk = RK_STR()
+            return g
+        if sp.kind != 98:
+            cfmt = fmt_int_c(sp)
+            size = 64 + sp.width
+            lit = c_string_lit(cfmt)
+            body = "    char* buf = (char*)__builtin_malloc(" + str(size) + ");\n    __builtin_snprintf(buf, " + str(size) + ", " + lit + ", v);\n    return buf;"
+            g = fmt_register(g, "i:" + cfmt, "long long v", body)
+            g.text = g.text + "(" + val + ")"
+            g.rk = RK_STR()
+            return g
+        # binary has no printf conversion: the width/zero flags are baked
+        # into a hand-written digit loop (the only helper that pads by hand)
+        padc = "' '"
+        zflag = "false"
+        if sp.zero == 1:
+            padc = "'0'"
+            zflag = "true"
+        body = "    unsigned long long u = v < 0 ? (0ULL - (unsigned long long)v) : (unsigned long long)v;\n    int neg = v < 0;\n    char tmp[65];\n    int n = 0;\n    if (u == 0) tmp[n++] = '0';\n    while (u > 0) { tmp[n++] = (char)(48 + (int)(u & 1ULL)); u >>= 1; }\n    int pad = " + str(sp.width) + " - n - (neg ? 1 : 0);\n    if (pad < 0) pad = 0;\n    char* buf = (char*)__builtin_malloc((unsigned long long)(n + pad + (neg ? 1 : 0) + 1));\n    int p = 0;\n    if (neg) buf[p++] = '-';\n    while (pad-- > 0) buf[p++] = " + padc + ";\n    while (n > 0) buf[p++] = tmp[--n];\n    buf[p] = 0;\n    return buf;"
+        g = fmt_register(g, "b:" + str(sp.width) + ":" + zflag, "long long v", body)
+        g.text = g.text + "(" + val + ")"
+        g.rk = RK_STR()
+        return g
+    return gerr(g, "codegen: str_fmt supports int and float only")
 
 # ---- raw memory builtins ----
 
@@ -3078,6 +3177,27 @@ def assemble(g: Gen, main_fni: int) -> Gen:
         s = s + "static char* ax_str_i(long long v) {\n    char* buf = (char*)__builtin_malloc(32);\n    __builtin_snprintf(buf, 32, \"%lld\", v);\n    return buf;\n}\n\n"
     if g.used_str_f == 1:
         s = s + "static char* ax_str_f(double v) {\n    char* buf = (char*)__builtin_malloc(64);\n    __builtin_snprintf(buf, 64, \"%f\", v);\n    return buf;\n}\n\n"
+    # f-string format helpers: DEFINITIONS in sorted key order (like the
+    # Rust emitter's BTreeMap); the names inside them stay first-use ordered
+    order = vec_new()
+    i = 0
+    while i < g.fmt_key.len:
+        j = order.len
+        order = vec_push(order, i)
+        while j > 0:
+            prev = as_string(vec_get(g.fmt_key, vec_get(order, j - 1)))
+            cur = as_string(vec_get(g.fmt_key, i))
+            if prev > cur:
+                vec_set(order, j, vec_get(order, j - 1))
+                vec_set(order, j - 1, i)
+                j = j - 1
+            else:
+                j = 0
+        i = i + 1
+    i = 0
+    while i < order.len:
+        s = s + as_string(vec_get(g.fmt_text, vec_get(order, i))) + "\n\n"
+        i = i + 1
     if g.used_raw == 1:
         s = s + "static long long ax_load_i64(long long a) { long long v; __builtin_memcpy(&v, (const void*)a, 8); return v; }\n"
         s = s + "static double ax_load_f64(long long a) { double v; __builtin_memcpy(&v, (const void*)a, 8); return v; }\n"

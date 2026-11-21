@@ -12,6 +12,9 @@ The tree includes generics, value-copy structs/arrays, byte strings, dicts,
 nullable narrowing, function pointers, exceptions and namespaces. This snapshot
 includes sizeof/addr_of, a Python re subset and the closing stdlib batch
 (27 of 31 roadmap items implemented, four explicit decisions with substitutes).
+The current tree also carries **unreleased** f-string format specifiers
+(`f"{x:.2f}"`, `f"{n:08x}"`, `f"{n:b}"`); CHANGELOG `[Unreleased]` tracks them
+and no release is implied.
 The TS front end is a subset, not a JS runtime. TOML package management, CSS
 assets, two API SDKs and a separate Tauri/Monaco IDE are included.
 
@@ -123,7 +126,9 @@ Aoxn 使用 Python 风格
 缩进与静态类型，Rust 编译器生成 ISO C，再调用 clang。编译器库无外部 Rust crate
 或 LLVM 库依赖。语言支持泛型、值复制结构体/数组、字节字符串、字典、可空收窄、
 函数指针、异常和命名空间。本快照含 sizeof/addr_of、re 子集及标准库收尾：
-31 项中 27 项有实现，4 项明确不做并提供替代，不是完整 Python 兼容。TS 前端为
+31 项中 27 项有实现，4 项明确不做并提供替代，不是完整 Python 兼容。当前树另含
+**未发布**的 f-string 格式化说明符（`f"{x:.2f}"`、`f"{n:08x}"`、`f"{n:b}"`），
+记录在 CHANGELOG 的 `[Unreleased]` 中，不代表发布。TS 前端为
 子集，另有 TOML 包管理、CSS、两个 SDK 和独立 IDE。
 
 Windows 为一等平台，Linux 编译器/可移植标准库/X11 自 0.46.0 起受支持。

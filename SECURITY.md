@@ -6,7 +6,8 @@
 
 **Compiler 0.55.0; released as pre-release tag `v0.55.0-snapshot-5`
 (2026-11-16).** Fixes target current
-0.55.x. Windows is first-class; Linux has an established compiler/stdlib/X11
+0.55.x. The tree also carries unreleased f-string format specifiers
+(CHANGELOG `[Unreleased]`). Windows is first-class; Linux has an established compiler/stdlib/X11
 baseline. The Linux HTTP, installer, socket and doctor changes were natively
 validated on 2026-11-16 (PR #11: Ubuntu 22.04/24.04 x86_64, Ubuntu 24.04 ARM64,
 macOS, Windows); Alpine/musl and native Wayland remain unverified. See
@@ -43,6 +44,10 @@ exponential time; use OS resource limits. Compiler recursion has stack limits.
 Random is not cryptographic; threads require synchronization. shutil link/depth
 guards are not permissions or race-free confinement. Logging writes chosen paths.
 Socket is blocking IPv4 TCP, not TLS; MSG_NOSIGNAL/fd0 fixes do not sanitize input.
+An f-string format specifier must be literal text: the compiler parses it
+(sign/zero/width/precision/kind, or base) and rebuilds the C format from those
+fields, so spec bytes never reach the emitted C; width is capped at 1024,
+precision at 512, and the selfhost mirror runs the same parse.
 
 ### HTTP, packages and installers
 
@@ -94,7 +99,7 @@ ide/src-tauri/audit.toml, not newly endorsed by this update.
 ## 中文
 
 编译器 0.55.0，已发布预发布标签 **v0.55.0-snapshot-5**（2026-11-16），修复当前
-0.55.x。Windows 为一等平台，Linux 已有编译器/库/X11 基线；本批 HTTP/安装器/
+0.55.x；树中另有未发布的 f-string 格式化说明符（CHANGELOG `[Unreleased]`）。Windows 为一等平台，Linux 已有编译器/库/X11 基线；本批 HTTP/安装器/
 socket/doctor 已由 2026-11-16 PR #11 原生验证（Ubuntu 22.04/24.04 x86_64、
 Ubuntu 24.04 ARM64、macOS、Windows）；Alpine/musl 与原生 Wayland 仍未验证；
 Intel macOS 无独立原生证据。
@@ -110,6 +115,8 @@ bool=C int，错误声明可产生 UB；Rust 只支持精确标量 ABI。字符�
 数组/裸内存不检查。sizeof/addr_of 无生命周期/所有权检查，结构体参数是副本，拼接泄漏，
 无 GC/通用内存安全保证。re 无预算可指数耗时、编译递归有栈限，需资源限制；random 非
 密码学，线程自己同步，shutil 守卫不是权限/消除竞态，logging 写指定路径，socket 非 TLS。
+f-string 说明符必须是字面文本：编译器解析符号/补零/宽度/精度/类型（或进制）后重建
+C 格式串，原文不进入生成 C；宽度上限 1024、精度上限 512，自举编译器使用同一解析。
 
 Windows 保留 WinHTTP；Linux/macOS 显式启用共享 libcurl Rust 桥。Linux 导入
 `stdlib/net/http_linux`，需 rustc/libcurl 开发文件/CA；macOS 用

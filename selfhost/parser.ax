@@ -386,6 +386,21 @@ def mk_call_str(p: PState, name: string, arg: int) -> PState:
     p.res_node = n
     return p
 
+def mk_call_str2(p: PState, name: string, arg1: int, arg2: int) -> PState:
+    p = new_node(p, N_CALL(), name, p.lit_id)
+    n = p.res_node
+    p.lit_id = p.lit_id + 1
+    p = new_node(p, N_ARG(), "", 0)
+    a = p.res_node
+    p = set_child(p, a, arg1)
+    p = append_child(p, n, a)
+    p = new_node(p, N_ARG(), "", 0)
+    a = p.res_node
+    p = set_child(p, a, arg2)
+    p = append_child(p, n, a)
+    p.res_node = n
+    return p
+
 # 深拷贝一棵表达式子树，返回副本的根节点。
 # 链式比较（a < b < c）和增强赋值（a[i] += 1）里，同一个操作数要出现
 # 两次，而 arena 节点没有共享引用，所以必须复制一份。
@@ -1697,8 +1712,9 @@ def parse_primary(p: PState) -> PState:
 
 def desugar_fstring(p: PState, raw: string) -> PState:
     # scan raw into lit/expr parts; then build "lit" + str(expr) + ...
-    pparts_kind = vec_new()   # 0 = lit, 1 = expr
+    pparts_kind = vec_new()   # 0 = lit, 1 = expr, 2 = formatted expr
     pparts_text = vec_new()
+    pparts_spec = vec_new()
     lit = ""
     i = 0
     rn = len(raw)
@@ -1716,6 +1732,7 @@ def desugar_fstring(p: PState, raw: string) -> PState:
             i = i + 1
             start = i
             depth = 0
+            spec_at = -1
             done = 0
             while done == 0:
                 if i >= rn:
@@ -1725,6 +1742,10 @@ def desugar_fstring(p: PState, raw: string) -> PState:
                     depth = depth + 1
                 elif c2 == 41 or c2 == 93:
                     depth = depth - 1
+                elif c2 == 58 and depth == 0 and spec_at == -1:
+                    # the first top-level ':' starts the format spec; a slice
+                    # colon lives inside '[' and therefore at depth > 0
+                    spec_at = i
                 elif c2 == 34:
                     i = i + 1
                     while i < rn and str_get(raw, i) != 34:
@@ -1734,9 +1755,25 @@ def desugar_fstring(p: PState, raw: string) -> PState:
                 elif c2 == 125 and depth == 0:
                     done = 1
                 i = i + 1
-            expr_text = str_slice(raw, start, i - 1 - start)
-            pparts_kind = vec_push(pparts_kind, 1)
-            pparts_text = vec_push(pparts_text, as_ptr(expr_text))
+            expr_end = i - 1
+            if spec_at != -1:
+                expr_end = spec_at
+            if expr_end <= start:
+                return perr(p, "empty '{}' in f-string")
+            expr_text = str_slice(raw, start, expr_end - start)
+            if spec_at == -1:
+                pparts_kind = vec_push(pparts_kind, 1)
+                pparts_text = vec_push(pparts_text, as_ptr(expr_text))
+            else:
+                spec_text = str_slice(raw, spec_at + 1, i - 1 - (spec_at + 1))
+                if spec_text == "":
+                    # `{x:}` is Python's default spelling, i.e. plain `str`
+                    pparts_kind = vec_push(pparts_kind, 1)
+                    pparts_text = vec_push(pparts_text, as_ptr(expr_text))
+                else:
+                    pparts_kind = vec_push(pparts_kind, 2)
+                    pparts_text = vec_push(pparts_text, as_ptr(expr_text))
+                    pparts_spec = vec_push(pparts_spec, as_ptr(spec_text))
             continue
         if c == 125:
             if i + 1 < rn and str_get(raw, i + 1) == 125:
@@ -1767,6 +1804,7 @@ def desugar_fstring(p: PState, raw: string) -> PState:
     # build the expression chain
     acc = -1
     i = 0
+    si = 0  # pparts_spec holds one entry per kind-2 part, not one per part
     while i < pparts_kind.len:
         if vec_get(pparts_kind, i) == 0:
             t = as_string(vec_get(pparts_text, i))
@@ -1784,8 +1822,17 @@ def desugar_fstring(p: PState, raw: string) -> PState:
             if p.err == 1:
                 return p
             value = p.res_node
-            p = mk_call_str(p, "str", value)
-            call = p.res_node
+            call = -1
+            if vec_get(pparts_kind, i) == 2:
+                # f"{x:.2f}" -> str_fmt(x, ".2f") for the checker/codegen
+                p = mk_lit_str(p, as_string(vec_get(pparts_spec, si)))
+                si = si + 1
+                spec_node = p.res_node
+                p = mk_call_str2(p, "str_fmt", value, spec_node)
+                call = p.res_node
+            else:
+                p = mk_call_str(p, "str", value)
+                call = p.res_node
             if acc == -1:
                 acc = call
             else:

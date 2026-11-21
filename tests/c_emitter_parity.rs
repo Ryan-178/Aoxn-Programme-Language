@@ -214,6 +214,41 @@ def main() -> int:
     return 0
 "#,
     ),
+    (
+        "fstring_format_specs",
+        r#"def main() -> int:
+    x = 3.14159
+    n = 255
+    print(f"{x:.2f}")
+    print(f"{x:.3e}")
+    print(f"{x:g}")
+    print(f"{n:08x}")
+    print(f"{n:X}")
+    print(f"{5:b}")
+    print(f"{-7:b}")
+    print(f"{n:o}")
+    print(f"{x:+10.2f}|")
+    print(f"{n: d}")
+    print(f"{x:.0f}")
+    print(f"{n:05b}")
+    print(f"{x:}")
+    print(f"x={n:03d}")
+    print(f"v={x:.2f} end")
+    print(f"{n} then {n:08x}")
+    return 0
+"#,
+    ),
+    (
+        "fstring_multiline",
+        r#"def main() -> int:
+    n = 7
+    x = 3.5
+    print(f"line1
+line2 {n:03d} {x:.2f}
+end")
+    return 0
+"#,
+    ),
 ];
 
 #[test]

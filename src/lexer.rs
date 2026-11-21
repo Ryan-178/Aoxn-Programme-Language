@@ -100,11 +100,13 @@ pub struct Token {
     pub pos: Pos,
 }
 
-/// part of an f-string: literal text or an embedded expression (pre-lexed)
+/// part of an f-string: literal text or an embedded expression (pre-lexed),
+/// optionally followed by a `:spec` format suffix
 #[derive(Debug, Clone, PartialEq)]
 pub enum FStrPart {
     Lit(String),
     ExprTokens(Vec<Token>),
+    Formatted { toks: Vec<Token>, spec: String },
 }
 
 pub fn lex(src: &str, file_id: u32) -> Result<Vec<Token>, Diag> {
@@ -767,6 +769,11 @@ impl<'c> Lexer<'c> {
                 adv!(self); // consume '{'
                 let start = self.i;
                 let mut depth: i32 = 0;
+                // The FIRST top-level `:` ends the expression and starts the
+                // format spec. Slices (`a[x:y]`) and parens are depth > 0,
+                // and Aoxn has no dict literals inside an interpolation, so
+                // any depth-0 colon is the spec separator.
+                let mut spec_at: Option<usize> = None;
                 loop {
                     if self.i >= self.end {
                         return Err(self.err(
@@ -788,6 +795,9 @@ impl<'c> Lexer<'c> {
                                 adv!(self);
                             }
                         }
+                        ':' if depth == 0 && spec_at.is_none() => {
+                            spec_at = Some(self.i);
+                        }
                         '}' if depth == 0 => break,
                         _ => {}
                     }
@@ -802,7 +812,8 @@ impl<'c> Lexer<'c> {
                 }
                 let close = self.i;
                 adv!(self); // consume '}'
-                let expr_text: String = self.chars[start..close].iter().collect();
+                let expr_end = spec_at.unwrap_or(close);
+                let expr_text: String = self.chars[start..expr_end].iter().collect();
                 if expr_text.trim().is_empty() {
                     return Err(self.err(
                         open_pos.line,
@@ -813,8 +824,14 @@ impl<'c> Lexer<'c> {
                 // lex the interpolation in place over the main buffer: the
                 // virtual paren disables indent tracking and the column
                 // offset keeps every token at its source column
-                let toks = lex_interpolation(self.chars, start, close, brace_col, self.file_id)?;
-                parts.push(FStrPart::ExprTokens(toks));
+                let toks = lex_interpolation(self.chars, start, expr_end, brace_col, self.file_id)?;
+                match spec_at {
+                    Some(sa) => {
+                        let spec: String = self.chars[sa + 1..close].iter().collect();
+                        parts.push(FStrPart::Formatted { toks, spec });
+                    }
+                    None => parts.push(FStrPart::ExprTokens(toks)),
+                }
                 continue;
             }
 

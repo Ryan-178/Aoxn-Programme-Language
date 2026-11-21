@@ -835,6 +835,26 @@ impl Parser {
                     let lit_id = self.lit_id();
                     exprs.push(Expr::Call { name: "str".into(), args: vec![Arg { name: None, value }], pos, lit_id });
                 }
+                FStrPart::Formatted { toks, spec } => {
+                    let mut sub = Parser { toks, idx: 0, next_lit_id: self.next_lit_id, cur_type_params: Vec::new(), cur_len_params: Vec::new() };
+                    let value = sub.expr()?;
+                    self.next_lit_id = sub.next_lit_id;
+                    let lit_id = self.lit_id();
+                    // `{x:}` is Python's default spelling, i.e. plain `str`.
+                    if spec.is_empty() {
+                        exprs.push(Expr::Call { name: "str".into(), args: vec![Arg { name: None, value }], pos, lit_id });
+                    } else {
+                        exprs.push(Expr::Call {
+                            name: "str_fmt".into(),
+                            args: vec![
+                                Arg { name: None, value },
+                                Arg { name: None, value: Expr::Str(spec, pos) },
+                            ],
+                            pos,
+                            lit_id,
+                        });
+                    }
+                }
             }
         }
         if exprs.is_empty() {
