@@ -1297,7 +1297,7 @@ def check_stmt(c: CState, stmt: int) -> CState:
         c = check_expr(c, e)
         if c.err == 1:
             return c
-        if ty_eq(c, c.r_ty, rty) == 0:
+        if assignable(c, rty, c.r_ty) == 0:
             return cerr(c, "'return' type mismatch: expected " + ty_display(c, rty) + ", found " + ty_display(c, c.r_ty))
         return c
     if t == N_RAISE():

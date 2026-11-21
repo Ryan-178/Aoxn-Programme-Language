@@ -18,9 +18,12 @@ The current tree also carries **unreleased** f-string format specifiers
 only), list/dict comprehensions (`[x * x for x in a]`, `{k: v for v in src if
 p}`; the list form keeps the source's length and so takes no filter), the
 `aoxn test` runner, a hashed dict index (lookups are O(1) average;
-insertion order and `dict_del` semantics are unchanged), and a deterministic
-fuzz suite pinning that arbitrary input never panics the compiler (it is
-reported as a diagnostic); CHANGELOG
+insertion order and `dict_del` semantics are unchanged), a deterministic
+fuzz suite -- token soup plus mutations of nine valid programs -- pinning that
+arbitrary input never panics the compiler (it is reported as a diagnostic),
+and two `T | None` conformance fixes (a plain `T` may be returned from a
+`T | None` function; a narrowed nullable struct answers field reads and
+writes); CHANGELOG
 `[Unreleased]` tracks them and no release is implied.
 The TS front end is a subset, not a JS runtime. TOML package management, CSS
 assets, two API SDKs and a separate Tauri/Monaco IDE are included.
@@ -147,8 +150,10 @@ Aoxn 使用 Python 风格
 测试运行器（发现并运行文件内全部
 `def test_*`，失败退出 1；也可传目录，跑目录直接子级里每个 `test_*.ax`，
 结束打印 SUMMARY）与字典哈希索引（查找平均 O(1)，插入序与 `dict_del`
-语义不变）、以及固定种子的模糊测试套件（任意输入不会令编译器 panic，
-一律作为诊断上报），记录在 CHANGELOG 的 `[Unreleased]` 中，不代表发布。TS 前端为
+语义不变）、固定种子的模糊测试套件（词法碎片 + 九个合法程序的结构化变异，任意
+输入不会令编译器 panic，一律作为诊断上报），以及两处 `T | None` 一致性修复
+（普通 `T` 可直接作为 `T | None` 函数的返回值；收窄后的可空结构体支持字段读写），
+记录在 CHANGELOG 的 `[Unreleased]` 中，不代表发布。TS 前端为
 子集，另有 TOML 包管理、CSS、两个 SDK 和独立 IDE。
 
 Windows 为一等平台，Linux 编译器/可移植标准库/X11 自 0.46.0 起受支持。

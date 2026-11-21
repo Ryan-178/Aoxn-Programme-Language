@@ -485,7 +485,13 @@ a bare `int`. Strings ride slots via `vec_push_str`/`vec_get_str`; f64 via
 inside the branch -- the narrowing is BRANCH-SCOPED: after the branch the
 variable is nullable again, unless the branch always returns); `x == None`
 is a type error; `print` and every operator reject a nullable until
-narrowed. `[1, None, 3]` infers `[int | None; 3]`.
+narrowed. `[1, None, 3]` infers `[int | None; 3]`. The same widening
+applies to `return`: a `T | None` function may `return` a plain `T`. Inside
+the narrowed branch the view covers field access too -- with `p: P | None`,
+`p.x` reads and `p.x = 9` writes the payload (`p.value.x`); routing the field
+base through `emit_lvalue` instead skips narrowing and dies with
+`cannot access field of P | None` (that is what `emit_field_base` exists for,
+mirrored in `selfhost/codegen.ax`).
 
 Function pointers: a bare function name in value position IS its address
 (`cb: fn(int) -> int = twice`, then `cb(21)`); `p = to_int(cb)` is the raw
@@ -910,7 +916,10 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   the end before any check could fire (a lone `\r` at EOF, and an f-string
   interpolation whose closing quote is the last character). Arbitrary bytes
   must always surface as a diagnostic — a panic is the bug. `tests/robustness.rs`
-  pins it with a deterministic (fixed-seed) fuzz over `compile_to_c`.
+  pins it with a deterministic (fixed-seed) fuzz over `compile_to_c`, and
+  `tests/robustness_deep.rs` mutates nine VALID programs (truncate / duplicate
+  line / splice fragments) so the resolver, the checker and the C emitter are
+  fuzzed with mostly-valid prefixes rather than token soup.
 - `//` is NOT a comment (it is int division); comments are `#` only.
 - Indent/dedent mismatch 鈫?lex error "unindent does not match any outer
   indentation level".

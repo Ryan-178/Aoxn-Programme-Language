@@ -1932,7 +1932,7 @@ def arith_op(op: int) -> string:
     return "%"
 
 def emit_field_expr(g: Gen, e: int) -> Gen:
-    g = emit_lvalue_or_expr(g, node_child(g.c.p, e))
+    g = emit_field_base(g, node_child(g.c.p, e))
     if g.err == 1:
         return g
     base = g.text
@@ -1994,6 +1994,27 @@ def emit_lvalue_or_expr(g: Gen, e: int) -> Gen:
         return emit_lvalue(g, e)
     return emit_expr(g, e)
 
+# the OBJECT of a field access: a narrowed nullable base reads its `.value`
+# payload (the view the checker took and emit_expr's VAR arm applies). Plain
+# emit_lvalue spells the whole carrier, which is right for an assignment
+# TARGET and wrong for a field read (`q.x` on a narrowed `P | None`).
+def emit_field_base(g: Gen, e: int) -> Gen:
+    if node_tag(g.c.p, e) == N_VAR():
+        name = node_sval(g.c.p, e)
+        if local_idx(g, name) != -1:
+            ty = local_tag(g, name)
+            if ty_tag(g.c, ty) == TY_OPT():
+                h = g_nar_get(g, name)
+                if h.r_ok == 1:
+                    if ty_tag(g.c, h.rt) != TY_NONE():
+                        g.text = c_ident(g, name) + ".value"
+                        g.rt = h.rt
+                        g.rk = tag_kind(ty_tag(g.c, h.rt))
+                        if g.rk == -1:
+                            g.rk = RK_STRUCT()
+                        return g
+    return emit_lvalue_or_expr(g, e)
+
 # rvalue/lvalue target text: variable, arr[i], obj.field
 def emit_lvalue(g: Gen, e: int) -> Gen:
     t = node_tag(g.c.p, e)
@@ -2023,7 +2044,7 @@ def emit_lvalue(g: Gen, e: int) -> Gen:
         return g
     if t == N_FIELDACCESS():
         obj = node_child(g.c.p, e)
-        g = emit_lvalue(g, obj)
+        g = emit_field_base(g, obj)
         if g.err == 1:
             return g
         base = g.text

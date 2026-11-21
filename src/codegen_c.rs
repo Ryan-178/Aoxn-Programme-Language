@@ -2268,6 +2268,29 @@ fn block_returns_all(block: &Block) -> bool {
         Ok((text, t))
     }
 
+    /// Emit the OBJECT of a field access. A narrowed nullable base reads its
+    /// `.value` payload (the view the checker took); everything else goes
+    /// through the ordinary lvalue/rvalue pick. `emit_lvalue` on its own
+    /// spells the whole carrier, which is right for an assignment TARGET and
+    /// wrong for a field read (`q.x` on a narrowed `P | None`).
+    fn emit_field_base(&mut self, obj: &Expr) -> Result<Type, String> {
+        if let Expr::Var { name, .. } = obj {
+            if matches!(self.locals.get(name), Some(Type::Opt(_))) {
+                if let Some(nt) = self.narrowed.get(name).cloned() {
+                    if nt != Type::None {
+                        self.out.push_str(&format!("{}.value", self.c_ident(name)));
+                        return Ok(nt);
+                    }
+                }
+            }
+        }
+        if obj.is_lvalue() {
+            self.emit_lvalue(obj)
+        } else {
+            self.emit_expr_inner(obj)
+        }
+    }
+
     fn emit_lvalue(&mut self, target: &Expr) -> Result<Type, String> {        match target {
             Expr::Var { name, .. } => {
                 let t = self
@@ -2312,7 +2335,7 @@ fn block_returns_all(block: &Block) -> bool {
                 Ok(elem)
             }
             Expr::Field { obj, name, .. } => {
-                let base_ty = self.emit_lvalue(obj)?;
+                let base_ty = self.emit_field_base(obj)?;
                 let sname = match &base_ty {
                     Type::Struct(s) => s.clone(),
                     other => return Err(format!("internal error: cannot access field of {other} at codegen")),
@@ -2554,11 +2577,7 @@ fn block_returns_all(block: &Block) -> bool {
                 Ok(Type::Str)
             }
             Expr::Field { obj, name, .. } => {
-                let base_ty = if obj.is_lvalue() {
-                    self.emit_lvalue(obj)?
-                } else {
-                    self.emit_expr_inner(obj)?
-                };
+                let base_ty = self.emit_field_base(obj)?;
                 let sname = match &base_ty {
                     Type::Struct(s) => s.clone(),
                     other => return Err(format!("internal error: cannot access field of {other} at codegen")),

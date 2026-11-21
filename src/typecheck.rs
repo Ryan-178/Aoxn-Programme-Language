@@ -657,7 +657,7 @@ impl<'a> Tc<'a> {
                     (Some(_), Type::Void) => Err(self.err(pos.line, pos.col, "void function cannot return a value")),
                     (Some(e), ret) => {
                         let t = self.check_expr(e, scopes)?;
-                        if t != *ret {
+                        if !assignable(ret, &t) {
                             return Err(self.err(pos.line, pos.col, format!("'return' type mismatch: expected {ret}, found {t}")));
                         }
                         Ok(())

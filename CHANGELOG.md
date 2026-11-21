@@ -5,6 +5,52 @@ minor bumps while pre-1.0: each minor version is a language milestone.
 
 ## [Unreleased]
 
+### Nullable returns and narrowed struct fields
+
+Two conformance bugs in the `T | None` carrier path, both surfaced by the new
+deep-mutation corpus below and both invisible to programs that widen through a
+`let`:
+
+- **A `return` of a plain `T` from a `T | None` function is now accepted.**
+  The checker compared the returned type with `==` while every binding
+  position used `assignable`, so `def maybe(flag: bool) -> int | None:
+  return 7` was a type error even though both C emitters already emitted the
+  widening coercion for it. The Return arm now asks `assignable`, which is the
+  rule the spec states (widening is implicit), and `selfhost/typecheck.ax`
+  mirrors it.
+- **A narrowed nullable struct answers field reads AND field writes.**
+  `p.x` inside `if p is not None:` (with `p: P | None`) died with
+  `internal error: cannot access field of P | None at codegen`: the field arms
+  emitted the base with `emit_lvalue`, which never applies narrowing (it is
+  right for an assignment target's own slot, wrong for a field base). Both
+  Rust arms now go through `emit_field_base` (a narrowed `Var` emits
+  `.value` and the inner type; every other base keeps the previous
+  lvalue/rvalue pick), mirrored as the same helper in `selfhost/codegen.ax`.
+
+Programs that compiled before emit byte-identical C: both changes only widen
+what the checker and the emitter accept, and the fallback path of
+`emit_field_base` is the code the arms ran before.
+
+New pins: `nullable_return_widens_implicitly` (runtime output, including the
+narrowed write) and the `nullable_return_widening` parity corpus case, which
+now also reads and writes a field of a narrowed struct so the selfhost mirror
+is compared byte-for-byte.
+
+### Deep mutation fuzzing of real programs
+
+`tests/robustness_deep.rs` mutates nine VALID programs (structs/arrays, tuples
+and multiple assignment, dict + `None` narrowing, fn pointers and
+comprehensions, `raise`/`try`, strings/slices/membership, generics, stdlib
+imports, nested control flow) instead of feeding token soup: each entry is
+first checked to still compile, then truncated at every byte boundary, spliced
+with duplicate lines, and spliced with fragments from the other entries — 3
+seeds x 9 bases x 4 modes x 80 cases, deterministic xorshift, no clock. Every
+input must come back as either C text or a diagnostic; a panic is the failure,
+printed with the source for byte-exact reproduction. The token-soup suite in
+`tests/robustness.rs` stays as the broad front end check; this one is aimed at
+the resolver, the checker and the C emitter, which only see mostly-valid
+prefixes.
+
 ### Arbitrary input never panics the compiler
 
 The lexer's `adv!` macro indexed `chars[i]` unconditionally, so two input
