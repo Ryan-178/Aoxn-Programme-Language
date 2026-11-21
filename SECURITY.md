@@ -50,7 +50,9 @@ fields, so spec bytes never reach the emitted C; width is capped at 1024,
 precision at 512, and the selfhost mirror runs the same parse.
 `aoxn test` generates a driver in the cache directory and compiles/runs the
 entry file's collected tests with the user's permissions, like `run`;
-discovery itself reads sources only and needs no clang.
+discovery itself reads sources only and needs no clang. Given a directory it
+repeats that compile/run for each `test_*.ax` directly inside it, and the file
+name filter means it never opens anything else in that directory.
 
 ### HTTP, packages and installers
 
@@ -121,7 +123,8 @@ bool=C int，错误声明可产生 UB；Rust 只支持精确标量 ABI。字符�
 f-string 说明符必须是字面文本：编译器解析符号/补零/宽度/精度/类型（或进制）后重建
 C 格式串，原文不进入生成 C；宽度上限 1024、精度上限 512，自举编译器使用同一解析。
 `aoxn test` 在缓存目录生成驱动并像 `run` 一样以用户权限编译/执行入口文件收集到的测试；
-发现阶段只读源码、不需要 clang。
+发现阶段只读源码、不需要 clang。传入目录时对直接子级里每个 `test_*.ax` 重复该编译/执行，
+文件名过滤意味着不会打开该目录里的其他文件。
 
 Windows 保留 WinHTTP；Linux/macOS 显式启用共享 libcurl Rust 桥。Linux 导入
 `stdlib/net/http_linux`，需 rustc/libcurl 开发文件/CA；macOS 用

@@ -110,7 +110,7 @@ v0.40.0 的唯一联合形式是 `T | None`，且 `dict[V]` 的**值类型只有
 小写 `nan`/`inf`/`copysign` 的**定义**会与 UCRT 链接符号冲突（数学 extern
 与其共享对象文件），大写/带后缀拼写是有意的。
 
-### 0.7 断言与运行器都齐了 —— `aoxn test <file.ax>`（unreleased 已闭合）
+### 0.7 断言与运行器都齐了 —— `aoxn test <file.ax|dir>`（unreleased 已闭合）
 
 v0.42.0 补上了 `assert(cond[, message])`：失败时打印
 `assertion failed at line N: message` 并 exit 1。所以**一个库现在可以自带
@@ -127,10 +127,14 @@ v0.42.0 补上了 `assert(cond[, message])`：失败时打印
   （`from "D:/…/suite.ax" import test_a, …`），逐个 `ut_add`，`ut_run` 之后
   以 `r.failed` 作退出码。驱动的 `main` 就是 C 入口，所以测试文件自己再写
   `def main` 也不冲突。
+- **目录模式**：`aoxn test <dir>` 对目录**直接子级**里每个 `test_*.ax` 依次跑
+  一遍（按字节排序；不递归，也不收集别的文件名），每个套件照常打印自己的
+  报告，最后一行 `SUMMARY files=N failed_suites=M`。失败套件**不中断**，而
+  编译/发现错误会中断——编译错误不是测试结果。目录里一个 `test_*.ax` 都没有
+  是错误；被选中的文件里没有用例同样是错误并报出文件名。
 - **不做的事**：发现阶段不调用 clang；没有新增语言特性，C 发射器没动，所以
   **没有 selfhost 镜像义务**；`aoxn test` 只在 Rust CLI 里（selfhost loader
-  仍拒绝选择性导入）。仍**没有**目录级发现（`aoxn test <dir>` / `test_*.ax`
-  约定）、fixture 类、setUp/tearDown、参数化。
+  仍拒绝选择性导入）。仍**没有**递归发现、fixture 类、setUp/tearDown、参数化。
 - stdlib 模块的**仓库级**验证仍落在 `tests/<name>.rs`（Rust 侧、内嵌 `.ax`
   源码并断言 PASS 标记），`aoxn test` 服务于**语言内自测**：一个 `.ax` 文件
   可以自带用例并一条命令跑完。示例 `examples/test_demo.ax`，CLI 钉在
@@ -242,7 +246,7 @@ v0.42.0 补上了 `assert(cond[, message])`：失败时打印
 | 28 | `math` | P0 | ✅ **已落地 v0.44.0** | `stdlib.ax` 已有 `sqrt/floor/ceil/abs/min/max/clamp/gcd/lcm/isqrt/is_prime/hypot`。v0.44.0 已补（FFI + `pi()/e()`，Python 风格名字），并内置 §0.6 工具箱（小写 `nan`/`inf`/`copysign` 定义撞 UCRT 链接符号，故 `NaN()/Inf()/copysign_f`）。 |
 | 29 | `random` | P1 | ✅ **已落地（unreleased）** | `stdlib/random.ax`：Park–Miller MINSTD（16807 / 2^31−1），拒绝采样消除取模偏差，错误不推进状态，跨进程可复现。**非密码学安全**；不提供系统熵 API（不用时间种子冒充）。不是 Python 的 Mersenne Twister 序列。 |
 | 30 | `typing` | P3 | ⚠️ 多数是 no-op | Aoxn **已经是静态类型 + 单态化**，`typing` 的运行时部分（`TypeVar`/`Generic`）在这里没有对应物。真正缺的是**别名与协议**：需要 `type X = Vec[int]` 形式的类型别名（spec roadmap 第 4 条「模块限定」的近邻）。**先别做**，文档里说明等价物即可。 |
-| 31 | `unittest` | P3 | ✅ **已落地（unreleased，降级形态）** | `stdlib/unittest.ax`：无类/无 `with`，改为**注册表 + fn-ptr**：`ut_suite()` + `ut_add(s, name, f: fn() -> void)` + `ut_run(s) -> TestReport`（通过/失败计数与失败名单）；断言是自由函数 `ut_assert_true/eq_i/eq_s/eq_f/raises`（失败经 `raise` 上报，`ut_run` 逐个捕获）。**不含** fixture 类、setUp/tearDown、参数化；用例发现由 `aoxn test <file.ax>` 提供（单文件，见 §0.7）。**仓库级测试基建仍是 `cargo test`**；本模块服务于语言内自测。`tests/unittest.rs` + `tests/aoxn_test.rs` + `examples/test_demo.ax`。 |
+| 31 | `unittest` | P3 | ✅ **已落地（unreleased，降级形态）** | `stdlib/unittest.ax`：无类/无 `with`，改为**注册表 + fn-ptr**：`ut_suite()` + `ut_add(s, name, f: fn() -> void)` + `ut_run(s) -> TestReport`（通过/失败计数与失败名单）；断言是自由函数 `ut_assert_true/eq_i/eq_s/eq_f/raises`（失败经 `raise` 上报，`ut_run` 逐个捕获）。**不含** fixture 类、setUp/tearDown、参数化；用例发现由 `aoxn test <file.ax|dir>` 提供（单文件，或目录直接子级的 `test_*.ax`，见 §0.7）。**仓库级测试基建仍是 `cargo test`**；本模块服务于语言内自测。`tests/unittest.rs` + `tests/aoxn_test.rs` + `examples/test_demo.ax`。 |
 
 ---
 
@@ -433,5 +437,5 @@ stdlib/re.ax ──────► lxml(10), beautifulsoup4(9)
 - [x] 双平台纪律：`tests/stdlib_defect_pins.rs` 的 Linux 折叠符号扫描覆盖
       threading/futures/shutil/net；路径分隔符扫描覆盖全部跨平台模块
 
-**遗留（不阻塞关闭，记录在案）**：`aoxn test` 的目录级发现（§0.7 已给出单文件
-运行器）、socket 的 Linux 原生执行证据（等 CI）、§5 第三方库全部未开工（范围外）。
+**遗留（不阻塞关闭，记录在案）**：`aoxn test` 的递归发现（当前只扫目录直接子级，
+§0.7）、socket 的 Linux 原生执行证据（等 CI）、§5 第三方库全部未开工（范围外）。

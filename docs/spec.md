@@ -893,12 +893,15 @@ for k in d:                 # walks KEYS, in insertion order
   (O3 default: the level selects the clang `-O` used to compile the generated C).
 - `Aoxn run file.ax [-- args...]` 闁?compile and run; the arguments after `--`
   reach the program through `argc()`/`arg(i)` (v0.42.0).
-- `Aoxn test file.ax [--O0|--O1] [-l lib] [--json] [-- args...]` (unreleased)
+- `Aoxn test <file.ax|dir> [--O0|--O1] [-l lib] [--json] [-- args...]` (unreleased)
   闁?discover the entry file's top-level `def test_*` functions (no
   parameters, no generics, `void` return; a signature the driver cannot call
   is a diagnostic), generate a driver that registers them with
-  `stdlib/unittest`, build it, run it and exit with the number of failed
-  tests. Discovery reads the AST only — `check`-like, no clang needed; the
+  `stdlib/unittest`, build it, run it and exit 1 if any test failed. A
+  directory argument runs each `test_*.ax` directly inside it (byte-sorted, no
+  recursion), continues past a failing suite and ends with
+  `SUMMARY files=N failed_suites=M`; a suite that will not compile stops the
+  run. Discovery reads the AST only — `check`-like, no clang needed; the
   entry is imported by absolute path, so the file may also declare `main`.
   Rust CLI only: the selfhost loader does not resolve selective imports.
 - `Aoxn c file.ax` 闁?print the generated C text (v0.29.0: the C-emitting
