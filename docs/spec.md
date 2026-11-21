@@ -837,6 +837,14 @@ copied by value like any struct.
 - Array literals infer through it: `[1, None, 3]` is `[int | None; 3]`.
 - `x == None` is rejected 闁?comparison operators want non-nullables; the
   test is `is`.
+- The narrowed view is the WHOLE variable, so a struct payload is reachable
+  through it: inside `if p is not None:` (with `p: P | None`) both the read
+  `p.x` and the assignment target `p.x = 9` address the payload
+  (`p.value.x`); the checker and both C emitters take the same view.
+- Returning a plain `T` from a `T | None` function widens implicitly, the
+  same coercion a `let` binding gets: `def maybe(flag: bool) -> int | None:`
+  may `return 7`. A `return` whose type is not assignable to the declared
+  return type is a type error as before.
 
 ## Function pointers (v0.40.0)
 

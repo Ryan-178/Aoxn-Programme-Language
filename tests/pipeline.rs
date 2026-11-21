@@ -3558,6 +3558,54 @@ fn array_literal_with_none_infers_nullable_elements() {
     assert_eq!(out, "none\n4\n");
 }
 
+/// Widening is implicit in RETURN position too (spec: "Widening
+/// `T -> T | None` ... is implicit"). The checker compared return types for
+/// equality, so `return 7` in a `-> int | None` function was rejected even
+/// though codegen already emitted the `.has = 1` carrier.
+#[test]
+fn nullable_return_widens_implicitly() {
+    let out = build_and_run(
+        r#"
+        struct P:
+            x: int
+            y: int
+
+        def maybe(flag: bool) -> int | None:
+            if flag:
+                return 7
+            return None
+
+        def word(flag: bool) -> string | None:
+            if flag:
+                return "yes"
+            return None
+
+        def pick(flag: bool) -> P | None:
+            if flag:
+                return P(x=1, y=2)
+            return None
+
+        def main() -> int:
+            m = maybe(True)
+            if m is not None:
+                print(m + 1)
+            z = maybe(False)
+            if z is None:
+                print("none")
+            w = word(True)
+            if w is not None:
+                print(w)
+            p = pick(True)
+            if p is not None:
+                print(p.x + p.y)
+                p.x = 9
+                print(p.x)
+            return 0
+        "#,
+    );
+    assert_eq!(out, "8\nnone\nyes\n3\n9\n");
+}
+
 /// a raise unwinds to the nearest handler, across frames; the normal path
 /// still works afterwards
 #[test]

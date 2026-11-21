@@ -48,6 +48,48 @@ def main() -> int:
 "#,
     ),
     (
+        // widening T -> T | None applies in RETURN position too (the checker
+        // used to demand equality, so this was rejected by both compilers
+        // while the emitters already built the carry)
+        "nullable_return_widening",
+        r#"struct P:
+    x: int
+    y: int
+
+def maybe(flag: bool) -> int | None:
+    if flag:
+        return 7
+    return None
+
+def word(flag: bool) -> string | None:
+    if flag:
+        return "yes"
+    return None
+
+def pick(flag: bool) -> P | None:
+    if flag:
+        return P(x=1, y=2)
+    return None
+
+def main() -> int:
+    m = maybe(True)
+    if m is not None:
+        print(m + 1)
+    z = maybe(False)
+    if z is None:
+        print("none")
+    w = word(True)
+    if w is not None:
+        print(w)
+    p = pick(True)
+    if p is not None:
+        print(p.x + p.y)
+        p.x = 9
+        print(p.x)
+    return 0
+"#,
+    ),
+    (
         "dict_basics",
         r#"def main() -> int:
     d: dict[int] = {}
