@@ -363,6 +363,15 @@ pub fn resolve(mut mods: Vec<Module>, order: &[usize], entries: &[usize]) -> Res
     // one of its names is spellable unqualified — which is why this rule
     // leaves the generated C of every existing program untouched, and why the
     // self-hosted fixed point still holds.
+    //
+    // The ENTRY module is the exception: it keeps every one of its own names
+    // bare even when an import declares the same one. The compiler was
+    // pointed AT it, and its `main` is the C entry point codegen looks for —
+    // mangling both owners made `import lib` (where lib happens to declare
+    // `main`) fail with "program has no 'main' function". Star imports never
+    // reach this rule (a second import binding a name the entry already
+    // declares is a resolve error), so the exception only changes programs
+    // that used namespace-qualified access.
     let mut visible: HashSet<String> = HashSet::new();
     for &i in order {
         for imp in &mods[i].imports {
@@ -402,13 +411,17 @@ pub fn resolve(mut mods: Vec<Module>, order: &[usize], entries: &[usize]) -> Res
 
     let mut members: Vec<HashMap<String, Member>> = vec![HashMap::new(); n];
     for (name, owners) in &providers {
+        // several entries may declare one name; the first keeps the bare
+        // spelling and the rest mangle, so flat names stay unique
+        let first_entry = owners.iter().copied().find(|mi| entries.contains(mi));
         for &mi in owners {
             // An extern's name IS the C symbol it links against (codegen
             // emits it verbatim), so it is never mangled — a prefixed extern
             // declares a symbol nothing defines. Two modules exporting the
             // same extern name then collide in typecheck ("defined more than
             // once"), which is the honest answer: one C symbol, one binding.
-            let bare = visible.contains(name) && owners.len() == 1;
+            let bare = visible.contains(name)
+                && (owners.len() == 1 || first_entry == Some(mi));
             let flat = if bare || externness.contains(&(mi, name.clone())) {
                 name.clone()
             } else {

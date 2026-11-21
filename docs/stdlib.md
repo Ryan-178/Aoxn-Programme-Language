@@ -702,6 +702,42 @@ as `FAIL name: message`, and the suite continues. Assertions:
 `TestReport{total, passed, failed}`. This does not replace `cargo test`
 (`tests/*.rs`) — it is for language-level self-tests.
 
+### Running a test file: `aoxn test <file.ax>`
+
+`aoxn test` (unreleased, Rust CLI only) discovers the entry file's
+`def test_*` functions and runs them — no hand-written driver:
+
+```aoxn
+# suite.ax — no main needed
+import * from "stdlib/unittest"
+
+def test_math():
+    ut_assert_eq_i(6 * 7, 42, "mul")
+
+def test_raises():
+    ut_assert_raises(fail_hard, "must raise")
+
+def fail_hard():
+    raise "expected"
+```
+
+```
+$ aoxn test suite.ax
+PASS test_math
+PASS test_raises
+TOTAL 2 PASSED 2 FAILED 0
+```
+
+A collectible test is a top-level non-extern `def test_*` with no params, no
+generics and a `void` return; anything else named `test_*` is a named
+diagnostic rather than a silent skip. discovery reads the AST only (no
+clang); only the ENTRY file is searched (imported modules' tests are not
+collected). The runner generates a driver in the cache directory that
+imports the entry selectively by absolute path, so a suite file may still
+declare its own `main`; the exit code is the number of failed tests
+(non-zero). `--json`, `-l/-L`, `--O0..--O3` pass through like the other
+commands. Example: `examples/test_demo.ax`.
+
 ## collections
 
 `import * from "stdlib/collections"` — deque, Counter and defaultdict helpers

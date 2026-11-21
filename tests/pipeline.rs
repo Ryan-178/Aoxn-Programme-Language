@@ -1501,6 +1501,21 @@ fn namespace_bare_specifier_finds_the_sibling_file() {
     assert_eq!(out, "42\n");
 }
 
+/// The entry module keeps its bare names even when a module it imports
+/// declares one too: its `main` is the C entry point, so mangling both
+/// owners used to leave every such program with "no 'main' function".
+#[test]
+fn namespace_import_does_not_steal_the_entry_main() {
+    let out = build_and_run_modules(
+        "entry-main",
+        &[
+            ("lib.ax", "def main() -> int:\n    return 7\n\ndef area() -> int:\n    return 12\n"),
+            ("main.ax", "import lib\n\ndef main() -> int:\n    print(lib.area())\n    return 0\n"),
+        ],
+    );
+    assert_eq!(out, "12\n");
+}
+
 #[test]
 fn python_star_import_merges_the_whole_module() {
     let out = build_and_run_modules(

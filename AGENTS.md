@@ -163,6 +163,7 @@ cargo run -- run selfhost\driver_self_demo.ax  # fixed point: Aoxn compiler comp
 cargo run -- build examples\fib.ax -o f.exe   # emit a native executable (clang -O3 default)
 cargo run -- c examples\fib.ax                # print the generated C (`ir` is a deprecated alias)
 cargo run -- check examples\fib.ax            # type-check only: run the pipeline, print diagnostics, no C text (v0.31.1; what the IDE's Check button drives)
+cargo run -- test examples\test_demo.ax       # run every top-level `def test_*` in the file via stdlib/unittest (v1; exit 1 if any fails)
 cargo run -- symbols examples\fib.ax          # top-level declarations with signatures and positions, incl. every import (v0.35.0; no clang 鈥?what the IDE's outline / go-to-definition / symbol search read)
 cargo run -- run bad.ax --json                # diagnostics as JSON for agent consumption
 cargo run -- run examples\fib.ax --O1         # clang -O1: fast compile (O3 stays the default)
@@ -172,6 +173,18 @@ cargo run -- doctor                                         # toolchain self-che
 cargo run -- doctor --json                                  # same, machine-readable
 cargo run -- version
 ```
+
+**`aoxn test <file.ax>` (v1)**: discovery is a filter over the loaded AST
+(`src/testcmd.rs`), and the driver it generates lives in the build-cache
+directory. Four rules are load-bearing: (1) only the ENTRY file's `def test_*`
+run — an imported helper exporting a `test_`-looking name is not a test of the
+file under test; (2) a test that cannot be called (`fn() -> void`, no params,
+no generics) is a named diagnostic, never a silent skip; (3) the driver
+imports the entry SELECTIVELY by absolute path (`from "<abs>" import ...`), so
+the entry's own `main` is not imported and the driver's `main` is the C entry
+point — which is exactly why `resolve` keeps the first ENTRY owner's bare
+spelling; (4) discovery never invokes clang (only the build does), and there is
+no selfhost mirror — `test` is a Rust-CLI feature.
 
 **Installing (v0.30.0, window rewritten in v0.37.0)**: the shipped artifact is ONE
 file, `Aoxn-<version>-Setup.exe` 鈥?the installer stub (`src/setup/`) with the
@@ -515,7 +528,7 @@ rejects fn-pointer parameters (threads go through
 | `"stdlib/sys"` | `sys_argv()` -> Vec, `sys_argc`, `sys_platform`, `sys_executable`, `sys_exit`, `sys_maxsize` (no modules/paths/recursion-limit machinery) |
 | `"stdlib/argparse"` | `ap_new/ap_opt/ap_flag/ap_pos` (write-back), `ap_parse(ap, args: Vec)` -> `ArgResult{err,values: dict[string],help_requested}`, `ap_get/ap_to_int/ap_help`; `--name=v`, `--name v`, `-s`, `--` terminator; no subparsers |
 | `"stdlib/logging"` | `log_new(name)` -> `Logger` (write-back `log_set_level/log_add_file/log_set_stdout`), `log_debug/info/warning/error/critical`; levels `LOG_*()` 10-50; file sink APPENDS; line `YYYY-MM-DD HH:MM:SS LEVEL name: msg`; no handlers/formatters/filters |
-| `"stdlib/unittest"` | function-based: `ut_suite`, `ut_add(s, name, f: fn() -> void)` (write-back), `ut_run` -> `TestReport`, `ut_assert_true/eq_i/eq_s/eq_f/raises` (raise-based, caught per test); no classes/fixtures; `aoxn test` runner still missing |
+| `"stdlib/unittest"` | function-based: `ut_suite`, `ut_add(s, name, f: fn() -> void)` (write-back), `ut_run` -> `TestReport`, `ut_assert_true/eq_i/eq_s/eq_f/raises` (raise-based, caught per test); no classes/fixtures — run a file's `def test_*` with `aoxn test <file.ax>` |
 | `"stdlib/ui_win"` (Windows: `-l user32 -l gdi32`) or `"stdlib/ui_x11"` (Linux) -- ONE import pulls the whole toolkit (`ui.ax` core + `ui_draw.ax` widget layer + the backend) | immediate-mode widget toolkit -- `docs/ui.md`, `examples/ui_gallery.ax` |
 | `"stdlib/net/http"` (Windows: `-l winhttp`) / `"stdlib/net/codec"` / `"stdlib/net/sse"` | HTTP transport, UTF-16/base64/url-encode helpers, SSE frames |
 | `"stdlib/openai/client"` / `"stdlib/anthropic/client"` (+ `blocks`, `tools`) | the two API SDKs (`oa_*` / `an_*`) -- `docs/openai-sdk.md`, `docs/anthropic-sdk.md` |
@@ -693,7 +706,8 @@ stdin (no `input()`); `inf`/`nan` literals (`math.NaN()` / `math.Inf()`);
   鈫?src/typecheck.rs  strict check + FnSig table + GENERIC monomorphizer
   鈫?src/codegen_c.rs  ISO C text 鈫?clang -c 鈫?object file (clang -O<n> -w -c)
   鈫?src/lib.rs        load imports (src/files.rs registry) 鈫?link via clang 鈫?executable
-src/main.rs           CLI (build / run / c / pkg...), --json diagnostics, -l/-L link flags, --clang-arg/-g/--cc-warnings
+src/main.rs           CLI (build / run / test / c / pkg...), --json diagnostics, -l/-L link flags, --clang-arg/-g/--cc-warnings
+src/testcmd.rs        `aoxn test`: discovery filter over the loaded AST + driver generation (no clang, no selfhost mirror)
 crates/aoxn-pkg       package manager crate (its own dependency set; see above)
 ```
 
@@ -745,7 +759,12 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
     origin is what makes both SDKs fail to compile.
   - **An entry module's own names are always visible** 鈥?`entries` is passed
     to `resolve` for exactly this. Without it every program's `main` would
-    be prefixed.
+    be prefixed. Since v1 the entry also KEEPS the bare spelling when an
+    import declares the same name (the first entry owner wins; the rest
+    mangle): mangling BOTH owners made a namespace import of a module that
+    declares `main` fail with "program has no 'main' function". Star imports
+    never reach that rule (a second binding of the entry's own name is a
+    resolve error), so only namespace-qualified programs changed.
   - **Extern names are never mangled** (`externness` from `f.is_extern`): an
     `extern def` IS a C symbol and codegen emits it verbatim, so a prefix
     would link against a name that does not exist. This also keeps the Rust
@@ -1250,7 +1269,8 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   `stdlib`/`stdlib/<module>` through `AOXN_STDLIB`/`AOXN_HOME/lib/stdlib`
   (cwd `stdlib/` fallback).
   **Still outside the selfhost CLI**: package-manager commands (explicitly
-  rejected, never forwarded to Rust), CSS assets / `--emit-assets` /
+  rejected, never forwarded to Rust), `test` (it needs the selective imports
+  the selfhost loader refuses), CSS assets / `--emit-assets` /
   `--tailwind`, Rust `.rs` imports (same loader-level boundary as CSS),
   namespace/selective imports, build-command caching (run only),
   and full doctor parity (no installed-root/examples rows, no arch in
@@ -1615,7 +1635,7 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   design in `stdlib/json.ax` (kind / i64 / f64 / ptrA / ptrB) is the
   in-repo pattern for dynamic values. (argv landed in v0.42.0 鈥?`argc()` /
   `arg(i)`, see the language rules above 鈥?so `sys`/`argparse` are unblocked;
-  what is still missing is a test runner, see `docs/stdlib-todo.md` 搂0.7.)
+  the test runner landed as `aoxn test`, see `docs/stdlib-todo.md` 搂0.7.)
   And **there is no `inf`/`nan` literal and float division by zero is emitted
   raw** (`Div => "/"`), so every numeric library must ship a guarded `fdiv`
   and synthesize NaN via `log(-1.0)`.
@@ -1723,7 +1743,8 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
     and caps recursion at `SHUTIL_MAX_DEPTH()` (64); `url_parse` answers a
     CLEAN zero `Url` (`ok = 0`) on every invalid input, never a partial one.
   - **unittest is function-based** (`fn() -> void` tests, raise-based asserts
-    caught per test); there is still no `aoxn test` runner (§0.7).
+    caught per test); `aoxn test <file.ax>` discovers and runs a file's
+    `def test_*` (Rust CLI only — see §0.7 in `docs/stdlib-todo.md`).
 - **A stdlib module that NAMES one platform's API and nothing else does not
   link on the other one** (v0.50.1 fixed exactly this in `time.ax` +
   `datetime.ax`: `clang: error: linker command failed` with `undefined
