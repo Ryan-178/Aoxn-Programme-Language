@@ -103,7 +103,10 @@ new security audit results are claimed. Windows package tests use
 `cargo test --manifest-path ide/src-tauri/Cargo.toml`.
 
 check/c/symbols do not invoke clang/rustc; test discovers tests without clang,
-then builds and runs them like build. build/run need clang, .rs additionally
+then builds and runs them like build. test also accepts a directory and runs
+each test_*.ax directly inside it (sorted, no recursion), continuing past
+failing suites and ending with SUMMARY files=N failed_suites=M. build/run need
+clang, .rs additionally
 needs rustc. --O0 through --O3 select clang optimization (default O3).
 AOXN_CLANG/AOXN_RUSTC select tools; AOXN_HOME/AOXN_STDLIB select paths;
 AOXN_NO_CACHE=1 disables the build/run cache and AOXN_CACHE_DIR relocates it.
@@ -130,7 +133,8 @@ Aoxn 使用 Python 风格
 函数指针、异常和命名空间。本快照含 sizeof/addr_of、re 子集及标准库收尾：
 31 项中 27 项有实现，4 项明确不做并提供替代，不是完整 Python 兼容。当前树另含
 **未发布**的 f-string 格式化说明符（`f"{x:.2f}"`、`f"{n:08x}"`、`f"{n:b}"`）
-与 `aoxn test` 测试运行器（发现并运行文件内全部 `def test_*`，失败退出 1），
+与 `aoxn test` 测试运行器（发现并运行文件内全部 `def test_*`，失败退出 1；
+也可传目录，跑目录直接子级里每个 `test_*.ax`，结束打印 SUMMARY），
 记录在 CHANGELOG 的 `[Unreleased]` 中，不代表发布。TS 前端为
 子集，另有 TOML 包管理、CSS、两个 SDK 和独立 IDE。
 

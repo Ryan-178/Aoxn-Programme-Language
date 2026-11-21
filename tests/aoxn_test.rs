@@ -186,6 +186,110 @@ fn a_test_that_cannot_be_called_is_named() {
     assert!(err.contains("bad.ax:1:"), "{err}");
 }
 
+/// A directory runs each `test_*.ax` directly inside it, sorted, and ignores
+/// everything else: a non-matching file, a helper without tests, a nested
+/// directory.
+#[test]
+fn a_directory_runs_each_test_file_in_sorted_order() {
+    if !need_clang() {
+        return;
+    }
+    let s = Scratch::new("dir-pass");
+    s.write(
+        "test_a.ax",
+        "import * from \"stdlib/unittest\"
+
+def test_from_a():
+    ut_assert_true(1 < 2, \"a\")
+",
+    );
+    s.write(
+        "test_b.ax",
+        "import * from \"stdlib/unittest\"
+
+def test_from_b():
+    ut_assert_eq_s(\"x\" + \"y\", \"xy\", \"b\")
+",
+    );
+    s.write("notes.ax", "def helper() -> int:
+    return 1
+");
+    s.write(
+        "nested/test_c.ax",
+        "def test_nested():
+    raise \"must not run\"
+",
+    );
+    let (code, out, err) = run_test(&s, &s.0.clone(), &[]);
+    assert_eq!(code, 0, "stdout: {out}
+stderr: {err}");
+    assert!(out.contains("PASS test_from_a"), "{out}");
+    assert!(out.contains("PASS test_from_b"), "{out}");
+    assert!(!out.contains("test_nested"), "nested directories are not walked: {out}");
+    assert!(
+        out.find("PASS test_from_a") < out.find("PASS test_from_b"),
+        "suites run in sorted order: {out}"
+    );
+    assert!(out.contains("SUMMARY files=2 failed_suites=0"), "{out}");
+}
+
+/// A failing suite does not stop the directory run; the summary counts it
+/// and the command exits 1.
+#[test]
+fn a_directory_reports_a_failing_suite_and_exits_one() {
+    if !need_clang() {
+        return;
+    }
+    let s = Scratch::new("dir-fail");
+    s.write(
+        "test_a.ax",
+        "import * from \"stdlib/unittest\"
+
+def test_ok():
+    ut_assert_true(1 < 2, \"ok\")
+",
+    );
+    s.write(
+        "test_b.ax",
+        "import * from \"stdlib/unittest\"
+
+def test_bad():
+    ut_assert_eq_i(1, 2, \"one is not two\")
+",
+    );
+    let (code, out, err) = run_test(&s, &s.0.clone(), &[]);
+    assert_eq!(code, 1, "stdout: {out}
+stderr: {err}");
+    assert!(out.contains("PASS test_ok"), "{out}");
+    assert!(out.contains("FAIL test_bad"), "{out}");
+    assert!(out.contains("SUMMARY files=2 failed_suites=1"), "{out}");
+}
+
+#[test]
+fn a_directory_without_test_files_is_an_error() {
+    let s = Scratch::new("dir-none");
+    s.write("suite.ax", "def helper() -> int:
+    return 1
+");
+    let (code, _out, err) = run_test(&s, &s.0.clone(), &[]);
+    assert_eq!(code, 1);
+    assert!(err.contains("no `test_*.ax` files"), "{err}");
+}
+
+/// A file the directory rule picked up but that declares no test is named,
+/// not silently counted as a passing suite.
+#[test]
+fn a_test_file_without_tests_in_a_directory_is_named() {
+    let s = Scratch::new("dir-empty");
+    s.write("test_empty.ax", "def helper() -> int:
+    return 1
+");
+    let (code, _out, err) = run_test(&s, &s.0.clone(), &[]);
+    assert_eq!(code, 1);
+    assert!(err.contains("no top-level `def test_*(...)` functions"), "{err}");
+    assert!(err.contains("test_empty.ax"), "{err}");
+}
+
 #[test]
 fn json_diagnostics_come_from_the_real_build() {
     if !need_clang() {

@@ -230,8 +230,8 @@ fn print_help() {
          Aoxn c <file.ax> [--json]                            print the generated C\n  \
          Aoxn check <file.ax> [--json]                        type-check: run the pipeline, print only\n  \
                                                            diagnostics (no C text, no clang)\n  \
-         Aoxn test <file.ax> [--O0|--O1] [--json] [-l lib]    run every top-level `def test_*` in the file\n  \
-                                                           through stdlib/unittest; exit 1 if any fails\n  \
+         Aoxn test <file.ax|dir> [--O0|--O1] [--json] [-l lib]  run every top-level `def test_*` in the file\n  \
+                                                           (a dir: each `test_*.ax` directly inside it)\n  \
          Aoxn symbols <file.ax> [--json]                      list top-level declarations with positions\n  \
                                                            (the editor's language service: no clang)\n  \
          Aoxn doctor [--json] [--no-smoke]                   check the installed toolchain\n  \
@@ -495,7 +495,8 @@ fn cmd_run(args: &[String]) {
     std::process::exit(status);
 }
 
-/// `Aoxn test`: run the entry file's top-level `def test_*` functions.
+/// `Aoxn test`: run the top-level `def test_*` functions of a file, or of
+/// every `test_*.ax` directly inside a directory.
 ///
 /// Discovery reads the loaded program's AST (so imports must resolve), then
 /// a driver is generated that imports exactly those functions and registers
@@ -503,36 +504,107 @@ fn cmd_run(args: &[String]) {
 /// directory (the entry is imported by its absolute path), and the compiled
 /// test binary is removed after the run: the product is the PASS/FAIL text
 /// and the exit code, not an artifact.
+///
+/// A directory runs its suites in sorted order, then prints
+/// `SUMMARY files=N failed_suites=M`. A suite that will not compile is a
+/// compile error, not a test result: it prints the diagnostics and stops the
+/// run (later suites are not run against a broken tree).
 fn cmd_test(args: &[String]) {
     let opts = parse_opts(args);
     if opts.positional.is_empty() {
-        eprintln!("error: 'Aoxn test' needs an input file (.ax)");
+        eprintln!("error: 'Aoxn test' needs an input file (.ax) or a directory");
         std::process::exit(2);
     }
     if opts.positional.len() > 1 {
-        eprintln!("error: 'Aoxn test' takes one input file (got {})", opts.positional.len());
+        eprintln!("error: 'Aoxn test' takes one input (got {})", opts.positional.len());
         std::process::exit(2);
     }
-    let tests = match aoxn::discover_tests(&opts.positional) {
+    let target = PathBuf::from(&opts.positional[0]);
+    if !target.is_dir() {
+        std::process::exit(match run_suite(&opts, &target, 0) {
+            Ok(code) => code,
+            Err(()) => 1,
+        });
+    }
+    let files = match test_suite_files(&target) {
+        Ok(files) if files.is_empty() => {
+            eprintln!("error: no `test_*.ax` files in {}", target.display());
+            std::process::exit(1);
+        }
+        Ok(files) => files,
+        Err(e) => {
+            eprintln!(
+                "error: cannot read {}: {}",
+                target.display(),
+                aoxn::io_reason_for(&e, &target, aoxn::IoTarget::Dir)
+            );
+            std::process::exit(1);
+        }
+    };
+    let mut failed = 0;
+    for (i, file) in files.iter().enumerate() {
+        match run_suite(&opts, file, i) {
+            Ok(code) => {
+                if code != 0 {
+                    failed += 1;
+                }
+            }
+            Err(()) => std::process::exit(1),
+        }
+    }
+    println!("SUMMARY files={} failed_suites={}", files.len(), failed);
+    std::process::exit(if failed > 0 { 1 } else { 0 });
+}
+
+/// The files `Aoxn test <dir>` runs: `test_*.ax` DIRECTLY inside `dir`,
+/// sorted so the report order is stable. No recursion on purpose — a suite
+/// directory is a flat list, and a hidden walk would quietly pick up files
+/// the author never meant to run.
+fn test_suite_files(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if name.starts_with("test_") && path.extension().and_then(|e| e.to_str()) == Some("ax") {
+            files.push(path);
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// One suite: discover, generate the driver, build, run. `Ok(code)` is the
+/// test binary's exit status; `Err(())` means diagnostics were already
+/// printed (discovery, driver or build failed) and the caller exits 1.
+///
+/// `idx` keeps the driver name unique when one `Aoxn test` run walks several
+/// files whose sanitized stems collide (`test-a.ax` and `test_a.ax`).
+fn run_suite(opts: &Opts, entry: &Path, idx: usize) -> Result<i32, ()> {
+    let tests = match aoxn::discover_tests(&[entry.to_string_lossy().into_owned()]) {
         Ok(t) => t,
         Err(diags) => {
             report(&diags, opts.json);
-            std::process::exit(1);
+            return Err(());
         }
     };
     if tests.is_empty() {
         eprintln!(
             "error: no top-level `def test_*(...)` functions in {}",
-            opts.positional[0]
+            entry.display()
         );
-        std::process::exit(1);
+        return Err(());
     }
-    let entry = PathBuf::from(&opts.positional[0]);
-    let source = match aoxn::testcmd::driver_source(&entry, &tests) {
+    let source = match aoxn::testcmd::driver_source(entry, &tests) {
         Ok(s) => s,
         Err(msg) => {
             eprintln!("error: {msg}");
-            std::process::exit(1);
+            return Err(());
         }
     };
     let stem: String = entry
@@ -542,15 +614,19 @@ fn cmd_test(args: &[String]) {
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
         .collect();
-    let driver = cache_dir().join(format!("aoxn_test_{stem}_{}.ax", std::process::id()));
-    let exe = cache_dir().join(format!("aoxn_test_{stem}_{}{}", std::process::id(), exe_suffix()));
+    let driver = cache_dir().join(format!("aoxn_test_{stem}_{}_{idx}.ax", std::process::id()));
+    let exe = cache_dir().join(format!(
+        "aoxn_test_{stem}_{}_{idx}{}",
+        std::process::id(),
+        exe_suffix()
+    ));
     if let Err(e) = std::fs::write(&driver, &source) {
         eprintln!(
             "error: cannot write the test driver {}: {}",
             driver.display(),
             aoxn::io_reason_for(&e, &driver, aoxn::IoTarget::File)
         );
-        std::process::exit(1);
+        return Err(());
     }
     let built = aoxn::build_paths_opts_lvl(
         &[driver.display().to_string()],
@@ -563,12 +639,12 @@ fn cmd_test(args: &[String]) {
     if let Err(diags) = built {
         let _ = std::fs::remove_file(&exe);
         report(&diags, opts.json);
-        std::process::exit(1);
+        return Err(());
     }
     report_ok(opts.json);
     let code = run_exe(&exe, &opts.passthrough);
     let _ = std::fs::remove_file(&exe);
-    std::process::exit(code);
+    Ok(code)
 }
 
 fn cmd_c(args: &[String]) {

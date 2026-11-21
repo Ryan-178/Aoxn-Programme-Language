@@ -28,7 +28,7 @@ also indexed its spec list by the part index, which read past the end
 whenever a literal prefix preceded a spec — fixed and pinned by that same
 parity case.
 
-### `aoxn test <file.ax>` — the missing test runner
+### `aoxn test` — the missing test runner
 
 `aoxn test` closes the gap `docs/stdlib-todo.md` §0.7 described: a file can
 now carry its own tests and one command discovers, runs and summarizes them.
@@ -44,8 +44,15 @@ exit code; the driver's `main` is the C entry, so a test file may still
 declare its own `main` without colliding. No clang is needed at discovery
 time, no language feature was added, and the C emitter is untouched, so
 there is no selfhost mirror obligation (`aoxn test` is Rust-CLI only — the
-selfhost loader refuses selective imports). Example:
-`examples/test_demo.ax`; CLI pins in `tests/aoxn_test.rs`; unit pins for
+selfhost loader refuses selective imports).
+
+`aoxn test <dir>` takes a directory instead of a file: it runs every
+`test_*.ax` DIRECTLY inside it (byte-sorted, nothing recursive and nothing
+else picked up) and prints `SUMMARY files=N failed_suites=M` after the
+per-suite reports. A failing suite does not stop the run; a suite that will
+not compile prints its diagnostics and stops it, because a compile error is
+not a test result. Example: `examples/test_demo.ax`; CLI pins in
+`tests/aoxn_test.rs`; unit pins for
 the filter and driver text in `src/testcmd.rs`.
 
 ### Fix: an import no longer steals the entry's `main`

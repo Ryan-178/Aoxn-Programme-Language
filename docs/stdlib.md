@@ -702,10 +702,12 @@ as `FAIL name: message`, and the suite continues. Assertions:
 `TestReport{total, passed, failed}`. This does not replace `cargo test`
 (`tests/*.rs`) — it is for language-level self-tests.
 
-### Running a test file: `aoxn test <file.ax>`
+### Running test files: `aoxn test <file.ax|dir>`
 
 `aoxn test` (unreleased, Rust CLI only) discovers the entry file's
-`def test_*` functions and runs them — no hand-written driver:
+`def test_*` functions and runs them — no hand-written driver. Given a
+directory instead, it runs every `test_*.ax` directly inside it (byte-sorted,
+no recursion) and ends with `SUMMARY files=N failed_suites=M`:
 
 ```aoxn
 # suite.ax — no main needed
@@ -734,8 +736,10 @@ diagnostic rather than a silent skip. discovery reads the AST only (no
 clang); only the ENTRY file is searched (imported modules' tests are not
 collected). The runner generates a driver in the cache directory that
 imports the entry selectively by absolute path, so a suite file may still
-declare its own `main`; the exit code is the number of failed tests
-(non-zero). `--json`, `-l/-L`, `--O0..--O3` pass through like the other
+declare its own `main`; the exit code is 1 when any test failed, else 0. The
+directory mode repeats this per `test_*.ax`, continues past a failing suite,
+and stops at the first suite that will not compile (a compile error is not a
+test result). `--json`, `-l/-L`, `--O0..--O3` pass through like the other
 commands. Example: `examples/test_demo.ax`.
 
 ## collections
