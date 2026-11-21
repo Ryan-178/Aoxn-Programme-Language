@@ -571,6 +571,11 @@ fn collect_locals(blk: &Block, out: &mut HashSet<String>) {
             Stmt::Let { name, .. } => {
                 out.insert(name.clone());
             }
+            Stmt::MultiLet { names, .. } => {
+                for n in names {
+                    out.insert(n.clone());
+                }
+            }
             Stmt::If { then_block, else_block, .. } => {
                 collect_locals(then_block, out);
                 if let Some(b) = else_block {
@@ -653,6 +658,7 @@ impl<'a> Ctx<'a> {
             Type::Struct(name) => Type::Struct(self.name_in(name)),
             Type::Opt(i) => Type::Opt(Box::new(self.ty(i))),
             Type::Dict(i) => Type::Dict(Box::new(self.ty(i))),
+            Type::Tuple(elems) => Type::Tuple(elems.iter().map(|e| self.ty(e)).collect()),
             Type::Array { elem, len } => Type::Array { elem: Box::new(self.ty(elem)), len: *len },
             Type::FnPtr { ret, params } => Type::FnPtr {
                 ret: Box::new(self.ty(ret)),
@@ -724,6 +730,7 @@ impl<'a> Ctx<'a> {
                 self.block(handler);
             }
             Stmt::ExprStmt { expr } => self.expr(expr),
+            Stmt::MultiLet { expr, .. } => self.expr(expr),
             Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Pass => {}
         }
     }
@@ -796,6 +803,11 @@ impl<'a> Ctx<'a> {
                 }
             }
             Expr::ArrayRep { elem, .. } => self.expr(elem),
+            Expr::TupleLit { elems, .. } => {
+                for el in elems.iter_mut() {
+                    self.expr(el);
+                }
+            }
             Expr::DictLit { entries, .. } => {
                 for (k, v) in entries.iter_mut() {
                     self.expr(k);

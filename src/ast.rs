@@ -17,6 +17,13 @@ pub enum Type {
     Dict(Box<Type>),
     Array { elem: Box<Type>, len: usize },
     Struct(String),
+    /// `(T1, T2, ...)` — a tuple (unreleased). Structural: two spellings are
+    /// the same type when their element types match. The C representation is
+    /// an anonymous struct (`ax_tuple_<tokens>`), so assignment/param/return
+    /// copy by value exactly like a struct and the aggregate sret ABI applies
+    /// unchanged. Elements are read by a LITERAL index (`t[0]`); a dynamic
+    /// index has no static type and is rejected.
+    Tuple(Vec<Type>),
     /// A function type (v0.40.0): the address of a top-level `def`/`extern
     /// def` used as a value, or the type of a variable holding one. Written
     /// `fn(int, string) -> int` in diagnostics — the surface grammar has no
@@ -38,6 +45,16 @@ impl std::fmt::Display for Type {
             Type::Array { elem, len } if *len == GENERIC_LEN => write!(f, "[{elem}; N]"),
             Type::Array { elem, len } => write!(f, "[{elem}; {len}]"),
             Type::Struct(name) => write!(f, "{name}"),
+            Type::Tuple(elems) => {
+                write!(f, "(")?;
+                for (i, e) in elems.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{e}")?;
+                }
+                write!(f, ")")
+            }
             Type::FnPtr { ret, params } => {
                 write!(f, "fn(")?;
                 for (i, p) in params.iter().enumerate() {
@@ -59,7 +76,7 @@ impl Type {
     }
 
     pub fn is_compound(&self) -> bool {
-        matches!(self, Type::Array { .. } | Type::Struct(_))
+        matches!(self, Type::Array { .. } | Type::Struct(_) | Type::Tuple(_))
     }
 }
 
@@ -211,6 +228,14 @@ pub enum Stmt {
         expr: Expr,
         pos: Pos,
     },
+    /// `a, b = e` — destructure a tuple into fresh bindings (unreleased).
+    /// Targets are plain names that must not already be declared; the arity
+    /// must match the tuple's.
+    MultiLet {
+        names: Vec<String>,
+        expr: Expr,
+        pos: Pos,
+    },
     If {
         cond: Expr,
         then_block: Block,
@@ -343,6 +368,10 @@ pub enum Expr {
     /// a compile-time `int`. The argument is a type, not an expression, so
     /// the parser gives it its own node instead of a Call.
     SizeOf { ty: Type, pos: Pos },
+    /// `(a, b, ...)` — a tuple value (unreleased). At least two elements; a
+    /// one-element parenthesised expression stays a plain expression. The
+    /// type is structural (`Type::Tuple`), so no name is ever written.
+    TupleLit { elems: Vec<Expr>, pos: Pos },
 }
 
 impl Expr {
@@ -363,7 +392,8 @@ impl Expr {
             | Expr::DictLit { pos, .. }
             | Expr::StructLit { pos, .. }
             | Expr::Cast { pos, .. }
-            | Expr::SizeOf { pos, .. } => *pos,
+            | Expr::SizeOf { pos, .. }
+            | Expr::TupleLit { pos, .. } => *pos,
         }
     }
 

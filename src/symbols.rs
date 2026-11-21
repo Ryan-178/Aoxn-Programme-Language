@@ -234,6 +234,7 @@ fn stmt_end(s: &crate::ast::Stmt) -> usize {
     match s {
         Stmt::Let { pos, .. }
         | Stmt::Assign { pos, .. }
+        | Stmt::MultiLet { pos, .. }
         | Stmt::If { pos, .. }
         | Stmt::While { pos, .. }
         | Stmt::For { pos, .. }

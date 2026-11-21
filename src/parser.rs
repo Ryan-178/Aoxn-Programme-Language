@@ -492,6 +492,47 @@ impl Parser {
             }
             return Ok(Type::Dict(Box::new(inner)));
         }
+        // `(int, string)` — a tuple type (unreleased). At least two elements;
+        // a lone parenthesized type is not a tuple, so its comma is required.
+        if *self.peek() == Tok::LParen {
+            self.bump(); // '('
+            let mut elems = Vec::new();
+            loop {
+                if *self.peek() == Tok::RParen {
+                    if elems.len() < 2 {
+                        return Err(self.perr(
+                            self.pos().line,
+                            self.pos().col,
+                            "a tuple type needs at least two element types",
+                        ));
+                    }
+                    break;
+                }
+                let e = self.ty()?;
+                if e == Type::Void {
+                    return Err(self.perr(self.pos().line, self.pos().col, "void cannot be a tuple element type"));
+                }
+                elems.push(e);
+                match self.peek() {
+                    Tok::Comma => {
+                        self.bump();
+                    }
+                    Tok::RParen => break,
+                    _ => return Err(self.unexpected(&Tok::RParen)),
+                }
+            }
+            self.eat(&Tok::RParen)?;
+            let mut t = Type::Tuple(elems);
+            while *self.peek() == Tok::Pipe {
+                if !matches!(self.peek2(), Tok::None) {
+                    return Err(self.perr(self.pos().line, self.pos().col, "only '| None' is supported in a type (a multi-type union is not)"));
+                }
+                self.bump();
+                self.bump();
+                t = Type::Opt(Box::new(t));
+            }
+            return Ok(t);
+        }
         if matches!(self.peek(), Tok::Ident(n) if n == "fn") && matches!(self.peek2(), Tok::LParen) {
             self.bump();
             self.bump(); // '('
@@ -708,6 +749,40 @@ impl Parser {
                 };
                 let handler = self.block()?;
                 Ok(Stmt::Try { body, err_name, handler, pos })
+            }
+            Tok::Ident(_) if *self.peek2() == Tok::Comma => {
+                // multiple assignment: `a, b = f()` (unreleased). Targets are
+                // plain names by construction — a tuple element is read-only,
+                // so there is no compound form to accept here.
+                let mut names = Vec::new();
+                loop {
+                    match self.bump() {
+                        Tok::Ident(n) => names.push(n),
+                        _ => return Err(self.unexpected(&Tok::Ident("name".into()))),
+                    }
+                    match self.peek() {
+                        Tok::Comma => {
+                            self.bump();
+                            if *self.peek() == Tok::Assign {
+                                break;
+                            }
+                        }
+                        Tok::Assign => break,
+                        _ => {
+                            return Err(self.perr(
+                                self.pos().line,
+                                self.pos().col,
+                                "expected ',' or '=' after a multiple-assignment target",
+                            ))
+                        }
+                    }
+                }
+                self.eat(&Tok::Assign)?;
+                let expr = self.expr()?;
+                if names.len() < 2 {
+                    return Err(self.perr(pos.line, pos.col, "multiple assignment needs at least two names"));
+                }
+                Ok(Stmt::MultiLet { names, expr, pos })
             }
             Tok::Ident(_) if *self.peek2() == Tok::Colon => {
                 // annotated binding: x: t = e
@@ -1327,9 +1402,34 @@ impl Parser {
             Tok::Ident(name) => Ok(Expr::Var { name, pos }),
             Tok::FStr(parts) => self.desugar_fstring(parts, pos),
             Tok::LParen => {
-                let e = self.expr()?;
+                // `(a, b)` — a tuple literal (unreleased); a plain group
+                // otherwise. A trailing comma is allowed, but one element
+                // plus a comma is not a tuple: the language has no 1-tuple.
+                let first = self.expr()?;
+                if *self.peek() != Tok::Comma {
+                    self.eat(&Tok::RParen)?;
+                    return Ok(first);
+                }
+                self.bump(); // ','
+                let mut elems = vec![first];
+                loop {
+                    if *self.peek() == Tok::RParen {
+                        break;
+                    }
+                    elems.push(self.expr()?);
+                    match self.peek() {
+                        Tok::Comma => {
+                            self.bump();
+                        }
+                        Tok::RParen => break,
+                        _ => return Err(self.unexpected(&Tok::RParen)),
+                    }
+                }
                 self.eat(&Tok::RParen)?;
-                Ok(e)
+                if elems.len() < 2 {
+                    return Err(self.perr(pos.line, pos.col, "a tuple needs at least two elements"));
+                }
+                Ok(Expr::TupleLit { elems, pos })
             }
             Tok::LBrace => {
                 // dict literal (v0.40.0): {"k": v, ...}. `{}` is the empty one.

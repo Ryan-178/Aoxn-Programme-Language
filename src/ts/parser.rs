@@ -1546,6 +1546,8 @@ impl Parser {
                 Type::Str => Some(Type::Str),
                 _ => None,
             },
+            // tuples are an Aoxn-only form; the TS front end never builds one
+            Expr::TupleLit { .. } => None,
             // TS has no slice syntax; the node only reaches here if an Aoxn
             // source is routed through the TS front end, and a slice is
             // always a string there.
@@ -1731,6 +1733,8 @@ fn fill_stmt(st: &mut Stmt, opts: &HashMap<String, Vec<(usize, Expr)>>, totals: 
         }
         Stmt::Return { expr: None, .. } | Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Raise { .. } | Stmt::Try { .. } => {}
         Stmt::ExprStmt { expr } => fill_expr(expr, opts, totals),
+        // tuples are an Aoxn-only form; the TS front end never produces one
+        Stmt::MultiLet { expr, .. } => fill_expr(expr, opts, totals),
         Stmt::Pass => {}
         Stmt::If { cond, then_block, else_block, .. } => {
             fill_expr(cond, opts, totals);
@@ -1806,6 +1810,12 @@ fn fill_expr(e: &mut Expr, opts: &HashMap<String, Vec<(usize, Expr)>>, totals: &
             }
         }
         Expr::ArrayRep { elem, .. } => fill_expr(elem, opts, totals),
+        // tuples are an Aoxn-only form; the TS front end never builds one
+        Expr::TupleLit { elems, .. } => {
+            for x in elems.iter_mut() {
+                fill_expr(x, opts, totals);
+            }
+        }
         Expr::StructLit { fields, .. } => {
             for (_, v) in fields.iter_mut() {
                 fill_expr(v, opts, totals);

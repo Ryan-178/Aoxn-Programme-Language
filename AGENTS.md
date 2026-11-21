@@ -15,7 +15,7 @@ repo IS the
 compiler (Rust workspace: root `aoxn` crate + `crates/aoxn-pkg`).
 Language sources use the `.ax` extension. Language rules live in
 `docs/spec.md` (platform policy: `docs/platform-support.md`) 鈥?keep it in sync with `src/parser.rs` + `src/typecheck.rs`
-when the grammar changes. **v0.55.0 snapshot 5 adds a Rust bridge**: `import "./x.rs"` compiles a self-contained Rust file with rustc and binds its `#[no_mangle] extern "C"` functions as ordinary externs (`src/rust.rs`, `docs/rust-interop.md`); rustc is an optional external toolchain like clang. **The unreleased batch adds `sizeof(T)` + `addr_of(x)`** (gap A2): compile-time type sizes and live lvalue addresses, the prerequisite for struct containers; Rust-compiler-only, stage-2 rejects both forms (see the language card's Builtins and `docs/selfhost.md`). **Writing or editing `.ax` code: start from the
+when the grammar changes. **v0.55.0 snapshot 5 adds a Rust bridge**: `import "./x.rs"` compiles a self-contained Rust file with rustc and binds its `#[no_mangle] extern "C"` functions as ordinary externs (`src/rust.rs`, `docs/rust-interop.md`); rustc is an optional external toolchain like clang. **The unreleased batch adds `sizeof(T)` + `addr_of(x)`** (gap A2): compile-time type sizes and live lvalue addresses, the prerequisite for struct containers; Rust-compiler-only, stage-2 rejects both forms (see the language card's Builtins and `docs/selfhost.md`). **The same batch adds tuples + multiple assignment** (`(A, B)` types, `a, b = f()`), also Rust-compiler-only (stage-2 has no tuple syntax and rejects it cleanly); see the language card's Types/Statements/Expressions and `docs/spec.md` §Tuples. **Writing or editing `.ax` code: start from the
 language card below** (`## Aoxn language card`) -- the whole surface,
 condensed from `docs/spec.md` + the stdlib sources, so a correct program can
 be written first-shot WITHOUT probe files. Update `CHANGELOG.md` on every version bump.
@@ -345,6 +345,7 @@ def main() -> int:            # FIXED shape: no parameters, -> int or -> void
 | `void` | function return only |
 | `[T; N]` | fixed array; COPIES on assignment/param/return; literals non-empty, one element type; `[0] * n` replication |
 | `Name` | struct: every field, by name, exactly once: `Point(x=1, y=2)`; no self-reference |
+| `(T1, T2, ...)` | fixed tuple, two or more elements; STRUCTURAL (equal element types = same type); COPIES on assignment; no void/None elements |
 | `dict[V]` | string-keyed map of one value type; heap handle |
 | `T \| None` | nullable T; the ONLY union form |
 | `fn(A, ...) -> R` | function pointer |
@@ -354,6 +355,8 @@ def main() -> int:            # FIXED shape: no parameters, -> int or -> void
 
 - Bindings: `x = 5` infers and FIXES the type; `x: int = 5` checks the
   annotation; re-assignment keeps the type; no shadowing inside a function.
+- Multiple assignment: `q, r = divmod(7, 2)` destructures a tuple into NEW
+  plain names (never re-binds an existing one); arity must match.
 - Augmented assignment: `+= -= *= /= %=` (also on `arr[i]`, `p.f`, strings).
   **No bitwise augmented forms** -- write `x = x & y`. `//=` does not exist
   (`//` is a division operator).
@@ -391,6 +394,11 @@ def main() -> int:            # FIXED shape: no parameters, -> int or -> void
   twice -- hoist a call into a variable first).
 - Conditional expression: `x = a if cond else b` -- both branches must have
   the SAME type (no conversion invents one).
+- Tuples (unreleased): `t = (1, "x")` builds a two-element tuple (a lone
+  `(e)` is grouping, `(e,)` is a compile error); read with a LITERAL index
+  `t[0]` (`t[-1]` is the last). There is NO tuple equality/print/iteration/
+  slicing, and `t[0] = v` is rejected -- a tuple carries values, it is not
+  a mutable record.
 - f-strings: `f"n={n}"` embeds int/float/bool/string; `{{`/`}}` are literal
   braces. **Format specifiers (unreleased)** on int/float:
   `f"{x:.2f}"`, `f"{x:+10.2f}"`, `f"{x:g}"`,
@@ -575,8 +583,9 @@ if target_os() == "windows":
 ### Does NOT exist (do not try it, do not probe for it)
 
 Closures/lambdas; classes/methods/inheritance; enums, tagged unions, `Any`
-(the only union is `T | None`); tuples, multiple assignment, unpacking
-(`a, b = f()`); set literals; comprehensions; generators/`yield`; `with`;
+(the only union is `T | None`); tuple PACKING/star-args (`f(*(a, b))`,
+`a, *rest = t`), nested destructuring (`(a, b), c = t`), tuple equality;
+set literals; comprehensions; generators/`yield`; `with`;
 decorators; a `char` type; implicit numeric conversions; truthiness
 (conditions must be `bool`); `??`; augmented
 bitwise assignment; unsigned ints; keyword
@@ -1277,7 +1286,9 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   rejected, never forwarded to Rust), `test` (it needs the selective imports
   the selfhost loader refuses), CSS assets / `--emit-assets` /
   `--tailwind`, Rust `.rs` imports (same loader-level boundary as CSS),
-  namespace/selective imports, build-command caching (run only),
+  namespace/selective imports, tuples (the stage-2 parser has no tuple
+  syntax and rejects it cleanly, so stage-2 never emits different C for a
+  tuple program), build-command caching (run only),
   and full doctor parity (no installed-root/examples rows, no arch in
   `platform`, smoke compiles but does not capture child output). Imported
   symbols are reported against the entry path because the loader has no file
