@@ -27,7 +27,10 @@
 > `sizeof(T)` and `addr_of(x)` (unreleased) are Rust-compiler-only: stage-2 rejects
 > them (no type-argument call form, no `addr_of` builtin), and programs using
 > neither emit byte-identical C, so the fixed point needs no stage-2 mirror
-> (the v0.51.0 precedent). The
+> (the v0.51.0 precedent). Tuples (unreleased, `(A, B)` + `a, b = f()`) are
+> likewise Rust-compiler-only: the stage-2 parser has no tuple syntax and
+> rejects it with a clean parse error, so a tuple program is a stage-2
+> refusal, never a silent divergence. The
 > production CLI remains Rust. The [wiki](../wiki/Self-Hosting.md) is frozen
 > historical material, not the authority for current status.
 

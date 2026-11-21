@@ -468,6 +468,48 @@ impl<'a> Tc<'a> {
                 }
                 Ok(())
             }
+            Stmt::MultiLet { names, expr, pos } => {
+                // `a, b = f()` (unreleased): the right side must be a tuple of
+                // exactly the arity the target list spells. Targets are new
+                // bindings only — rebinding would have to re-check each
+                // element against a declared type, and the language already
+                // spells a plain re-assignment without tuple sugar.
+                let t = self.check_expr(expr, scopes)?;
+                let Type::Tuple(elems) = &t else {
+                    return Err(self.err(
+                        pos.line,
+                        pos.col,
+                        format!("multiple assignment needs a tuple on the right, found {t}"),
+                    ));
+                };
+                if elems.len() != names.len() {
+                    return Err(self.err(
+                        pos.line,
+                        pos.col,
+                        format!(
+                            "multiple assignment binds {} name(s) but the tuple has {} element(s)",
+                            names.len(),
+                            elems.len()
+                        ),
+                    ));
+                }
+                let elem_tys = elems.clone();
+                for (i, name) in names.iter().enumerate() {
+                    if names[..i].contains(name) {
+                        return Err(self.err(pos.line, pos.col, format!("duplicate name '{name}' in a multiple assignment")));
+                    }
+                    if scopes.get(name).is_some() {
+                        return Err(self.err(
+                            pos.line,
+                            pos.col,
+                            format!("cannot rebind '{name}' in a multiple assignment: it is already declared"),
+                        ));
+                    }
+                    scopes.insert(name.clone(), elem_tys[i].clone());
+                    self.local_decls.push((name.clone(), pos.line, pos.col));
+                }
+                Ok(())
+            }
             Stmt::Assign { target, expr, pos } => {
                 if !target.is_lvalue() {
                     return Err(self.err(pos.line, pos.col, "invalid assignment target"));
@@ -687,6 +729,7 @@ impl<'a> Tc<'a> {
                     // assignment target, and saying so here is what keeps
                     // codegen from turning it into an `internal` error.
                     Type::Str => Err(self.err(pos.line, pos.col, "cannot assign into a string: it is immutable, so s[i] is a read")),
+                    Type::Tuple(_) => Err(self.err(pos.line, pos.col, "cannot assign into a tuple: its elements are read-only")),
                     other => Err(self.err(pos.line, pos.col, format!("cannot index a value of type {other}"))),
                 }
             }
@@ -810,7 +853,37 @@ impl<'a> Tc<'a> {
                         }
                         Ok(Type::Str)
                     }
-                    other => Err(self.err(pos.line, pos.col, format!("cannot index a value of type {other} (only [T; N] arrays, dicts and strings are indexable)"))),
+                    // `t[N]` on a tuple (unreleased): the index must be a
+                    // LITERAL in range, because the element type differs per
+                    // index and a dynamic index has no static type
+                    Type::Tuple(elems) => {
+                        let dynamic = || {
+                            self.err(
+                                pos.line,
+                                pos.col,
+                                "a tuple element needs a literal index (t[0]): a dynamic index has no static type",
+                            )
+                        };
+                        let raw = match idx.as_ref() {
+                            Expr::Int(v, _) => *v,
+                            Expr::Unary { op: UnOp::Neg, expr, .. } => match expr.as_ref() {
+                                Expr::Int(v, _) => -v,
+                                _ => return Err(dynamic()),
+                            },
+                            _ => return Err(dynamic()),
+                        };
+                        // `t[-1]` is the last element, mirroring `s[-1]`
+                        let n = if raw < 0 { raw + elems.len() as i64 } else { raw };
+                        if n < 0 || n as usize >= elems.len() {
+                            return Err(self.err(
+                                pos.line,
+                                pos.col,
+                                format!("tuple index {raw} is out of range (the tuple has {} elements)", elems.len()),
+                            ));
+                        }
+                        Ok(elems[n as usize].clone())
+                    }
+                    other => Err(self.err(pos.line, pos.col, format!("cannot index a value of type {other} (only [T; N] arrays, dicts, tuples and strings are indexable)"))),
                 }
             }
             Expr::Slice { base, from, to, pos } => {
@@ -865,6 +938,21 @@ impl<'a> Tc<'a> {
                     };
                 }
                 Ok(Type::Array { elem: Box::new(elem), len: elems.len() })
+            }
+            Expr::TupleLit { elems, pos } => {
+                // `(a, b)` (unreleased): element types are positional and may
+                // differ — that is what makes a tuple a tuple. Void has no
+                // value and None only exists inside a nullable, so neither can
+                // be an element.
+                let mut tys = Vec::with_capacity(elems.len());
+                for e in elems {
+                    let t = self.check_expr(e, scopes)?;
+                    if t == Type::Void || t == Type::None {
+                        return Err(self.err(pos.line, pos.col, format!("{t} cannot be a tuple element")));
+                    }
+                    tys.push(t);
+                }
+                Ok(Type::Tuple(tys))
             }
             Expr::ArrayRep { elem, count, pos, .. } => {
                 if *count == 0 {
@@ -1630,6 +1718,14 @@ fn unify(
             Type::Array { elem: ae, len: al } if dl == al => unify(de, ae, params, subst_t, n),
             _ => false,
         },
+        // a generic parameter may sit inside a tuple: `def f[T](p: (T, int))`
+        Type::Tuple(delems) => match actual {
+            Type::Tuple(aelems) if delems.len() == aelems.len() => delems
+                .iter()
+                .zip(aelems)
+                .all(|(d, a)| unify(d, a, params, subst_t, n)),
+            _ => false,
+        },
         _ => declared == actual,
     }
 }
@@ -1649,6 +1745,13 @@ fn subst_type(t: &Type, subst_t: &HashMap<String, Type>, n: Option<usize>) -> Re
                 *len
             };
             Ok(Type::Array { elem: Box::new(e), len: l })
+        }
+        Type::Tuple(elems) => {
+            let mut out = Vec::with_capacity(elems.len());
+            for e in elems {
+                out.push(subst_type(e, subst_t, n)?);
+            }
+            Ok(Type::Tuple(out))
         }
         other => Ok(other.clone()),
     }
@@ -1697,6 +1800,7 @@ fn narrow_target(cond: &Expr, scopes: &Scopes) -> Option<(String, Type, Type)> {
 fn has_generic_len(t: &Type) -> bool {
     match t {
         Type::Array { elem, len } => *len == GENERIC_LEN || has_generic_len(elem),
+        Type::Tuple(elems) => elems.iter().any(has_generic_len),
         _ => false,
     }
 }
@@ -1726,6 +1830,7 @@ fn first_var_naming(e: &Expr, is_forbidden: &dyn Fn(&str) -> bool) -> Option<Str
             .or_else(|| first_var_naming(else_expr, is_forbidden)),
         Expr::Field { obj, .. } => first_var_naming(obj, is_forbidden),
         Expr::ArrayLit { elems, .. } => elems.iter().find_map(|x| first_var_naming(x, is_forbidden)),
+        Expr::TupleLit { elems, .. } => elems.iter().find_map(|x| first_var_naming(x, is_forbidden)),
         Expr::ArrayRep { elem, .. } => first_var_naming(elem, is_forbidden),
         Expr::DictLit { entries, .. } => entries
             .iter()
@@ -1886,6 +1991,16 @@ fn type_slug(t: &Type) -> String {
         Type::Dict(inner) => format!("d{}", type_slug(inner)),
         Type::Array { elem, len } => format!("a{}x{}", type_slug(elem), len),
         Type::Struct(n) => format!("s_{n}"),
+        // two structurally equal tuples ARE the same type, so the slug has to
+        // be built from the element slugs
+        Type::Tuple(elems) => {
+            let mut slug = String::from("t");
+            for e in elems {
+                slug.push('_');
+                slug.push_str(&type_slug(e));
+            }
+            slug
+        }
         // a function pointer is part of a generic instance's identity: two
         // instances differing only in a callback's signature are different
         // functions (v0.40.0)
@@ -2094,6 +2209,15 @@ fn resolve_ty(ty: &Type, structs: &StructTable) -> Result<(), String> {
     match ty {
         Type::Int | Type::Float | Type::Bool | Type::Str | Type::Void | Type::None => Ok(()),
         Type::Array { elem, .. } => resolve_ty(elem, structs),
+        Type::Tuple(elems) => {
+            for e in elems {
+                if *e == Type::Void {
+                    return Err("void cannot be a tuple element type".into());
+                }
+                resolve_ty(e, structs)?;
+            }
+            Ok(())
+        }
         Type::Opt(inner) => {
             if **inner == Type::Void {
                 Err("void cannot be nullable".into())
@@ -2147,6 +2271,7 @@ fn stmt_pos(s: &Stmt) -> Pos {
     match s {
         Stmt::Let { pos, .. }
         | Stmt::Assign { pos, .. }
+        | Stmt::MultiLet { pos, .. }
         | Stmt::If { pos, .. }
         | Stmt::While { pos, .. }
         | Stmt::For { pos, .. }

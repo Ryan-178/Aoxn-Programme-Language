@@ -5,6 +5,46 @@ minor bumps while pre-1.0: each minor version is a language milestone.
 
 ## [Unreleased]
 
+### Tuples and multiple return values (`(a, b)` / `a, b = f()`)
+
+A function can now return more than one value, and a binding can destructure
+it: `def divmod(a: int, b: int) -> (int, int): ...` then
+`q, r = divmod(7, 2)`. The surface is deliberately closed — this is the
+"multiple return values" feature, not Python's tuple object:
+
+- `(A, B, ...)` is a **structural type**: two spellings with equal element
+  types are the same type, so a `(int, string)` from one module is a
+  `(int, string)` in another with no nominal declaration. `sizeof((int,
+  string))` is 16.
+- Elements are read positionally with a **literal** index, `t[0]`; a
+  negative literal counts from the end (`t[-1]` is the last, mirroring
+  `s[-1]`). A dynamic index is a named compile error because the element
+  type differs per index and there is no `Any` for the answer to have.
+- Tuples copy on assignment like arrays and structs; they can be struct
+  fields, array elements and function parameters/returns.
+- **Not supported, each a named diagnostic**: one-element tuples
+  (`(1,)`), equality/`print`, writes through an element, iteration,
+  slicing, and `void`/`None` as element types.
+
+In the generated C a tuple is a typedef'd struct `<name>_0.._n-1` whose
+name is derived from the element type tokens (`ax_tuple_ui_s` is
+`(int, string)`), registered lazily and emitted through the existing sorted
+typedef graph, so it is copy-by-value with the aggregate sret ABI for free
+and the C text is deterministic across processes (pinned by
+`tuple_c_text_is_stable_across_processes`). No new C text reaches a
+program that does not use a tuple, so the selfhost fixed point is
+unchanged; `selfhost/` does not parse tuple syntax yet and rejects it
+cleanly (the stage-2 boundary is unchanged — see `docs/selfhost.md`).
+
+Grammar: expression `(e1, e2, ...)` / type `(T1, T2, ...)` (both need at
+least two members), statement `a, b = expr` (plain names, new bindings
+only, arity must match). Pins in `tests/pipeline.rs`
+(`tuples_return_multiple_values_and_destructure`,
+`tuple_elements_are_positional_and_typed`, `tuples_copy_on_assignment`,
+`tuple_index_needs_a_literal_in_range`,
+`multiple_assignment_checks_arity_and_rebinding`,
+`tuples_have_no_equality_printing_or_writes`).
+
 ### f-string format specifiers (`{x:.2f}`, `{n:08x}`, `{n:b}`)
 
 `f"{value:spec}"` now formats `int` and `float` values. Supported specs:

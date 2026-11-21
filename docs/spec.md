@@ -1,4 +1,4 @@
-# Aoxn Language Specification (v0.55.0, plus unreleased sizeof/addr_of)
+# Aoxn Language Specification (v0.55.0, plus unreleased sizeof/addr_of and tuples)
 
 Aoxn is an AI-native, statically typed, ahead-of-time compiled language with a
 Python-style syntax. Design goals: minimal syntax, explicit semantics, native
@@ -32,6 +32,7 @@ the deviation is called out explicitly below.
 | `string` | immutable byte string    | ptr to NUL-terminated bytes (heap when built, static when literal) |
 | `void`   | absence of a value       | (function return only) |
 | `[T; N]` | fixed-size array, N > 0  | C struct wrapping `T data[N]` |
+| `(T1, T2, ...)` | fixed tuple, two or more elements (unreleased) | generated C struct (`ax_tuple_<tokens>`) |
 | `dict[V]`| string-keyed map of V (v0.40.0) | heap handle (`struct ax_dict_V*`) |
 | `T \| None` | nullable T; the only union form (v0.40.0) | carrier struct (value + tag) |
 | `fn(A, ...) -> R` | function pointer (v0.40.0) | raw address |
@@ -358,6 +359,20 @@ x = x + 5           # re-assignment keeps the declared type
   type is an error. No shadowing within a function (parameters included).
 - `print(1)` prints `1`; `print(True)` prints `true` / `false` (readable).
 
+**Multiple assignment (unreleased)** destructures a tuple into new bindings:
+
+```Aoxn
+q, r = divmod(7, 2)         # q is int, r is int
+name, ok = split_checked(s)
+```
+
+- At least two targets, all plain names, all NEW (an existing name is an
+  error: this form declares, it does not re-assign).
+- The right side must be a tuple, and its arity must match the target list.
+- The tuple is evaluated once; the kind of the targets follows the element
+  types positionally.
+- No nesting (`(a, b), c = t`) and no star targets (`a, *rest = t`).
+
 ## Augmented assignment
 
 The Python assignment operators are accepted on every assignment target:
@@ -467,6 +482,7 @@ unary := ("~" | "-" | "+") unary | power          # NO `not` here (v0.52.0)
 power := postfix ("**" unary)?                    # right-associative (v0.51.0)
 primary := INT | FLOAT | STRING | True | False | FSTRING
          | IDENT ("(" args ")")? | "(" expr ")"
+         | "(" expr "," [expr ("," expr)* [","]] ")"   # tuple literal (unreleased)
          | "[" expr ("," expr)* "]" | "[" "]"      # array literal / index
 postfix := primary ("(" args ")" | "[" expr "]" | "[" expr? ":" expr? "]" | "." IDENT)*
 ```
@@ -871,6 +887,44 @@ for k in d:                 # walks KEYS, in insertion order
   linear scan over insertion order; growth doubles, so inserts amortize to
   O(1) while the honest shape of the type stays "a settings map, not a
   database".
+
+## Tuples (unreleased)
+
+Tuples exist to return several values from one function. They are fixed-size,
+read-only groupings - not Python's tuple object.
+
+```Aoxn
+def divmod(a: int, b: int) -> (int, int):
+    return (a // b, a % b)        # tuple literal (parentheses required)
+
+def main() -> int:
+    q, r = divmod(7, 2)           # multiple assignment
+    t = (1, "two", 3.5)           # mixed types, inferred (int, string, float)
+    print(t[0], t[-1])            # 1 3.500000  (literal index; -1 = last)
+    p: (float, int) = (1.5, 3)    # annotated
+    return 0
+```
+
+- **Structural type**: `(int, string)` is the same type wherever it is
+  spelled; there is no declaration. Two tuples with equal element types in
+  equal order are interchangeable.
+- **Value type**: like arrays and structs, a tuple COPIES on assignment,
+  argument passing and return. It may be a struct field, an array element, a
+  parameter and a return type; `sizeof((int, string))` is 16.
+- **Literal index only**: the element type differs per position, so `t[i]`
+  with a computed `i` has no static type and is a compile error. `t[0]` is
+  checked in range at compile time; a negative literal counts from the end
+  (`t[-1]`), mirroring `s[-1]` on strings.
+- **Restricted surface**: no one-element tuples (`(1,)` is an error), no
+  tuple equality or `print`, no iteration, no slicing, no writes through an
+  element (`t[0] = v` is an error), and `void` / `None` are not element
+  types. Each is a named diagnostic.
+- Representation: a generated C struct whose name derives from the element
+  type tokens (e.g. `ax_tuple_ui_s` for `(int, string)`), so copy semantics
+  and the aggregate ABI are C's own and the emitted text is deterministic.
+- The self-hosted compiler does not parse tuple syntax (its stage-2 parser
+  reports a clean parse error); tuple-free programs emit unchanged C, so the
+  fixed point is unaffected.
 
 ## Platform query
 

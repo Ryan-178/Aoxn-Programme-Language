@@ -5265,3 +5265,249 @@ fn addr_of_rejects_strings_dicts_and_nullables() {
     );
     assert!(msg.contains("a nullable has no single address"), "{msg}");
 }
+
+// ---- tuples (unreleased) ----
+
+/// A tuple is a first-class value: it can be returned, passed, stored in a
+/// struct field or an array, and destructured at the binding site.
+#[test]
+fn tuples_return_multiple_values_and_destructure() {
+    let out = build_and_run(
+        r#"
+        struct P:
+            pos: (int, int)
+            tag: string
+
+        def split(s: string) -> (string, string):
+            i = 0
+            while i < len(s):
+                if s[i] == ":":
+                    return (s[0:i], s[i + 1:len(s)])
+                i = i + 1
+            return (s, "")
+
+        def swap(p: (int, string)) -> (string, int):
+            return (p[1], p[0])
+
+        def main() -> int:
+            k, v = split("key:value")
+            print(k, v)
+            s, n = swap((9, "z"))
+            print(s, n)
+            p = P(pos=(5, 6), tag="x")
+            print(p.pos[0], p.pos[1], p.tag)
+            ps = [(1, "a"), (2, "b")]
+            a, b = ps[1]
+            print(a, b)
+            return 0
+        "#,
+    );
+    assert_eq!(out, "key value\nz 9\n5 6 x\n2 b\n");
+}
+
+/// Elements keep their own static types and may differ; a nested tuple and a
+/// tuple typedef reached through `sizeof` share one C type per element list.
+#[test]
+fn tuple_elements_are_positional_and_typed() {
+    let out = build_and_run(
+        r#"
+        def main() -> int:
+            t = (1, 2.5, True)
+            print(t[0], t[1], t[2])
+            n = ((1, 2), (3, 4))
+            print(n[0][1], n[1][0])
+            print(sizeof((int, string)))
+            q: (float, int) = (1.5, 3)
+            print(q[0], q[1])
+            print((10, (20, 30))[1][0], ("a", "b")[1])
+            return 0
+        "#,
+    );
+    assert_eq!(out, "1 2.500000 true\n2 3\n16\n1.500000 3\n20 b\n");
+}
+
+/// Tuples copy on assignment like every other aggregate: rebinding one name
+/// never reaches through the other.
+#[test]
+fn tuples_copy_on_assignment() {
+    let out = build_and_run(
+        r#"
+        def main() -> int:
+            x = (1, "q")
+            y = x
+            x = (2, "r")
+            print(x[0], x[1], y[0], y[1])
+            return 0
+        "#,
+    );
+    assert_eq!(out, "2 r 1 q\n");
+}
+
+#[test]
+fn tuple_index_needs_a_literal_in_range() {
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            t = (1, 2)
+            print(t[2])
+            return 0
+        "#,
+    );
+    assert!(msg.contains("tuple index 2 is out of range (the tuple has 2 elements)"), "{msg}");
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            t = (1, 2)
+            print(t[-3])
+            return 0
+        "#,
+    );
+    assert!(msg.contains("tuple index -3 is out of range"), "{msg}");
+    // a negative literal counts from the end, mirroring `s[-1]` on strings
+    let out = build_and_run(
+        r#"
+        def main() -> int:
+            t = (1, "two", 3.5)
+            print(t[-1], t[-3])
+            return 0
+        "#,
+    );
+    assert_eq!(out, "3.500000 1\n");
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            t = (1, 2)
+            i = 1
+            print(t[i])
+            return 0
+        "#,
+    );
+    assert!(msg.contains("a tuple element needs a literal index"), "{msg}");
+}
+
+#[test]
+fn multiple_assignment_checks_arity_and_rebinding() {
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            a, b = 5
+            return 0
+        "#,
+    );
+    assert!(msg.contains("multiple assignment needs a tuple on the right, found int"), "{msg}");
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            a, b, c = (1, 2)
+            return 0
+        "#,
+    );
+    assert!(msg.contains("binds 3 name(s) but the tuple has 2 element(s)"), "{msg}");
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            x = 1
+            x, y = (1, 2)
+            return 0
+        "#,
+    );
+    assert!(msg.contains("cannot rebind 'x'"), "{msg}");
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            a, a = (1, 2)
+            return 0
+        "#,
+    );
+    assert!(msg.contains("duplicate name 'a'"), "{msg}");
+}
+
+/// The surface is deliberately narrow: no printing, no equality, no writing
+/// through an element, no iteration, no 1-tuples.
+#[test]
+fn tuples_have_no_equality_printing_or_writes() {
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            t = (1, 2)
+            if t == (1, 2):
+                return 0
+            return 1
+        "#,
+    );
+    assert!(msg.contains("cannot compare compound type"), "{msg}");
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            print((1, 2))
+            return 0
+        "#,
+    );
+    assert!(msg.contains("print requires int, float, bool, or string, found (int, int)"), "{msg}");
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            t = (1, 2)
+            t[0] = 5
+            return 0
+        "#,
+    );
+    assert!(msg.contains("cannot assign into a tuple"), "{msg}");
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            t = (1, 2)
+            for x in t:
+                print(x)
+            return 0
+        "#,
+    );
+    assert!(msg.contains("'for' can only iterate over arrays, dicts or strings"), "{msg}");
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            t = (1,)
+            return 0
+        "#,
+    );
+    assert!(msg.contains("a tuple needs at least two elements"), "{msg}");
+}
+
+/// Same rule as every other generated name: the C text may not depend on a
+/// heap address, so a tuple's typedef name and member order must be a pure
+/// function of the element types — byte-identical across processes.
+#[test]
+fn tuple_c_text_is_stable_across_processes() {
+    let base = std::env::temp_dir().join(format!("aoxn-tuple-det-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let prog = base.join("prog.ax");
+    std::fs::write(
+        &prog,
+        "def main() -> int:\n    a = (1, \"x\")\n    b = (2.5, True)\n    print(a[0], b[0])\n    return 0\n",
+    )
+    .unwrap();
+
+    let emit = || -> String {
+        let out = Command::new(env!("CARGO_BIN_EXE_aoxn"))
+            .arg("c")
+            .arg(&prog)
+            .output()
+            .expect("failed to run aoxn c");
+        assert!(out.status.success(), "aoxn c failed: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8(out.stdout).expect("C text is not UTF-8")
+    };
+
+    let first = emit();
+    for i in 0..3 {
+        assert_eq!(
+            emit(),
+            first,
+            "run {} of the same binary over one unchanged source produced different C",
+            i + 2
+        );
+    }
+    assert!(first.contains("ax_tuple_ui_s"), "the (int, string) typedef should be named after its element types:\n{first}");
+    assert!(first.contains("ax_tuple_uf_i"), "the (float, bool) typedef should be named after its element types:\n{first}");
+    let _ = std::fs::remove_dir_all(&base);
+}

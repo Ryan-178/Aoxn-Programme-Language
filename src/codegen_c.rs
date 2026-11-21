@@ -321,6 +321,10 @@ struct GenC<'a> {
     opt_structs: BTreeMap<String, Type>,
     /// `dict[V]` carrier structs + their runtime helpers: name -> V (v0.40.0)
     dict_structs: BTreeMap<String, Type>,
+    /// tuple typedefs: name -> element types (unreleased). Registered lazily by
+    /// `c_type`, emitted with the rest of the type graph so element types are
+    /// complete first.
+    tuple_defs: BTreeMap<String, Vec<Type>>,
     /// user `extern def` declarations, deduped by C name
     extern_decls: BTreeMap<String, String>,
     /// per-replication-site fill helper: ASSIGNED NUMBER -> rendered text.
@@ -398,6 +402,7 @@ impl<'a> GenC<'a> {
             typedefs: BTreeMap::new(),
             opt_structs: BTreeMap::new(),
             dict_structs: BTreeMap::new(),
+            tuple_defs: BTreeMap::new(),
             extern_decls: BTreeMap::new(),
             rep_helpers: BTreeMap::new(),
             rep_sites: BTreeMap::new(),
@@ -514,6 +519,26 @@ impl<'a> GenC<'a> {
         out
     }
 
+    /// Resolve a tuple index the checker has already validated. `-1` is the
+    /// last element, mirroring `s[-1]` on strings; anything else answers None
+    /// (the checker rejects it first, so None here is a compiler bug).
+    fn static_tuple_index(idx: &Expr, len: usize) -> Option<usize> {
+        let raw = match idx {
+            Expr::Int(v, _) => *v,
+            Expr::Unary { op: UnOp::Neg, expr, .. } => match expr.as_ref() {
+                Expr::Int(v, _) => -v,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let n = if raw < 0 { raw + len as i64 } else { raw };
+        if n >= 0 && (n as usize) < len {
+            Some(n as usize)
+        } else {
+            None
+        }
+    }
+
     fn type_token(t: &Type) -> String {
         match t {
             Type::Int | Type::Bool => "i".to_string(), // both are C `int`
@@ -524,6 +549,18 @@ impl<'a> GenC<'a> {
             Type::Opt(inner) => format!("o{}", Self::type_token(inner)),
             Type::Dict(inner) => format!("d{}", Self::type_token(inner)),
             Type::Struct(n) => n.clone(),
+            // a tuple typedef is named after its element types, so two
+            // structurally equal tuples share one C type
+            Type::Tuple(elems) => {
+                let mut tok = String::from("u");
+                for (i, e) in elems.iter().enumerate() {
+                    if i > 0 {
+                        tok.push('_');
+                    }
+                    tok.push_str(&Self::type_token(e));
+                }
+                tok
+            }
             Type::Array { elem, len } => format!("a{}_{}", Self::type_token(elem), len),
             // the signature is part of the token: two arrays of differently
             // typed function pointers must not share a typedef
@@ -543,15 +580,23 @@ impl<'a> GenC<'a> {
     }
 
     fn register_type(&mut self, t: &Type) {
-        if let Type::Array { elem, len } = t {
-            if *len == GENERIC_LEN {
-                return; // unreachable post-monomorphization
+        match t {
+            Type::Array { elem, len } => {
+                if *len == GENERIC_LEN {
+                    return; // unreachable post-monomorphization
+                }
+                let name = Self::typedef_name(elem, *len);
+                if !self.typedefs.contains_key(&name) {
+                    self.typedefs.insert(name, ((**elem).clone(), *len));
+                    self.register_type(elem);
+                }
             }
-            let name = Self::typedef_name(elem, *len);
-            if !self.typedefs.contains_key(&name) {
-                self.typedefs.insert(name, ((**elem).clone(), *len));
-                self.register_type(elem);
+            Type::Tuple(elems) => {
+                for e in elems {
+                    self.register_type(e);
+                }
             }
+            _ => {}
         }
     }
 
@@ -586,6 +631,17 @@ impl<'a> GenC<'a> {
                 format!("struct {name}*")
             }
             Type::Struct(n) => format!("struct {}", self.c_ident(n)),
+            Type::Tuple(elems) => {
+                // the C type is a typedef'd anonymous struct, so assignment,
+                // parameters and returns copy by value like any struct
+                let tok = Self::type_token(&Type::Tuple(elems.clone()));
+                let name = format!("ax_tuple_{tok}");
+                if !self.tuple_defs.contains_key(&name) {
+                    self.tuple_defs.insert(name.clone(), elems.clone());
+                    self.register_type(t);
+                }
+                name
+            }
             Type::FnPtr { ret, params } => {
                 // a function-pointer TYPE is spelled with the parenthesised
                 // declarator, so `c_decl` renders `long long (*)(long long) cb`
@@ -923,6 +979,9 @@ impl<'a> GenC<'a> {
         for name in self.dict_structs.keys() {
             roots.push(format!("d:{name}"));
         }
+        for name in self.tuple_defs.keys() {
+            roots.push(format!("x:{name}"));
+        }
         roots.sort();
 
         for root in roots {
@@ -944,6 +1003,12 @@ impl<'a> GenC<'a> {
                 Self::type_dep_ids(inner, out);
             }
             Type::Struct(n) => out.push(format!("s:{n}")),
+            Type::Tuple(elems) => {
+                out.push(format!("x:ax_tuple_{}", Self::type_token(&Type::Tuple(elems.clone()))));
+                for e in elems {
+                    Self::type_dep_ids(e, out);
+                }
+            }
             _ => {}
         }
     }
@@ -1083,6 +1148,28 @@ impl<'a> GenC<'a> {
             }
             let decl = self.c_decl(&inner, "value");
             out.push_str(&format!("struct {oname} {{\n    {decl};\n    int has;\n}};\n"));
+        } else if let Some(xname) = id.strip_prefix("x:") {
+            // a tuple (unreleased): an anonymous struct whose members are
+            // `_0.._n-1` in declaration order, so the C copy semantics and
+            // the aggregate sret ABI apply unchanged
+            let elems = self
+                .tuple_defs
+                .get(xname)
+                .cloned()
+                .ok_or_else(|| format!("internal error: tuple '{xname}' referenced but never registered"))?;
+            let mut deps = Vec::new();
+            for e in &elems {
+                Self::type_dep_ids(e, &mut deps);
+            }
+            for d in deps {
+                self.visit_type_node(&d, done, visiting, out)?;
+            }
+            out.push_str("typedef struct {\n");
+            for (i, e) in elems.iter().enumerate() {
+                let decl = self.c_decl(e, &format!("_{i}"));
+                out.push_str(&format!("    {decl};\n"));
+            }
+            out.push_str(&format!("}} {xname};\n"));
         }
         visiting.remove(id);
         done.insert(id.to_string());
@@ -1196,7 +1283,7 @@ impl<'a> GenC<'a> {
     fn zero_value(&mut self, t: &Type) -> String {
         match t {
             Type::Struct(n) => format!("(struct {}){{0}}", self.c_ident(n)),
-            Type::Array { .. } => format!("({}){{0}}", self.c_type(t)),
+            Type::Array { .. } | Type::Tuple(_) => format!("({}){{0}}", self.c_type(t)),
             _ => "0".to_string(),
         }
     }
@@ -1302,6 +1389,7 @@ fn block_returns_all(block: &Block) -> bool {
     fn stmt_may_raise(&self, s: &Stmt) -> bool {
         match s {
             Stmt::Let { expr, .. } | Stmt::Assign { expr, .. } | Stmt::ExprStmt { expr } => self.expr_may_raise(expr),
+            Stmt::MultiLet { expr, .. } => self.expr_may_raise(expr),
             Stmt::If { cond, .. } | Stmt::While { cond, .. } => self.expr_may_raise(cond),
             Stmt::For { iter, .. } => match iter {
                 ForIter::Range(args) => args.iter().any(|a| self.expr_may_raise(a)),
@@ -1332,6 +1420,7 @@ fn block_returns_all(block: &Block) -> bool {
             }
             Expr::Field { obj, .. } => self.expr_may_raise(obj),
             Expr::ArrayLit { elems, .. } => elems.iter().any(|e| self.expr_may_raise(e)),
+            Expr::TupleLit { elems, .. } => elems.iter().any(|e| self.expr_may_raise(e)),
             _ => false,
         }
     }
@@ -1398,6 +1487,27 @@ fn block_returns_all(block: &Block) -> bool {
                     } else {
                         self.narrowed.remove(name);
                     }
+                }
+            }
+            Stmt::MultiLet { names, expr, .. } => {
+                // `a, b = f()` (unreleased): evaluate the tuple ONCE into a
+                // named slot, then copy each element out — the expression may
+                // have effects, and a compound literal read twice would run
+                // them twice
+                let tty = self.hint(expr)?;
+                let Type::Tuple(elems) = tty.clone() else {
+                    return Err("internal error: multiple assignment from a non-tuple at codegen".into());
+                };
+                let tmp = self.fresh_tmp();
+                let decl = self.c_decl(&tty, &tmp);
+                self.decls.push(format!("{decl};"));
+                let (rhs, _) = self.emit_expr(expr)?;
+                self.line(indent, &format!("{tmp} = {rhs};"));
+                for (i, name) in names.iter().enumerate() {
+                    let et = elems[i].clone();
+                    self.declare(name, &et);
+                    self.line(indent, &format!("{} = {tmp}._{i};", self.c_ident(name)));
+                    self.narrowed.remove(name);
                 }
             }
             Stmt::Assign { target, expr, .. } => {
@@ -1723,12 +1833,30 @@ fn block_returns_all(block: &Block) -> bool {
                 Ok(t)
             }
             Expr::Index { arr, idx, .. } => {
-                let base_ty = self.emit_lvalue(arr)?;
+                let base_start = self.out.len();
+                // a READ rooted at a temporary (`(1, 2)[0]`, `f()[0]`) is not
+                // an lvalue; only the outermost assignment target must be one
+                let base_ty = if arr.is_lvalue() {
+                    self.emit_lvalue(arr)?
+                } else {
+                    self.emit_expr_inner(arr)?
+                };
                 if matches!(base_ty, Type::Dict(_)) {
                     return Err("internal error: a dict index is not an lvalue (assign through `d[k] = v`)".into());
                 }
                 let elem = match &base_ty {
                     Type::Array { elem, .. } => (**elem).clone(),
+                    // `t[N]` on a tuple: read-only, but a read of an lvalue
+                    // path (`t[0][1]`, `p.field[1]`) still routes through here
+                    Type::Tuple(elems) => {
+                        let n = Self::static_tuple_index(idx, elems.len()).ok_or_else(|| {
+                            "internal error: tuple index is not a checked literal at codegen".to_string()
+                        })?;
+                        let et = elems[n].clone();
+                        let btext = self.out.split_off(base_start);
+                        self.out.push_str(&format!("({btext})._{n}"));
+                        return Ok(et);
+                    }
                     other => return Err(format!("internal error: cannot index {other} at codegen")),
                 };
                 self.out.push_str(".data[");
@@ -1922,6 +2050,18 @@ fn block_returns_all(block: &Block) -> bool {
                         self.out.push(']');
                         Ok(elem)
                     }
+                    // `t[N]` on a tuple (unreleased): the checker admits only
+                    // a LITERAL index inside the bounds, so the member name is
+                    // decided here and the index text is never emitted
+                    Type::Tuple(elems) => {
+                        let n = Self::static_tuple_index(idx, elems.len()).ok_or_else(|| {
+                            "internal error: tuple index is not a checked literal at codegen".to_string()
+                        })?;
+                        let et = elems[n].clone();
+                        let btext = self.out.split_off(base_start);
+                        self.out.push_str(&format!("({btext})._{n}"));
+                        Ok(et)
+                    }
                     // `s[i]` -> a ONE-BYTE string (v0.51.2). The base and the
                     // index are both spliced in, so `f()[i()]` evaluates each
                     // exactly once.
@@ -2003,10 +2143,27 @@ fn block_returns_all(block: &Block) -> bool {
                 self.out.push(')');
                 self.hint(then_expr)
             }
-            Expr::ArrayLit { elems, .. } => {
-                if elems.is_empty() {
-                    return Err("internal error: empty array literal at codegen".into());
+            Expr::TupleLit { elems, .. } => {
+                // `(a, b)` (unreleased): a compound literal of the tuple's
+                // own typedef, members filled by name
+                let mut tys = Vec::with_capacity(elems.len());
+                for e in elems {
+                    tys.push(self.hint(e)?);
                 }
+                let tty = Type::Tuple(tys);
+                let ct = self.c_type(&tty);
+                self.out.push_str(&format!("(({ct}){{"));
+                for (i, e) in elems.iter().enumerate() {
+                    if i > 0 {
+                        self.out.push_str(", ");
+                    }
+                    self.out.push_str(&format!("._{i} = "));
+                    self.emit_expr_inner(e)?;
+                }
+                self.out.push_str(" })");
+                Ok(tty)
+            }
+            Expr::ArrayLit { elems, .. } => {
                 let elem_ty = Self::array_elem_type(self, elems)?;
                 let arr_ty = Type::Array { elem: Box::new(elem_ty.clone()), len: elems.len() };
                 let ct = self.c_type(&arr_ty);
@@ -2934,12 +3091,22 @@ if matches!(op, Is | IsNot) {
                 }
                 _ => self.hint(lhs).or_else(|_| self.hint(rhs)),
             },
-            Expr::Index { arr, .. } => match self.hint(arr)? {
+            Expr::Index { arr, idx, .. } => match self.hint(arr)? {
                 Type::Array { elem, .. } => Ok(*elem),
                 Type::Str => Ok(Type::Str),
                 Type::Dict(val) => Ok(*val),
+                Type::Tuple(elems) => Self::static_tuple_index(idx, elems.len())
+                    .map(|n| elems[n].clone())
+                    .ok_or_else(|| "internal error: tuple index is not a checked literal in type hint".to_string()),
                 other => Err(format!("internal error: cannot index {other} at codegen")),
             },
+            Expr::TupleLit { elems, .. } => {
+                let mut tys = Vec::with_capacity(elems.len());
+                for e in elems {
+                    tys.push(self.hint(e)?);
+                }
+                Ok(Type::Tuple(tys))
+            }
             Expr::Slice { base, .. } => match self.hint(base)? {
                 Type::Str => Ok(Type::Str),
                 other => Err(format!("internal error: cannot slice {other} in type hint")),
