@@ -52,6 +52,9 @@ still terminates, the table keeps load <= 1/2, and no access is unchecked.
 Concatenation leaks; no GC or
 general memory-safety guarantee exists. Regex lacks a step budget and can take
 exponential time; use OS resource limits. Compiler recursion has stack limits.
+Malformed source is reported as diagnostics (worst case an `internal` stage),
+never a compiler panic; `tests/robustness.rs` pins that with deterministic
+fixed-seed fuzz corpora over `compile_to_c`.
 Random is not cryptographic; threads require synchronization. shutil link/depth
 guards are not permissions or race-free confinement. Logging writes chosen paths.
 Socket is blocking IPv4 TCP, not TLS; MSG_NOSIGNAL/fd0 fixes do not sanitize input.
@@ -133,7 +136,9 @@ bool=C int，错误声明可产生 UB；Rust 只支持精确标量 ABI。字符�
 复制；推导式降为生成辅助函数，按源自身长度迭代（定长数组的静态 N、字典的实时键数，
 字符串走与 `s[i]` 相同的 clamp 取字节），不新增未检查访问，捕获的局部按值传入；字典查找
 用无密钥的 FNV-1a 索引，恶意键可制造冲突使其退化到接近扫描（经典哈希洪泛权衡），探测
-仍会终止、装载率 ≤ 1/2、且不新增未检查访问；拼接泄漏，无 GC/通用内存安全保证。re 无预算可指数耗时、编译递归有栈限，需资源限制；random 非
+仍会终止、装载率 ≤ 1/2、且不新增未检查访问；拼接泄漏，无 GC/通用内存安全保证。re 无预算可指数耗时、编译递归有栈限，需资源限制；畸形源码一律作为诊断（最差为
+`internal` 阶段）上报，绝不 panic 编译器，`tests/robustness.rs` 用固定种子的模糊语料
+对 `compile_to_c` 钉住该性质；random 非
 密码学，线程自己同步，shutil 守卫不是权限/消除竞态，logging 写指定路径，socket 非 TLS。
 f-string 说明符必须是字面文本：编译器解析符号/补零/宽度/精度/类型（或进制）后重建
 C 格式串，原文不进入生成 C；宽度上限 1024、精度上限 512，自举编译器使用同一解析。

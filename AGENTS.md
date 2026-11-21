@@ -905,6 +905,12 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
 - Inside parentheses `paren_depth > 0`: newlines and indentation are ignored
   (implicit line joining).
 - EOF: flush trailing `Newline`, then pending `Dedent`s, then `Eof`.
+- **`adv!` is bounds-safe: it does nothing at the end of the buffer.** It
+  used to index `chars[i]` unconditionally, and two shapes advanced one past
+  the end before any check could fire (a lone `\r` at EOF, and an f-string
+  interpolation whose closing quote is the last character). Arbitrary bytes
+  must always surface as a diagnostic — a panic is the bug. `tests/robustness.rs`
+  pins it with a deterministic (fixed-seed) fuzz over `compile_to_c`.
 - `//` is NOT a comment (it is int division); comments are `#` only.
 - Indent/dedent mismatch 鈫?lex error "unindent does not match any outer
   indentation level".
