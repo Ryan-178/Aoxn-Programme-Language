@@ -30,7 +30,11 @@
 > (the v0.51.0 precedent). Tuples (unreleased, `(A, B)` + `a, b = f()`) are
 > likewise Rust-compiler-only: the stage-2 parser has no tuple syntax and
 > rejects it with a clean parse error, so a tuple program is a stage-2
-> refusal, never a silent divergence. The
+> refusal, never a silent divergence. List/dict comprehensions (unreleased,
+> `[e for v in a]` / `{k: v for v in src if p}`) follow the same rule: the
+> stage-2 parser has no `for`-in-a-display production and rejects it with a
+> clean parse error, and a program without a comprehension emits unchanged
+> C, so the fixed point is unaffected. The
 > production CLI remains Rust. The [wiki](../wiki/Self-Hosting.md) is frozen
 > historical material, not the authority for current status.
 

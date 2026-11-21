@@ -5511,3 +5511,307 @@ fn tuple_c_text_is_stable_across_processes() {
     assert!(first.contains("ax_tuple_uf_i"), "the (float, bool) typedef should be named after its element types:\n{first}");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+// --- comprehensions (unreleased) ----------------------------------------
+
+/// A list comprehension keeps the source's length: `[e for v in a]` is
+/// `[U; N]` for an `[T; N]` source, so it composes with everything that takes
+/// an array. The source expression is evaluated ONCE (it is passed to the
+/// generated helper by value), and comprehensions nest.
+#[test]
+fn comprehension_maps_an_array() {
+    let out = build_and_run(
+        r#"
+        def make() -> [int; 3]:
+            print("once")
+            return [1, 2, 3]
+
+        def main() -> int:
+            a = [1, 2, 3]
+            b = [x * 2 for x in a]
+            print(b[0], b[1], b[2])
+            k = 10
+            c = [x + k for x in a]
+            print(c[2])
+            d = [x + 1 for x in make()]
+            print(d[0], d[2])
+            rows = [[1, 2], [3, 4]]
+            doubled = [[y * 2 for y in row] for row in rows]
+            print(doubled[0][1], doubled[1][0])
+            return 0
+        "#,
+    );
+    assert_eq!(out, "2 4 6\n13\nonce\n2 4\n4 6\n");
+    assert_eq!(out.matches("once").count(), 1, "the source must be evaluated once:\n{out}");
+}
+
+/// A comprehension body may read any local of the enclosing function: the
+/// codegen helper takes each captured local as a parameter. That includes a
+/// function pointer (so the callee is a captured value, not a global) and a
+/// NARROWED nullable (captured as its payload, never as the nullable).
+#[test]
+fn comprehension_captures_locals_fn_pointers_and_narrowed_values() {
+    let out = build_and_run(
+        r#"
+        def twice(x: int) -> int:
+            return x * 2
+
+        def pick(b: bool) -> int | None:
+            r: int | None = None
+            if b:
+                r = 7
+            return r
+
+        def main() -> int:
+            f: fn(int) -> int = twice
+            a = [1, 2, 3]
+            b = [f(x) for x in a]
+            print(b[0], b[2])
+            v = pick(True)
+            if v is not None:
+                c = [x + v for x in [1, 2]]
+                print(c[0], c[1])
+            return 0
+        "#,
+    );
+    assert_eq!(out, "2 6\n8 9\n");
+}
+
+/// Elements are ordinary expressions, so a comprehension can build structs,
+/// strings (including f-strings) and read arrays element-wise.
+#[test]
+fn comprehension_elements_may_be_structs_strings_and_arrays() {
+    let out = build_and_run(
+        r#"
+        struct Point:
+            x: int
+            y: int
+
+        def main() -> int:
+            a = [1, 2, 3]
+            ps = [Point(x=v, y=v * 2) for v in a]
+            print(ps[0].x, ps[2].y)
+            labels = [f"n={v}" for v in a]
+            print(labels[0] + " " + labels[2])
+            strs = ["ab", "cde"]
+            lens = [len(s) for s in strs]
+            print(lens[0], lens[1])
+            mats = [[1, 2], [3, 4]]
+            sums = [r[0] + r[1] for r in mats]
+            print(sums[0], sums[1])
+            return 0
+        "#,
+    );
+    assert_eq!(out, "1 6\nn=1 n=3\n2 3\n3 7\n");
+}
+
+/// A comprehension inside a generic function is emitted once per
+/// instantiation, like every other body: the element type is the
+/// instantiated one.
+#[test]
+fn comprehension_inside_a_generic_function() {
+    let out = build_and_run(
+        r#"
+        def plus_one[T, N](a: [T; N]) -> [T; N]:
+            return [x + 1 for x in a]
+
+        def main() -> int:
+            b = plus_one([10, 20])
+            print(b[0], b[1])
+            return 0
+        "#,
+    );
+    assert_eq!(out, "11 21\n");
+}
+
+/// A dict comprehension may iterate an array, a dict (its keys) or a string
+/// (its bytes, one-byte strings), filter with a bool, and keeps insertion
+/// order. A repeated key overwrites the earlier value.
+#[test]
+fn dict_comprehension_over_array_dict_and_string() {
+    let out = build_and_run(
+        r#"
+        def main() -> int:
+            a = [1, 2, 3]
+            d = {str(x): x * x for x in a if x > 1}
+            print(len(d), d["2"], d["3"])
+            src = {"a": 1, "b": 2}
+            e = {k: 1 for k in src}
+            got = ""
+            for k in e:
+                got = got + k
+            print(len(e), got)
+            s = "abc"
+            f = {ch: 1 for ch in s if ch != "b"}
+            print(len(f))
+            dup = {str(x % 2): x for x in a}
+            print(len(dup), dup["0"], dup["1"])
+            return 0
+        "#,
+    );
+    assert_eq!(out, "2 4 9\n2 ab\n2\n2 2 3\n");
+}
+
+/// A comprehension result IS an array or a dict, so it flows into an ordinary
+/// call argument with no special spelling.
+#[test]
+fn comprehension_result_flows_into_stdlib_calls() {
+    let out = build_and_run_with_stdlib(
+        r#"
+        def main() -> int:
+            a = [3, 1, 2]
+            b = sort([x * 2 for x in a])
+            print(sum_int(b))
+            return 0
+        "#,
+    );
+    assert_eq!(out.trim(), "12");
+}
+
+/// A raise inside a comprehension body (or its filter) unwinds to the
+/// enclosing `try`: the generated helper stops at the pending error and the
+/// statement's own check performs the hop.
+#[test]
+fn comprehension_body_raise_is_caught() {
+    let out = build_and_run(
+        r#"
+        def risky(x: int) -> int:
+            if x == 2:
+                raise "boom"
+            return x
+
+        def main() -> int:
+            a = [1, 2, 3]
+            try:
+                b = [risky(x) for x in a]
+                print("no")
+            except as e:
+                print("caught " + e)
+            try:
+                d = {str(x): risky(x) for x in a if risky(x) > 0}
+                print("no2")
+            except as e:
+                print("caught2 " + e)
+            print("done")
+            return 0
+        "#,
+    );
+    assert_eq!(out, "caught boom\ncaught2 boom\ndone\n");
+}
+
+/// Every unsupported shape is a named diagnostic, never a clang error.
+#[test]
+fn comprehensions_reject_unsupported_shapes() {
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            a = [1, 2]
+            b = [x for x in a if x > 1]
+            return 0
+        "#,
+    );
+    assert!(msg.contains("a list comprehension cannot filter"), "{msg}");
+
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            b = [x for x in range(3)]
+            return 0
+        "#,
+    );
+    assert!(msg.contains("a comprehension cannot iterate over range(...)"), "{msg}");
+
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            s = "abc"
+            b = [c for c in s]
+            return 0
+        "#,
+    );
+    assert!(msg.contains("a comprehension iterates an array, found string"), "{msg}");
+
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            x = 1
+            a = [1, 2]
+            b = [x for x in a]
+            return 0
+        "#,
+    );
+    assert!(msg.contains("the comprehension variable 'x' is already declared"), "{msg}");
+
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            a = [1, 2]
+            d = {x: x for x in a}
+            return 0
+        "#,
+    );
+    assert!(msg.contains("dict comprehension keys must be strings, found int"), "{msg}");
+
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            a = [1, 2]
+            d = {str(x): x for x in a if x}
+            return 0
+        "#,
+    );
+    assert!(msg.contains("a comprehension filter must be bool, found int"), "{msg}");
+
+    let msg = expect_compile_error(
+        r#"
+        def main() -> int:
+            a = [1, 2]
+            b = [y for x in a for y in a]
+            return 0
+        "#,
+    );
+    assert!(msg.contains("a comprehension takes one 'for' clause"), "{msg}");
+}
+
+/// The helper names come from a first-use counter and the captured locals are
+/// sorted by name, so the emitted C is byte-identical across processes — the
+/// same reproducibility rule every generated identifier follows.
+#[test]
+fn comprehension_c_text_is_stable_across_processes() {
+    let base = std::env::temp_dir().join(format!("aoxn-comp-det-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let prog = base.join("prog.ax");
+    std::fs::write(
+        &prog,
+        "def main() -> int:\n    a = [1, 2, 3]\n    k = 2\n    z = 1\n    b = [x * k + z for x in a]\n    d = {str(x): x for x in a}\n    print(b[0], len(d))\n    return 0\n",
+    )
+    .unwrap();
+
+    let emit = || -> String {
+        let out = Command::new(env!("CARGO_BIN_EXE_aoxn"))
+            .arg("c")
+            .arg(&prog)
+            .output()
+            .expect("failed to run aoxn c");
+        assert!(out.status.success(), "aoxn c failed: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8(out.stdout).expect("C text is not UTF-8")
+    };
+
+    let first = emit();
+    for i in 0..3 {
+        assert_eq!(
+            emit(),
+            first,
+            "run {} of the same binary over one unchanged source produced different C",
+            i + 2
+        );
+    }
+    assert!(first.contains("ax_comp_0("), "the first site should be ax_comp_0:\n{first}");
+    assert!(first.contains("ax_comp_1("), "the second site should be ax_comp_1:\n{first}");
+    assert!(
+        first.find("ax_comp_0(").unwrap() < first.find("ax_comp_1(").unwrap(),
+        "helpers must be emitted in first-use order:\n{first}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}

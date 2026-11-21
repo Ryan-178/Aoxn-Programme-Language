@@ -1433,12 +1433,26 @@ impl Parser {
             }
             Tok::LBrace => {
                 // dict literal (v0.40.0): {"k": v, ...}. `{}` is the empty one.
+                // `{"k": v for ...}` is a dict comprehension (unreleased).
                 let mut entries: Vec<(Expr, Expr)> = Vec::new();
                 if *self.peek() != Tok::RBrace {
                     loop {
                         let key = self.expr()?;
                         self.eat(&Tok::Colon)?;
                         let value = self.expr()?;
+                        if *self.peek() == Tok::For {
+                            let (var, iter, cond) = self.comp_clause()?;
+                            self.eat(&Tok::RBrace)?;
+                            return Ok(Expr::Comp {
+                                dict: true,
+                                key: Some(Box::new(key)),
+                                expr: Box::new(value),
+                                var,
+                                iter: Box::new(iter),
+                                cond: cond.map(Box::new),
+                                pos,
+                            });
+                        }
                         entries.push((key, value));
                         match self.peek() {
                             Tok::Comma => {
@@ -1457,32 +1471,82 @@ impl Parser {
                 Ok(Expr::DictLit { entries, lit_id, pos })
             }
             Tok::LBracket => {
-                // array literal: [e0, e1, ...]
-                let mut elems = Vec::new();
-                if *self.peek() != Tok::RBracket {
-                    loop {
-                        elems.push(self.expr()?);
-                        match self.peek() {
-                            Tok::Comma => {
-                                self.bump();
-                                if *self.peek() == Tok::RBracket {
-                                    break; // trailing comma
-                                }
-                            }
-                            Tok::RBracket => break,
-                            _ => return Err(self.unexpected(&Tok::RBracket)),
-                        }
-                    }
-                }
-                self.eat(&Tok::RBracket)?;
-                if elems.is_empty() {
+                // array literal `[e0, e1, ...]`, or a list comprehension
+                // `[expr for v in arr]` (unreleased)
+                if *self.peek() == Tok::RBracket {
                     return Err(self.perr(pos.line, pos.col, "empty array literals are not allowed (element type could not be inferred)"));
                 }
+                let first = self.expr()?;
+                if *self.peek() == Tok::For {
+                    let (var, iter, cond) = self.comp_clause()?;
+                    self.eat(&Tok::RBracket)?;
+                    return Ok(Expr::Comp {
+                        dict: false,
+                        key: None,
+                        expr: Box::new(first),
+                        var,
+                        iter: Box::new(iter),
+                        cond: cond.map(Box::new),
+                        pos,
+                    });
+                }
+                let mut elems = vec![first];
+                loop {
+                    match self.peek() {
+                        Tok::Comma => {
+                            self.bump();
+                            if *self.peek() == Tok::RBracket {
+                                break; // trailing comma
+                            }
+                        }
+                        Tok::RBracket => break,
+                        _ => return Err(self.unexpected(&Tok::RBracket)),
+                    }
+                    elems.push(self.expr()?);
+                }
+                self.eat(&Tok::RBracket)?;
                 let lit_id = self.lit_id();
                 Ok(Expr::ArrayLit { elems, lit_id, pos })
             }
             _ => unreachable!("primary token kind validated above"),
         }
+    }
+
+    /// `for NAME in <source> [if <filter>]` — the clause after a
+    /// comprehension's head expression (unreleased).
+    ///
+    /// The source is parsed at `or_expr`, NOT at `expr`: a trailing `if` here
+    /// is the comprehension's FILTER, and the conditional-expression level
+    /// would swallow it and then demand an `else`.
+    fn comp_clause(&mut self) -> Result<(String, Expr, Option<Expr>), Diag> {
+        self.eat(&Tok::For)?;
+        let var = match self.bump() {
+            Tok::Ident(n) => n,
+            _ => return Err(self.unexpected(&Tok::Ident("loop variable".into()))),
+        };
+        self.eat(&Tok::In)?;
+        if matches!(self.peek(), Tok::Ident(n) if n == "range") && *self.peek2() == Tok::LParen {
+            return Err(self.perr(
+                self.pos().line,
+                self.pos().col,
+                "a comprehension cannot iterate over range(...): its length is not part of any type, so the result would have no type; iterate an array, a dict or a string",
+            ));
+        }
+        let iter = self.or_expr()?;
+        let cond = if *self.peek() == Tok::If {
+            self.bump(); // 'if'
+            Some(self.expr()?)
+        } else {
+            None
+        };
+        if *self.peek() == Tok::For {
+            return Err(self.perr(
+                self.pos().line,
+                self.pos().col,
+                "a comprehension takes one 'for' clause (nest one comprehension inside another instead)",
+            ));
+        }
+        Ok((var, iter, cond))
     }
 }
 

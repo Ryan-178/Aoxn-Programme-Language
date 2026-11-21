@@ -6,7 +6,8 @@
 
 **Compiler 0.55.0; released as pre-release tag `v0.55.0-snapshot-5`
 (2026-11-16).** Fixes target current
-0.55.x. The tree also carries unreleased f-string format specifiers and the
+0.55.x. The tree also carries unreleased f-string format specifiers, tuples,
+list/dict comprehensions and the
 `aoxn test` runner (CHANGELOG `[Unreleased]`). Windows is first-class; Linux has an established compiler/stdlib/X11
 baseline. The Linux HTTP, installer, socket and doctor changes were natively
 validated on 2026-11-16 (PR #11: Ubuntu 22.04/24.04 x86_64, Ubuntu 24.04 ARM64,
@@ -40,7 +41,11 @@ void pairs, not arbitrary Rust types. Strings are NUL-terminated bytes; string
 bounds clamp, arrays/raw memory do not. sizeof/addr_of add no lifetime/ownership/
 alias checks; struct parameters remain copies. Tuple elements are addressed by a
 compile-time literal index that is range-checked by the checker (no OOB index
-can reach the emitted C), and tuples copy by value like structs. Concatenation leaks; no GC or
+can reach the emitted C), and tuples copy by value like structs. A
+comprehension lowers to a generated helper that iterates the SOURCE's own
+length (a fixed array's static N, a dict's live key count, or a string through
+the same clamped byte accessor `s[i]` uses), so it adds no unchecked access;
+captured locals are passed by value. Concatenation leaks; no GC or
 general memory-safety guarantee exists. Regex lacks a step budget and can take
 exponential time; use OS resource limits. Compiler recursion has stack limits.
 Random is not cryptographic; threads require synchronization. shutil link/depth
@@ -106,7 +111,7 @@ ide/src-tauri/audit.toml, not newly endorsed by this update.
 ## 中文
 
 编译器 0.55.0，已发布预发布标签 **v0.55.0-snapshot-5**（2026-11-16），修复当前
-0.55.x；树中另有未发布的 f-string 格式化说明符、元组/多返回值与 `aoxn test` 运行器（CHANGELOG `[Unreleased]`）。Windows 为一等平台，Linux 已有编译器/库/X11 基线；本批 HTTP/安装器/
+0.55.x；树中另有未发布的 f-string 格式化说明符、元组/多返回值、列表/字典推导式与 `aoxn test` 运行器（CHANGELOG `[Unreleased]`）。Windows 为一等平台，Linux 已有编译器/库/X11 基线；本批 HTTP/安装器/
 socket/doctor 已由 2026-11-16 PR #11 原生验证（Ubuntu 22.04/24.04 x86_64、
 Ubuntu 24.04 ARM64、macOS、Windows）；Alpine/musl 与原生 Wayland 仍未验证；
 Intel macOS 无独立原生证据。
@@ -121,7 +126,8 @@ Intel macOS 无独立原生证据。
 bool=C int，错误声明可产生 UB；Rust 只支持精确标量 ABI。字符串 NUL 结尾且边界 clamp，
 数组/裸内存不检查。sizeof/addr_of 无生命周期/所有权检查，结构体参数是副本；元组元素
 只能用编译期字面量下标读取且由检查器做范围校验（越界下标无法进入生成的 C），元组按值
-复制；拼接泄漏，无 GC/通用内存安全保证。re 无预算可指数耗时、编译递归有栈限，需资源限制；random 非
+复制；推导式降为生成辅助函数，按源自身长度迭代（定长数组的静态 N、字典的实时键数，
+字符串走与 `s[i]` 相同的 clamp 取字节），不新增未检查访问，捕获的局部按值传入；拼接泄漏，无 GC/通用内存安全保证。re 无预算可指数耗时、编译递归有栈限，需资源限制；random 非
 密码学，线程自己同步，shutil 守卫不是权限/消除竞态，logging 写指定路径，socket 非 TLS。
 f-string 说明符必须是字面文本：编译器解析符号/补零/宽度/精度/类型（或进制）后重建
 C 格式串，原文不进入生成 C；宽度上限 1024、精度上限 512，自举编译器使用同一解析。

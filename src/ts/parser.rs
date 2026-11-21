@@ -1548,6 +1548,8 @@ impl Parser {
             },
             // tuples are an Aoxn-only form; the TS front end never builds one
             Expr::TupleLit { .. } => None,
+            // comprehensions are an Aoxn-only form too
+            Expr::Comp { .. } => None,
             // TS has no slice syntax; the node only reaches here if an Aoxn
             // source is routed through the TS front end, and a slice is
             // always a string there.
@@ -1814,6 +1816,17 @@ fn fill_expr(e: &mut Expr, opts: &HashMap<String, Vec<(usize, Expr)>>, totals: &
         Expr::TupleLit { elems, .. } => {
             for x in elems.iter_mut() {
                 fill_expr(x, opts, totals);
+            }
+        }
+        // comprehensions are an Aoxn-only form (unreachable from .ts source)
+        Expr::Comp { key, expr, iter, cond, .. } => {
+            fill_expr(iter, opts, totals);
+            if let Some(k) = key {
+                fill_expr(k, opts, totals);
+            }
+            fill_expr(expr, opts, totals);
+            if let Some(c) = cond {
+                fill_expr(c, opts, totals);
             }
         }
         Expr::StructLit { fields, .. } => {
