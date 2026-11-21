@@ -16,9 +16,10 @@ The current tree also carries **unreleased** f-string format specifiers
 (`f"{x:.2f}"`, `f"{n:08x}"`, `f"{n:b}"`), tuples with multiple assignment
 (`def divmod(...) -> (int, int)` then `q, r = divmod(7, 2)`; literal-index reads
 only), list/dict comprehensions (`[x * x for x in a]`, `{k: v for v in src if
-p}`; the list form keeps the source's length and so takes no filter), and the
-`aoxn test` runner; CHANGELOG `[Unreleased]` tracks them
-and no release is implied.
+p}`; the list form keeps the source's length and so takes no filter), the
+`aoxn test` runner, and a hashed dict index (lookups are O(1) average;
+insertion order and `dict_del` semantics are unchanged); CHANGELOG
+`[Unreleased]` tracks them and no release is implied.
 The TS front end is a subset, not a JS runtime. TOML package management, CSS
 assets, two API SDKs and a separate Tauri/Monaco IDE are included.
 
@@ -143,7 +144,8 @@ Aoxn 使用 Python 风格
 `{k: v for v in src if p}`；列表形式保持源长度，故不接受过滤）与 `aoxn test`
 测试运行器（发现并运行文件内全部
 `def test_*`，失败退出 1；也可传目录，跑目录直接子级里每个 `test_*.ax`，
-结束打印 SUMMARY），记录在 CHANGELOG 的 `[Unreleased]` 中，不代表发布。TS 前端为
+结束打印 SUMMARY）与字典哈希索引（查找平均 O(1)，插入序与 `dict_del`
+语义不变），记录在 CHANGELOG 的 `[Unreleased]` 中，不代表发布。TS 前端为
 子集，另有 TOML 包管理、CSS、两个 SDK 和独立 IDE。
 
 Windows 为一等平台，Linux 编译器/可移植标准库/X11 自 0.46.0 起受支持。

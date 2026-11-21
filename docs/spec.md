@@ -885,10 +885,11 @@ for k in d:                 # walks KEYS, in insertion order
 - The dict is a **heap handle** (`struct ax_dict_V*`), the same shape as the
   UI toolkit's `TableModel` and the web server's `FileTable`: copying the
   handle shares the dict, so a mutation made through a callee's copy is
-  visible to the caller 闁?including growth and `dict_del`. Lookup is a
-  linear scan over insertion order; growth doubles, so inserts amortize to
-  O(1) while the honest shape of the type stays "a settings map, not a
-  database".
+  visible to the caller 闁?including growth and `dict_del`. Lookup is
+  O(1) average through a per-type open-addressing index (FNV-1a, linear
+  probing) over the ordered key/value arrays; insertion order is still the
+  iteration order, growth doubles, and `dict_del` keeps its shift (so a
+  re-inserted key lands at the end and a delete reindexes the table).
 
 ## Tuples (unreleased)
 

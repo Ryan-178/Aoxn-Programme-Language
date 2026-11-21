@@ -3441,6 +3441,83 @@ fn dict_is_emitted_as_a_handle() {
     assert!(c.contains("struct ax_dict_i*"), "{c}");
 }
 
+/// The dict index is an FNV-1a open-addressing table beside the ordered
+/// key/value arrays, so a lookup does not scan; iteration order and the
+/// delete shift are unchanged.
+#[test]
+fn dict_lookup_uses_a_hashed_index() {
+    let c = aoxn::compile_to_c(
+        &dedent(
+            r#"
+        def main() -> int:
+            d: dict[int] = {"a": 1}
+            print(len(d))
+            return 0
+        "#,
+        ),
+        true,
+    )
+    .expect("dict program should compile");
+    assert!(c.contains("long long* idx;"), "{c}");
+    assert!(c.contains("static unsigned long long ax_dict_hash_i(char* k) {"), "{c}");
+    assert!(c.contains("static void ax_dict_reindex_i(struct ax_dict_i* d, long long need) {"), "{c}");
+    assert!(c.contains("if (!d->icap) return -1;"), "{c}");
+    assert!(
+        !c.contains("if (!__builtin_strcmp(d->keys[i], k)) return i;"),
+        "the linear scan is gone: {c}"
+    );
+}
+
+/// One thousand operations over a 500-key dict: overwrite-in-place keeps the
+/// key where it was, a delete shifts the rest and re-inserting lands at the
+/// end, and every lookup goes through the hash index.
+#[test]
+fn dict_hash_index_keeps_order_and_correctness_at_scale() {
+    let out = build_and_run(
+        r#"
+        def main() -> int:
+            d: dict[int] = {}
+            i = 0
+            while i < 500:
+                d[f"k{i}"] = i * 3
+                i = i + 1
+            print(len(d))
+            print(d["k0"])
+            print(d["k123"])
+            print(d["k499"])
+            d["k123"] = -1
+            print(d["k123"])
+            i = 0
+            while i < 500:
+                if i % 2 == 0:
+                    dict_del(d, f"k{i}")
+                i = i + 1
+            print(len(d))
+            print(d["k1"])
+            n = 0
+            first = ""
+            last = ""
+            for k in d:
+                if n == 0:
+                    first = k
+                last = k
+                n = n + 1
+            print(n)
+            print(first + "/" + last)
+            print(dict_has(d, "k0"))
+            d["k0"] = 7
+            print(len(d))
+            print(d["k0"])
+            print(last)
+            return 0
+        "#,
+    );
+    assert_eq!(
+        out,
+        "500\n0\n369\n1497\n-1\n250\n3\n250\nk1/k499\nfalse\n251\n7\nk499\n"
+    );
+}
+
 // ---- v0.40.0: None / raise / try / except / fn pointers ---------------
 
 /// `T | None` is a carrier struct with a presence tag
