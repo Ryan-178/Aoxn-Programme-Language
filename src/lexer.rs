@@ -178,13 +178,17 @@ fn escape_char(esc: char) -> Option<char> {
 /// shared by the main scan and f-string interpolation scanning
 macro_rules! adv {
     ($s:ident) => {{
-        if $s.chars[$s.i] == '\n' {
-            $s.line += 1;
-            $s.col = 1;
-        } else {
-            $s.col += 1;
+        if let Some(&c) = $s.chars.get($s.i) {
+            if c == '\n' {
+                $s.line += 1;
+                $s.col = 1;
+            } else {
+                $s.col += 1;
+            }
         }
-        $s.i += 1;
+        if $s.i < $s.end {
+            $s.i += 1;
+        }
     }};
 }
 

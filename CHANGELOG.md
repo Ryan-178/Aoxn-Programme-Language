@@ -5,6 +5,31 @@ minor bumps while pre-1.0: each minor version is a language milestone.
 
 ## [Unreleased]
 
+### Arbitrary input never panics the compiler
+
+The lexer's `adv!` macro indexed `chars[i]` unconditionally, so two input
+shapes walked one past the buffer instead of reporting a diagnostic: a lone
+`\r` at EOF (the CRLF arm advanced twice) and an f-string interpolation whose
+closing `"` is the last character (the quote arm advanced, then the
+interpolation loop advanced again at the bound). `adv!` is now bounds-safe
+(a no-op at the end of the buffer, the same defensive shape the `at!` helper
+already had), so both shapes report the lexer's ordinary error.
+
+Programs that compiled before emit byte-identical C: the macro only changed
+what happens AT the bound, which no valid token path ever reaches. Nothing in
+`selfhost/` mirrors it, because the Aoxn lexer indexes strings with the
+language's clamping `s[i]` and could not panic this way.
+
+New `tests/robustness.rs` pins the property that matters for 1.0 — `aoxn
+check`/`c` are driven over whatever bytes are on disk by the IDE and by
+agents, so a panic is a bug, not an acceptable failure mode. It is a
+deterministic fuzz suite (fixed xorshift seeds, no clock, no OS randomness,
+so every failure reproduces byte-for-byte from the printed input) over
+`aoxn::compile_to_c`: 10,000 token-soup/truncation/splice cases across five
+seeds, 3,000 random-byte strings, and concrete pins for the two bound bugs
+above. A panic is caught with `catch_unwind` and reported with its source;
+diagnostics of every stage pass.
+
 ### Dict lookup goes O(1): a hashed index beside the ordered arrays
 
 Closes B2 of `docs/language-gaps.md` (ranked item 7). A `dict[V]` keeps its
