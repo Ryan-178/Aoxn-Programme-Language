@@ -1283,9 +1283,11 @@ impl<'a> GenC<'a> {
             out.push_str(&format!("typedef struct {{\n    {decl};\n}} {tname};\n"));
         } else if let Some(dname) = id.strip_prefix("d:") {
             // `dict[V]` (v0.40.0): two parallel arrays (keys are `char*`,
-            // values are V) plus len/cap. Lookup is a linear scan — a dict in
-            // this language is a config/settings map, not a database; the
-            // doubling growth keeps inserts amortized O(1) anyway.
+            // values are V) plus len/cap, kept in INSERTION order so
+            // `for k in d` and `dict_del`'s shift behave as they always
+            // have. Lookups go through a separate open-addressing index
+            // (FNV-1a hash, linear probing) holding index+1 into those
+            // arrays, so a lookup is O(1) average instead of a scan.
             let inner = self
                 .dict_structs
                 .get(dname)
@@ -1314,20 +1316,44 @@ impl<'a> GenC<'a> {
     {vt}* vals;
     long long len;
     long long cap;
+    long long* idx;
+    long long icap;
 }};
 "
             ));
             out.push_str(&format!(
                 "static struct {dname}* ax_dict_new_{tok}(void) {{
     struct {dname}* d = (struct {dname}*)__builtin_malloc(sizeof(struct {dname}));
-    d->keys = 0; d->vals = 0; d->len = 0; d->cap = 0;
+    d->keys = 0; d->vals = 0; d->len = 0; d->cap = 0; d->idx = 0; d->icap = 0;
     return d;
 }}
-                 static long long ax_dict_find_{tok}(struct {dname}* d, char* k) {{
+                 static unsigned long long ax_dict_hash_{tok}(char* k) {{
+    unsigned long long h = 14695981039346656037ULL;
+    while (*k) {{ h = (h ^ (unsigned long long)(unsigned char)(*k)) * 1099511628211ULL; k = k + 1; }}
+    return h;
+}}
+                 static void ax_dict_reindex_{tok}(struct {dname}* d, long long need) {{
+    long long ncap = 8;
+    while (ncap < need * 2) ncap = ncap * 2;
+    d->idx = (long long*)__builtin_realloc(d->idx, (unsigned long long)ncap * (unsigned long long)sizeof(long long));
+    for (long long i = 0; i < ncap; i++) d->idx[i] = 0;
+    d->icap = ncap;
     for (long long i = 0; i < d->len; i++) {{
-        if (!__builtin_strcmp(d->keys[i], k)) return i;
+        unsigned long long h = ax_dict_hash_{tok}(d->keys[i]) & (unsigned long long)(ncap - 1);
+        while (d->idx[h]) h = (h + 1) & (unsigned long long)(ncap - 1);
+        d->idx[h] = i + 1;
     }}
-    return -1;
+}}
+                 static long long ax_dict_find_{tok}(struct {dname}* d, char* k) {{
+    if (!d->icap) return -1;
+    unsigned long long mask = (unsigned long long)(d->icap - 1);
+    unsigned long long h = ax_dict_hash_{tok}(k) & mask;
+    for (;;) {{
+        long long e = d->idx[h];
+        if (!e) return -1;
+        if (!__builtin_strcmp(d->keys[e - 1], k)) return e - 1;
+        h = (h + 1) & mask;
+    }}
 }}
                  static void ax_dict_set_{tok}(struct {dname}* d, char* k, {vt} v) {{
     long long i = ax_dict_find_{tok}(d, k);
@@ -1338,9 +1364,14 @@ impl<'a> GenC<'a> {
         d->vals = ({vt}*)__builtin_realloc(d->vals, (unsigned long long)ncap * (unsigned long long)sizeof({vt}));
         d->cap = ncap;
     }}
+    if (!d->icap || (d->len + 1) * 2 > d->icap) ax_dict_reindex_{tok}(d, d->len + 1);
     d->keys[d->len] = k;
     d->vals[d->len] = v;
     d->len = d->len + 1;
+    unsigned long long mask = (unsigned long long)(d->icap - 1);
+    unsigned long long h = ax_dict_hash_{tok}(k) & mask;
+    while (d->idx[h]) h = (h + 1) & mask;
+    d->idx[h] = d->len;
 }}
                  static {vt} ax_dict_get_{tok}(struct {dname}* d, char* k) {{
     long long i = ax_dict_find_{tok}(d, k);
@@ -1356,6 +1387,7 @@ impl<'a> GenC<'a> {
     if (i < 0) return 0;
     d->len = d->len - 1;
     for (long long j = i; j < d->len; j++) {{ d->keys[j] = d->keys[j + 1]; d->vals[j] = d->vals[j + 1]; }}
+    if (d->icap) ax_dict_reindex_{tok}(d, d->len);
     return k;
 }}
 

@@ -1675,9 +1675,11 @@ crates/aoxn-pkg       package manager crate (its own dependency set; see above)
   entries there correct easy-to-misread facts: **threads are NOT blocked**
   (`extern def` rejects an fn-pointer parameter, but its own error message
   says "pass its address as an int" 鈥?`CreateThread(0,0,to_int(f),0,0,0)`
-  is ABI-fine on x64), and **`dict` DOES preserve insertion order** 鈥?its
-  cost is the O(n) linear scan (`ax_dict_find_T`, `codegen_c.rs:789`), not
-  ordering. The ranked shortlist (搂5) puts module namespaces first, because
+  is ABI-fine on x64), and **`dict` DOES preserve insertion order** 鈥?the
+  ordered key/value arrays ARE the iteration order, and an open-addressing
+  index (FNV-1a, linear probing) beside them makes lookup O(1) average
+  (`ax_dict_find_T`); `dict_del` still shifts and reindexes.
+  The ranked shortlist (搂5) puts module namespaces first, because
   every `import` merges into ONE namespace and a duplicate `def` name is a
   HARD error (`typecheck.rs:94`) 鈥?which is why `ui_`/`net_`/`oa_`/`an_`/
   `plat_` are hand-prefixed everywhere today.

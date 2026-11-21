@@ -5,6 +5,36 @@ minor bumps while pre-1.0: each minor version is a language milestone.
 
 ## [Unreleased]
 
+### Dict lookup goes O(1): a hashed index beside the ordered arrays
+
+Closes B2 of `docs/language-gaps.md` (ranked item 7). A `dict[V]` keeps its
+insertion-ordered `keys`/`vals` arrays — that order is still what `for k in d`
+walks — and gains a per-type **open-addressing index**: FNV-1a over the key
+bytes, linear probing, a `long long* idx` of array-index+1 (0 = empty), kept
+at load <= 1/2. `ax_dict_find_T` follows the probe sequence instead of
+scanning, so reads, `dict_has`, `in`, and the write path's overwrite test are
+O(1) average. `ax_dict_del_T` still shifts the arrays (deletion was already
+O(n) and its order semantics are unchanged) and then reindexes; a key
+re-inserted after a delete lands at the END, exactly as before. `dict_new`
+starts with no index, the first insert builds one (8 slots), and growth
+doubles it.
+
+Observable behavior is unchanged, including insertion order, the
+missing-key raise, and the handle's share-on-copy semantics; the struct only
+got two more fields. The selfhost mirror in `selfhost/codegen.ax` emits the
+same C text (pinned by `tests/c_emitter_parity.rs`, whose `dict_basics` corpus
+program is a dict program).
+
+Measured on this machine (i5-1135G7, debug-built compiler, clang -O3, cached
+exe, interleaved 3x min): 200k reads from a 5,000-key dict with generated
+`f"k{n}"` keys took 2.80 s before and 0.27 s after (~10x), identical output.
+That number includes the f-string construction both versions pay.
+
+New pins: `dict_lookup_uses_a_hashed_index` (the index helpers exist and the
+linear-scan line is gone) and
+`dict_hash_index_keeps_order_and_correctness_at_scale` (500 keys, overwrite in
+place, delete-every-other, iteration order, re-insert lands at the end).
+
 ### Comprehensions (`[e for v in a]` / `{k: v for v in src if p}`)
 
 Closes E6 of `docs/language-gaps.md`. Two forms, each with a type that is a
